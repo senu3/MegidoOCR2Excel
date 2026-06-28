@@ -112,7 +112,7 @@ class ImageOcrExcelApp:
         self._bind_shortcuts()
 
     def _build_ui(self) -> None:
-        ctk.set_appearance_mode("light")
+        ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         self.root.configure(fg_color=COLOR_BG)
 
