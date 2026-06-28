@@ -1,12 +1,22 @@
 # Design
 
-## Intent
+## Direction
 
-Megido OCR to Excel is a task-first desktop utility. The visual direction comes from the supplied logo image: black negative space, sharp violet light, and metallic precision. The UI should feel like a quiet inspection bench for screenshots, not a fan page.
+このツールのUIは、ゲームの世界観を再現する画面ではなく、ノベル画面を正確に切り出すための作業台にする。
 
-## Color
+採用する方向性は **midnight inspection bench**。黒い余白、紫の鋭い発光、硬い金属感を「スクリーンショット検査のための暗い作業面」として借りる。ロゴ風の装飾やファンサイト的な演出にはしない。
 
-Use restrained product color. The application code currently uses Tk-compatible hex colors; conceptual tokens are expressed here in OKLCH for future UI work.
+## Visual Policy
+
+- Screenshot first: 画面左のプレビューを主役にする。背景は黒に近い無彩色で、画像の端と選択範囲が読みやすいことを優先する。
+- Light control panel: 右側の操作パネルは白系にして、項目名・OCR結果・保存先の確認を長時間読めるようにする。
+- Purple as active state: 紫は主操作、選択中、現在の作業状態に限定する。装飾用には使わない。
+- Olive as completion action: Excel出力のような最後の実行操作だけに黄緑/オリーブを使う。
+- Compact desktop density: これはランディングページではなくWindows作業ツール。余白は控えめにし、ボタンと入力欄は見慣れた密度にする。
+
+## Color Tokens
+
+Conceptual tokens are OKLCH. Tkinter implementation values live in `megido_ui_theme.py` as hex because CustomTkinter expects Tk-compatible colors.
 
 ```css
 :root {
@@ -27,24 +37,46 @@ Use restrained product color. The application code currently uses Tk-compatible 
 
 ## Typography
 
-Use `Meiryo` for the current Windows desktop UI because Japanese OCR workflows benefit from familiar, dense system rendering. Keep type sizes fixed: 12px for support text, 13px for controls, 14px bold for row labels and primary actions, 16px bold for panel titles.
+Use `Meiryo` for the desktop app. Japanese OCR workflows benefit from familiar Windows rendering more than expressive display type.
+
+- Support text: 12px
+- Controls: 13px
+- Row labels and primary actions: 14px bold
+- Panel titles: 16px bold
+- Canvas labels: 11px bold
+
+Do not use display fonts or fluid type in the application UI.
 
 ## Layout
 
 Primary layout is two-pane:
 
 - Left: screenshot canvas, toolbar, scrollbars, and status bar.
-- Right: 390px workflow panel with segmented modes for template, review, and export.
+- Right: fixed-width workflow panel with segmented modes for template, review, and export.
 
-The screenshot area remains dark so image edges and selection rectangles are visible. The side panel remains light for form readability and fatigue reduction.
+The three modes are the product structure:
+
+- Template: create and edit OCR regions.
+- Review: run OCR on the current image and correct results.
+- Export: choose source folder/output file and batch export.
 
 ## Components
 
-- Toolbar buttons use compact filled controls.
-- Segmented mode switch separates the three workflow phases.
+- Toolbar buttons are compact filled controls.
+- Segmented mode switch is the main workflow navigation.
 - Field rows show enabled state, order, field name, and pixel size.
-- OCR review rows pair field label with editable text result.
-- Export panel keeps folder, output file, and summary close to the action.
+- OCR review rows pair a field label with an editable text result.
+- Export panel keeps folder, output file, summary, and final action close together.
+
+## Implementation Notes
+
+UI direction should be changed in these files first:
+
+- `megido_ui_theme.py`: colors, fonts, dimensions, visible UI copy.
+- `DESIGN.md`: rationale and product-level design rules.
+- `PRODUCT.md`: audience, purpose, anti-references, and strategic principles.
+
+Keep OCR behavior, template serialization, and Excel export independent from visual choices. Avoid adding new colors directly inside `megido_ocr_excel_app.py`; add a named token to `megido_ui_theme.py` instead.
 
 ## Motion
 
