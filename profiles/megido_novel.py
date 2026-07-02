@@ -24,18 +24,18 @@ DEFAULT_FIELD_OCR = {
 FIELD_OCR_PRESETS = {
     "話者": {
         **DEFAULT_FIELD_OCR,
-        "ocr_preprocess": "white-glyph",
-        "ocr_scale": "4",
-        "ocr_threshold": 190,
+        "ocr_preprocess": "default",
+        "ocr_scale": "auto",
+        "ocr_threshold": 180,
         "ocr_lang": "jpn",
     },
     "セリフ本文": {
         **DEFAULT_FIELD_OCR,
-        "ocr_preprocess": "threshold",
-        "ocr_scale": "3",
-        "ocr_threshold": 140,
+        "ocr_preprocess": "default",
+        "ocr_scale": "auto",
+        "ocr_threshold": 180,
         "ocr_lang": "jpn",
-        "ocr_line_split": "detected",
+        "ocr_line_split": "none",
     },
 }
 

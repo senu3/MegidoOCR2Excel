@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from pathlib import Path
 from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, BooleanVar, Canvas, Menu, Scrollbar, StringVar, filedialog, messagebox
@@ -108,6 +109,7 @@ class ImageOcrExcelApp:
         self.vbar: Scrollbar | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
         self.loading_progress: ctk.CTkProgressBar | None = None
+        self.busy = False
 
         self._build_ui()
         self._bind_shortcuts()
@@ -231,6 +233,46 @@ class ImageOcrExcelApp:
         if self.loading_overlay is not None:
             self.loading_overlay.place_forget()
         self.root.update_idletasks()
+
+    def _run_background(self, loading_message: str, work, on_success, on_error=None, on_finally=None) -> None:
+        if self.busy:
+            self.status_var.set("処理中です。完了までお待ちください。")
+            return
+        self.busy = True
+        self._show_loading(loading_message)
+
+        def finish_success(result) -> None:
+            try:
+                on_success(result)
+            finally:
+                finish_common()
+
+        def finish_error(error: Exception) -> None:
+            try:
+                if on_error is not None:
+                    on_error(error)
+                else:
+                    messagebox.showerror("処理エラー", str(error))
+            finally:
+                finish_common()
+
+        def finish_common() -> None:
+            try:
+                if on_finally is not None:
+                    on_finally()
+            finally:
+                self.busy = False
+                self._hide_loading()
+
+        def worker() -> None:
+            try:
+                result = work()
+            except Exception as exc:
+                self.root.after(0, lambda error=exc: finish_error(error))
+            else:
+                self.root.after(0, lambda value=result: finish_success(value))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-Left>", self.previous_image)
@@ -528,7 +570,7 @@ class ImageOcrExcelApp:
         self.folder_var.set(str(folder))
         self.image_files = files
         self.current_image_index = 0
-        self._load_current_image(auto_ocr=bool(self.fields))
+        self._load_current_image(auto_ocr=False)
         if self.fields and self.mode_var.get() == "テンプレート":
             self.mode_var.set("確認")
         self._render_side_body()
@@ -537,14 +579,14 @@ class ImageOcrExcelApp:
         if len(self.image_files) <= 1:
             return
         self.current_image_index = (self.current_image_index - 1) % len(self.image_files)
-        self._load_current_image(auto_ocr=bool(self.fields))
+        self._load_current_image(auto_ocr=False)
         self._render_side_body()
 
     def next_image(self, _event=None) -> None:
         if len(self.image_files) <= 1:
             return
         self.current_image_index = (self.current_image_index + 1) % len(self.image_files)
-        self._load_current_image(auto_ocr=bool(self.fields))
+        self._load_current_image(auto_ocr=False)
         self._render_side_body()
 
     def _load_current_image(self, auto_ocr: bool) -> None:
@@ -572,7 +614,10 @@ class ImageOcrExcelApp:
                 self._ocr_all_current(show_errors=False)
             finally:
                 self._hide_loading()
-        self.status_var.set("画像を読み込みました。読み取り結果を確認できます。")
+        if auto_ocr:
+            self.status_var.set("画像を読み込みました。読み取り結果を確認できます。")
+        else:
+            self.status_var.set("画像を読み込みました。確認タブでOCRを実行できます。")
 
     def _image_status_text(self) -> str:
         if not self.image_path:
@@ -1292,13 +1337,35 @@ class ImageOcrExcelApp:
         if not self._enabled_fields():
             messagebox.showerror("項目なし", "有効な読み取り項目がありません。")
             return
-        self._show_loading("OCR中です。初回はPaddleOCRの準備に時間がかかります。")
-        try:
-            if self._ocr_all_current(show_errors=True):
-                self.status_var.set("現在の画像をOCRしました。")
-                self._render_side_body()
-        finally:
-            self._hide_loading()
+        image = self.original_image.copy()
+        fields = [(idx, replace(field)) for idx, field in enumerate(self.fields)]
+        lang = self.lang_var.get()
+        tesseract_path = self.tesseract_var.get().strip()
+        backend = self.backend_var.get()
+
+        def work() -> tuple[list[str], list[str]]:
+            raw_results = [""] * len(fields)
+            results = [""] * len(fields)
+            for idx, field in fields:
+                if not field.enabled:
+                    continue
+                raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend)
+                if error or text is None:
+                    raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
+                raw_results[idx] = raw_text or ""
+                results[idx] = text
+            return raw_results, results
+
+        def on_success(result: tuple[list[str], list[str]]) -> None:
+            self.current_raw_results, self.current_results = result
+            self.status_var.set("現在の画像をOCRしました。")
+            self._render_side_body()
+
+        def on_error(error: Exception) -> None:
+            self.status_var.set("OCRに失敗しました。")
+            messagebox.showerror("OCRエラー", str(error))
+
+        self._run_background("OCR中です。初回はPaddleOCRの準備に時間がかかります。", work, on_success, on_error)
 
     def ocr_field_at(self, idx: int) -> None:
         if not self.original_image:
@@ -1306,19 +1373,34 @@ class ImageOcrExcelApp:
             return
         if not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
             return
-        self._show_loading(f"{self.fields[idx].name} をOCR中です。")
-        try:
-            raw_text, text = self._ocr_field_detail(self.original_image, self.fields[idx], show_errors=True)
-            if text is None:
+        image = self.original_image.copy()
+        field = replace(self.fields[idx])
+        lang = self.lang_var.get()
+        tesseract_path = self.tesseract_var.get().strip()
+        backend = self.backend_var.get()
+
+        def work() -> tuple[int, str, str]:
+            raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend)
+            if error or text is None:
+                raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
+            return idx, raw_text or "", text
+
+        def on_success(result: tuple[int, str, str]) -> None:
+            result_idx, raw_text, text = result
+            if not (0 <= result_idx < len(self.fields)):
                 return
             self._ensure_result_buffers()
-            self.current_raw_results[idx] = raw_text or ""
-            self.current_results[idx] = text
-            self.selected_index = idx
-            self.status_var.set(f"{self.fields[idx].name} をOCRしました。")
+            self.current_raw_results[result_idx] = raw_text
+            self.current_results[result_idx] = text
+            self.selected_index = result_idx
+            self.status_var.set(f"{self.fields[result_idx].name} をOCRしました。")
             self._render_side_body()
-        finally:
-            self._hide_loading()
+
+        def on_error(error: Exception) -> None:
+            self.status_var.set("OCRに失敗しました。")
+            messagebox.showerror("OCRエラー", str(error))
+
+        self._run_background(f"{field.name} をOCR中です。", work, on_success, on_error)
 
     def _ocr_all_current(self, show_errors: bool) -> bool:
         if not self.original_image:
@@ -1388,35 +1470,47 @@ class ImageOcrExcelApp:
         total = len(self.image_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set("Excel出力を開始しました。")
-        self._show_loading(f"Excel出力中です。0 / {total}")
+        output_path = self.output_path
+        image_files = list(self.image_files)
+        export_fields = [replace(field) for field in fields]
+        lang = self.lang_var.get()
+        tesseract_path = self.tesseract_var.get().strip()
+        backend = self.backend_var.get()
 
         def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
-            self.progress_var.set(f"{row_index} / {total_count}")
-            self.status_var.set(f"OCR中: {image_path.name}")
-            self._update_loading(f"Excel出力中です。{row_index} / {total_count}\n{image_path.name}")
+            def apply_update() -> None:
+                self.progress_var.set(f"{row_index} / {total_count}")
+                self.status_var.set(f"OCR中: {image_path.name}")
+                self._update_loading(f"Excel出力中です。{row_index} / {total_count}\n{image_path.name}")
 
-        try:
-            result = self.excel_exporter.export(
-                self.output_path,
-                self.image_files,
-                fields,
+            self.root.after(0, apply_update)
+
+        def work():
+            return self.excel_exporter.export(
+                output_path,
+                image_files,
+                export_fields,
                 settings,
-                lambda image, field: self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get()),
+                lambda image, field: self.ocr_engine.recognize_field(image, field, lang, tesseract_path, backend),
                 update_progress,
             )
-        except Exception as exc:
+
+        def on_success(result) -> None:
+            if result.errors:
+                self.status_var.set(f"Excelへ出力しました（エラー {len(result.errors)} 件）: {output_path}")
+                messagebox.showwarning("完了（エラーあり）", f"{result.total_images} 画像の処理が完了しました。\nエラー {len(result.errors)} 件は Errors シートに出力しました。\n{output_path}")
+            else:
+                self.status_var.set(f"Excelへ出力しました: {output_path}")
+                messagebox.showinfo("完了", f"{result.total_images} 画像をExcelへ出力しました。\n{output_path}")
+
+        def on_error(error: Exception) -> None:
             self.status_var.set("Excel出力に失敗しました。")
-            messagebox.showerror("出力エラー", f"Excelへ出力できませんでした。\n{exc}")
-            return
-        finally:
+            messagebox.showerror("出力エラー", f"Excelへ出力できませんでした。\n{error}")
+
+        def on_finally() -> None:
             self.progress_var.set("")
-            self._hide_loading()
-        if result.errors:
-            self.status_var.set(f"Excelへ出力しました（エラー {len(result.errors)} 件）: {self.output_path}")
-            messagebox.showwarning("完了（エラーあり）", f"{result.total_images} 画像の処理が完了しました。\nエラー {len(result.errors)} 件は Errors シートに出力しました。\n{self.output_path}")
-        else:
-            self.status_var.set(f"Excelへ出力しました: {self.output_path}")
-            messagebox.showinfo("完了", f"{result.total_images} 画像をExcelへ出力しました。\n{self.output_path}")
+
+        self._run_background(f"Excel出力中です。0 / {total}", work, on_success, on_error, on_finally)
 
     def _initial_zoom(self) -> float:
         if not self.original_image:

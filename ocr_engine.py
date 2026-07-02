@@ -322,10 +322,23 @@ class PaddleBackend:
 
     def _run_ocr(self, ocr: Any, image: Image.Image) -> Any:
         image = image.convert("RGB")
+        predict_method = getattr(ocr, "predict", None)
+        if callable(predict_method):
+            try:
+                import numpy as np
+
+                return predict_method(
+                    np.array(image),
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                )
+            except (ImportError, TypeError):
+                pass
+
         with tempfile.TemporaryDirectory() as temp_dir:
             image_path = Path(temp_dir) / "ocr_crop.png"
             image.save(image_path)
-            predict_method = getattr(ocr, "predict", None)
             if callable(predict_method):
                 try:
                     return predict_method(
