@@ -10,21 +10,21 @@
 uv sync
 ```
 
-OCRにはTesseract OCR本体が必要です。Windowsでは以下をインストールし、日本語データを含めてください。
+OCRバックエンドはPaddleOCRを標準で使用します。初回OCR時にPaddleOCRのモデルが自動ダウンロードされるため、初回だけ時間がかかります。モデルはユーザーディレクトリにキャッシュされます。
+
+Tesseract OCRを比較用または退避用に使う場合のみ、追加依存とTesseract OCR本体をインストールしてください。
+
+```powershell
+uv sync --extra tesseract
+```
 
 - Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki
 - インストール時にJapanese language dataを選択
 
-Tesseractのパスが自動検出されない場合は、アプリ内の「設定」から実行ファイルのパスを指定してください。
+Tesseractのパスが自動検出されない場合は、アプリ内の「設定」でバックエンドを `tesseract` にしたうえで、実行ファイルのパスを指定してください。
 
 ```text
 C:\Program Files\Tesseract-OCR\tesseract.exe
-```
-
-PaddleOCRを試す場合は追加依存を同期してください。
-
-```powershell
-uv sync --extra paddle
 ```
 
 ## 起動
@@ -120,6 +120,5 @@ uv run python scripts/measure_speaker_ocr.py --preprocess white-glyph --scale 4 
 uv run python scripts/measure_dialogue_ocr.py --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn --csv-out C:\tmp\dialogue-ocr.csv
 uv run python scripts/measure_dialogue_ocr.py --line-split detected --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn
 uv run python scripts/measure_dialogue_ocr.py --line-split none
-uv run python scripts/measure_dialogue_ocr.py --backend paddle --preprocess threshold --scale 3 --threshold 140 --lang jpn
-uv run python scripts/measure_dialogue_ocr.py --tessdata-dir C:\tessdata_best --oem 1
+uv run python scripts/measure_dialogue_ocr.py --backend tesseract --tessdata-dir C:\tessdata_best --oem 1
 ```

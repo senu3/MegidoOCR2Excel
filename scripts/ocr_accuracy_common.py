@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ocr_engine import DEFAULT_LANG, OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
+from ocr_engine import DEFAULT_BACKEND, DEFAULT_LANG, OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
 from ocr_models import OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, TemplateField
 from template_store import fields_from_template, load_template
 
@@ -50,7 +50,7 @@ def build_parser(
     parser.add_argument("--template", type=Path, default=ROOT / ".samples" / "megido_novel_template.json")
     parser.add_argument("--field", default=field_name)
     parser.add_argument("--lang", default=default_lang)
-    parser.add_argument("--backend", choices=["tesseract", "paddle"], default="tesseract")
+    parser.add_argument("--backend", choices=["tesseract", "paddle"], default=DEFAULT_BACKEND)
     parser.add_argument("--tesseract", default="")
     parser.add_argument("--tessdata-dir", type=Path, default=None)
     parser.add_argument("--psm", type=int, default=default_psm)

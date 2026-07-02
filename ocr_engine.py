@@ -28,7 +28,7 @@ else:
 
 
 DEFAULT_LANG = "jpn+eng"
-DEFAULT_BACKEND = "tesseract"
+DEFAULT_BACKEND = "paddle"
 
 
 def detect_tesseract() -> str:
