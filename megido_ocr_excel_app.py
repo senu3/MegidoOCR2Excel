@@ -226,14 +226,16 @@ class ImageOcrExcelApp:
                 self._field_row(scroller, idx)
 
     def _render_review_mode(self) -> None:
-        body = self.side_body
-        assert body is not None
+        side_body = self.side_body
+        assert side_body is not None
+        body = ctk.CTkScrollableFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
+        body.pack(fill=BOTH, expand=True)
         self._section_note(body, "2. 読み取り確認", "OCR結果と後処理の効き方を確認します。修正作業はExcel側で行います。")
 
         ctk.CTkLabel(body, textvariable=self.folder_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
 
-        scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
-        scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
+        scroller = ctk.CTkFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        scroller.pack(side=TOP, fill="x", padx=16, pady=(0, 10))
         if not self.fields:
             self._empty_state(scroller, "テンプレートがありません", "先に読み取り項目を作成")
             return
