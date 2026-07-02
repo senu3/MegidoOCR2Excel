@@ -68,9 +68,9 @@ class Layout:
 @dataclass(frozen=True)
 class Copy:
     header: str = "ノベル画面をExcel化"
-    initial_status: str = "ノベル画面のスクリーンショットを開き、読み取りたいセリフ範囲をドラッグしてください。"
-    empty_canvas_title: str = "サンプル画像を開いてください"
-    empty_canvas_note: str = "テンプレート作成では、読み取りたい場所をドラッグして項目名を付けます。"
+    initial_status: str = "ノベル画面の画像フォルダを選び、先頭画像で読み取りたい範囲をドラッグしてください。"
+    empty_canvas_title: str = "画像フォルダを選択してください"
+    empty_canvas_note: str = "フォルダ内の先頭画像を基準に、読み取りたい場所をドラッグして項目名を付けます。"
     default_template_name: str = "megido-novel-template.json"
 
 

@@ -297,7 +297,7 @@ class PaddleBackend:
             os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
             from paddleocr import PaddleOCR
         except ImportError as exc:
-            raise RuntimeError("PaddleOCRがインストールされていません。`uv sync --extra paddle` で追加してください。") from exc
+            raise RuntimeError("PaddleOCRがインストールされていません。`uv sync` で依存関係を同期してください。") from exc
 
         candidates = [
             {

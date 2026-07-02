@@ -12,21 +12,19 @@ def build_template_data(
     lang: str,
     tesseract_path: str,
     ocr_backend: str,
-    sample_image: str,
     output_settings: dict,
     template_name: str = "ocr-template",
-    sample_image_size: dict | None = None,
+    profile_id: str = "",
 ) -> dict:
     return {
         "format": "image-ocr-to-excel-template",
         "version": TEMPLATE_VERSION,
         "template_name": template_name,
+        "profile_id": profile_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "lang": lang,
         "tesseract_path": tesseract_path,
         "ocr_backend": ocr_backend,
-        "sample_image": sample_image,
-        "sample_image_size": sample_image_size,
         "output_settings": output_settings,
         "fields": [field.to_dict() for field in fields],
     }

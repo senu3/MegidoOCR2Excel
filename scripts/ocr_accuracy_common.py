@@ -15,8 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ocr_engine import DEFAULT_BACKEND, DEFAULT_LANG, OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
+from ocr_engine import DEFAULT_LANG, OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
 from ocr_models import OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, TemplateField
+from profiles.megido_novel import DEFAULT_BACKEND
 from template_store import fields_from_template, load_template
 
 try:
@@ -44,6 +45,10 @@ def build_parser(
     default_threshold: int,
     default_lang: str,
     default_line_split: str,
+    default_line_padding: int,
+    default_line_detect_threshold: int,
+    default_line_detect_min_ratio: float,
+    default_line_detect_gap: int,
 ) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=f"{field_name} のOCR精度を測定します。")
     parser.add_argument("--samples-dir", type=Path, default=ROOT / ".samples")
@@ -60,10 +65,10 @@ def build_parser(
     parser.add_argument("--threshold", type=int, default=default_threshold)
     parser.add_argument("--line-split", choices=["none", "fixed", "expected", "detected"], default=default_line_split)
     parser.add_argument("--line-count", type=int, default=3, help="--line-split fixed の分割行数。")
-    parser.add_argument("--line-padding", type=int, default=12, help="行分割時に各行へ追加する上下余白px。")
-    parser.add_argument("--line-detect-threshold", type=int, default=90, help="--line-split detected で黒画素とみなす明度。")
-    parser.add_argument("--line-detect-min-ratio", type=float, default=0.015, help="--line-split detected で行とみなす黒画素数の横幅比率。")
-    parser.add_argument("--line-detect-gap", type=int, default=10, help="--line-split detected で同一行として結合する縦方向gap。")
+    parser.add_argument("--line-padding", type=int, default=default_line_padding, help="行分割時に各行へ追加する上下余白px。")
+    parser.add_argument("--line-detect-threshold", type=int, default=default_line_detect_threshold, help="--line-split detected で黒画素とみなす明度。")
+    parser.add_argument("--line-detect-min-ratio", type=float, default=default_line_detect_min_ratio, help="--line-split detected で行とみなす黒画素数の横幅比率。")
+    parser.add_argument("--line-detect-gap", type=int, default=default_line_detect_gap, help="--line-split detected で同一行として結合する縦方向gap。")
     parser.add_argument("--match-space-normalized", action="store_true", help="比較時だけ空白、改行、全角スペースを除外します。")
     parser.add_argument("--limit", type=int, default=0, help="先頭N件だけ測定します。0なら全件。")
     parser.add_argument("--csv-out", type=Path, default=None)
@@ -79,6 +84,10 @@ def run_accuracy(
     default_threshold: int = 180,
     default_lang: str = "",
     default_line_split: str = "none",
+    default_line_padding: int = 12,
+    default_line_detect_threshold: int = 90,
+    default_line_detect_min_ratio: float = 0.015,
+    default_line_detect_gap: int = 10,
     default_match_space_normalized: bool = False,
 ) -> int:
     args = build_parser(
@@ -89,6 +98,10 @@ def run_accuracy(
         default_threshold,
         default_lang,
         default_line_split,
+        default_line_padding,
+        default_line_detect_threshold,
+        default_line_detect_min_ratio,
+        default_line_detect_gap,
     ).parse_args()
     if default_match_space_normalized:
         args.match_space_normalized = True

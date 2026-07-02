@@ -8,10 +8,11 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from excel_exporter import ExcelExporter, ExportSettings, validate_export_settings
-from megido_app_config import APP_TITLE, DEFAULT_LANG, IMAGE_EXTENSIONS
+from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID
 from megido_ui_theme import THEME
-from ocr_engine import DEFAULT_BACKEND, OcrEngine, detect_tesseract, fill_missing_field_source_size, scaled_field
+from ocr_engine import OcrEngine, detect_tesseract, fill_missing_field_source_size, scaled_field
 from ocr_models import OCR_BACKEND_OPTIONS, POSTPROCESS_OPTIONS, TemplateField
+from profiles.megido_novel import field_ocr_preset, has_field_ocr_preset
 from template_store import build_template_data, fields_from_template, load_template, save_template
 
 
@@ -122,8 +123,7 @@ class ImageOcrExcelApp:
         toolbar = ctk.CTkFrame(canvas_area, height=THEME.layout.toolbar_height, corner_radius=0, fg_color=COLOR_CANVAS_TOOLBAR)
         toolbar.pack(side=TOP, fill="x")
         toolbar.pack_propagate(False)
-        self._toolbar_button(toolbar, "サンプル画像", self.open_sample_image, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, 104).pack(side=LEFT, padx=(12, 4), pady=10)
-        self._toolbar_button(toolbar, "画像フォルダ", self.open_image_folder, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 104).pack(side=LEFT, padx=4, pady=10)
+        self._toolbar_button(toolbar, "画像フォルダ", self.open_image_folder, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, 104).pack(side=LEFT, padx=(12, 4), pady=10)
         ctk.CTkFrame(toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider).pack(side=LEFT, padx=8, pady=14)
         self._toolbar_button(toolbar, "読込", self.load_template, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 62).pack(side=LEFT, padx=4, pady=10)
         self._toolbar_button(toolbar, "保存", self.save_template, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 62).pack(side=LEFT, padx=4, pady=10)
@@ -224,7 +224,7 @@ class ImageOcrExcelApp:
         assert body is not None
         self.field_check_vars = []
         self.field_row_widgets = []
-        self._section_note(body, "1. テンプレート作成", "サンプル画像上で読み取り範囲を作成し、ドラッグで調整します。")
+        self._section_note(body, "1. テンプレート作成", "フォルダ内の先頭画像で読み取り範囲を作成し、ドラッグで調整します。")
         ctk.CTkLabel(body, textvariable=self.template_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
 
         scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -250,7 +250,7 @@ class ImageOcrExcelApp:
             self._empty_state(scroller, "テンプレートがありません", "先に読み取り項目を作成")
             return
         if not self.original_image:
-            self._empty_state(scroller, "画像がありません", "サンプル画像またはフォルダを選択")
+            self._empty_state(scroller, "画像がありません", "画像フォルダを選択")
             return
 
         self._ensure_result_buffers()
@@ -472,21 +472,6 @@ class ImageOcrExcelApp:
         entry.after(10, lambda widget=entry: (widget.focus_set(), widget.select_range(0, "end")))
         return entry
 
-    def open_sample_image(self) -> None:
-        file_name = filedialog.askopenfilename(
-            title="サンプル画像を選択",
-            filetypes=[("Image files", "*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff"), ("All files", "*.*")],
-        )
-        if not file_name:
-            return
-        self.source_folder = None
-        self.folder_var.set("フォルダ未選択")
-        self.image_files = [Path(file_name)]
-        self.current_image_index = 0
-        self._load_current_image(auto_ocr=False)
-        self.mode_var.set("テンプレート")
-        self._render_side_body()
-
     def open_image_folder(self) -> None:
         folder_name = filedialog.askdirectory(title="画像フォルダを選択")
         if not folder_name:
@@ -501,7 +486,7 @@ class ImageOcrExcelApp:
         self.image_files = files
         self.current_image_index = 0
         self._load_current_image(auto_ocr=bool(self.fields))
-        if self.mode_var.get() == "テンプレート":
+        if self.fields and self.mode_var.get() == "テンプレート":
             self.mode_var.set("確認")
         self._render_side_body()
 
@@ -575,19 +560,16 @@ class ImageOcrExcelApp:
         if not file_name:
             return
         path = Path(file_name)
-        sample_size = None
         if self.original_image:
-            sample_size = {"width": self.original_image.width, "height": self.original_image.height}
             fill_missing_field_source_size(self.fields, self.original_image.size)
         data = build_template_data(
             fields=self.fields,
             lang=self.lang_var.get(),
             tesseract_path=self.tesseract_var.get(),
             ocr_backend=self.backend_var.get(),
-            sample_image=str(self.image_path) if self.image_path else "",
             output_settings=self._export_settings_dict(),
             template_name=path.stem,
-            sample_image_size=sample_size,
+            profile_id=PROFILE_ID,
         )
         save_template(path, data)
         self.template_path = path
@@ -626,12 +608,6 @@ class ImageOcrExcelApp:
         self._apply_output_settings(data.get("output_settings") or {})
         if data.get("tesseract_path"):
             self.tesseract_var.set(data["tesseract_path"])
-        sample_raw = data.get("sample_image") or ""
-        sample = Path(sample_raw) if sample_raw else None
-        if sample and sample.exists() and not self.original_image:
-            self.image_files = [sample]
-            self.current_image_index = 0
-            self._load_current_image(auto_ocr=False)
         self.status_var.set(f"テンプレートを読み込みました: {path}")
         self._render_side_body()
         self.redraw()
@@ -792,12 +768,6 @@ class ImageOcrExcelApp:
                 target_idx += 1
         return max(0, min(len(self.fields) - 1, target_idx))
 
-    def rename_field(self) -> None:
-        idx = self._require_field_selection()
-        if idx is None:
-            return
-        self.begin_inline_name_edit(idx)
-
     def rename_field_at(self, idx: int) -> None:
         self.begin_inline_name_edit(idx)
 
@@ -814,12 +784,27 @@ class ImageOcrExcelApp:
         if self.editing_name_index != idx or not (0 <= idx < len(self.fields)):
             return "break"
         self.editing_name_index = None
+        previous_name = self.fields[idx].name
         name = value.strip() or self.fields[idx].name
         name = self._unique_field_name(name.strip() or self.fields[idx].name, skip_index=idx)
         self.fields[idx].name = name
+        if self._apply_profile_preset_after_rename(idx, previous_name):
+            if idx < len(self.current_results):
+                self.current_results[idx] = ""
+            if idx < len(self.current_raw_results):
+                self.current_raw_results[idx] = ""
         self._render_side_body()
         self.redraw()
         return "break"
+
+    def _apply_profile_preset_after_rename(self, idx: int, previous_name: str) -> bool:
+        field = self.fields[idx]
+        if not previous_name.startswith("項目") or not has_field_ocr_preset(field.name):
+            return False
+        preset = field_ocr_preset(field.name)
+        for key, value in preset.items():
+            setattr(field, key, value)
+        return True
 
     def cancel_inline_name_edit(self) -> str:
         self.editing_name_index = None
@@ -864,12 +849,6 @@ class ImageOcrExcelApp:
         finally:
             menu.grab_release()
         return "break"
-
-    def delete_field(self) -> None:
-        idx = self._require_field_selection()
-        if idx is None:
-            return
-        self.delete_field_at(idx)
 
     def delete_field_at(self, idx: int, confirm: bool = False) -> None:
         if not (0 <= idx < len(self.fields)):
@@ -1270,13 +1249,6 @@ class ImageOcrExcelApp:
             self.status_var.set("現在の画像をOCRしました。")
             self._render_side_body()
 
-    def ocr_selected_field(self, _event=None) -> None:
-        idx = self.selected_index
-        if idx is None or not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
-            messagebox.showinfo("項目未選択", "確認する有効な項目を選択してください。")
-            return
-        self.ocr_field_at(idx)
-
     def ocr_field_at(self, idx: int) -> None:
         if not self.original_image:
             messagebox.showerror("画像未選択", "先に画像を開いてください。")
@@ -1312,12 +1284,6 @@ class ImageOcrExcelApp:
         if error and show_errors:
             messagebox.showerror("OCRエラー", error)
         return raw_text, text
-
-    def _ocr_field(self, image: Image.Image, field: TemplateField, show_errors: bool) -> str | None:
-        text, error = self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get())
-        if error and show_errors:
-            messagebox.showerror("OCRエラー", error)
-        return text
 
     def _export_settings_dict(self) -> dict:
         return {
@@ -1422,11 +1388,6 @@ class ImageOcrExcelApp:
                 self.selected_index = idx
                 return
         self.selected_index = None
-
-    def _set_result(self, idx: int, value: str) -> None:
-        self._ensure_current_results()
-        if 0 <= idx < len(self.current_results):
-            self.current_results[idx] = value
 
     def _sync_counts(self) -> None:
         enabled = len(self._enabled_fields())
