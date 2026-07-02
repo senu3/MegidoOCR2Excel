@@ -7,6 +7,7 @@ TEMPLATE_VERSION = 3
 POSTPROCESS_OPTIONS = ["そのまま", "数字のみ", "数値抽出", "英数字のみ"]
 OCR_PREPROCESS_OPTIONS = ["default", "gray", "threshold", "invert-threshold", "outline-threshold", "white-glyph"]
 OCR_SCALE_OPTIONS = ["auto", "2", "3", "4"]
+OCR_LINE_SPLIT_OPTIONS = ["none", "detected"]
 
 
 @dataclass
@@ -28,6 +29,11 @@ class TemplateField:
     ocr_threshold: int = 180
     ocr_psm: int = 6
     ocr_lang: str = ""
+    ocr_line_split: str = "none"
+    ocr_line_padding: int = 12
+    ocr_line_detect_threshold: int = 90
+    ocr_line_detect_min_ratio: float = 0.015
+    ocr_line_detect_gap: int = 10
 
     def normalized(self) -> "TemplateField":
         x1, x2 = sorted((self.x1, self.x2))
@@ -50,6 +56,11 @@ class TemplateField:
             self.ocr_threshold,
             self.ocr_psm,
             self.ocr_lang,
+            self.ocr_line_split,
+            self.ocr_line_padding,
+            self.ocr_line_detect_threshold,
+            self.ocr_line_detect_min_ratio,
+            self.ocr_line_detect_gap,
         )
 
     def to_dict(self) -> dict:
@@ -66,6 +77,9 @@ def field_from_dict(item: dict) -> TemplateField:
     ocr_scale = str(item.get("ocr_scale") or "auto")
     if ocr_scale not in OCR_SCALE_OPTIONS:
         ocr_scale = "auto"
+    ocr_line_split = str(item.get("ocr_line_split") or "none")
+    if ocr_line_split not in OCR_LINE_SPLIT_OPTIONS:
+        ocr_line_split = "none"
 
     if "cell" in item:
         name = str(item.get("name") or item.get("cell") or "項目")
@@ -90,4 +104,9 @@ def field_from_dict(item: dict) -> TemplateField:
         int(item.get("ocr_threshold") or 180),
         int(item.get("ocr_psm") or 6),
         str(item.get("ocr_lang") or ""),
+        ocr_line_split,
+        int(item.get("ocr_line_padding") or 12),
+        int(item.get("ocr_line_detect_threshold") or 90),
+        float(item.get("ocr_line_detect_min_ratio") or 0.015),
+        int(item.get("ocr_line_detect_gap") or 10),
     ).normalized()

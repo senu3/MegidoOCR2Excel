@@ -12,6 +12,7 @@ if __name__ == "__main__":
             default_scale="3",
             default_threshold=140,
             default_lang="jpn",
+            default_line_split="detected",
             default_match_space_normalized=True,
         )
     )

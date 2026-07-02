@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -43,6 +43,7 @@ def build_parser(
     default_scale: str,
     default_threshold: int,
     default_lang: str,
+    default_line_split: str,
 ) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=f"{field_name} のOCR精度を測定します。")
     parser.add_argument("--samples-dir", type=Path, default=ROOT / ".samples")
@@ -50,11 +51,18 @@ def build_parser(
     parser.add_argument("--field", default=field_name)
     parser.add_argument("--lang", default=default_lang)
     parser.add_argument("--tesseract", default="")
+    parser.add_argument("--tessdata-dir", type=Path, default=None)
     parser.add_argument("--psm", type=int, default=default_psm)
     parser.add_argument("--oem", type=int, default=3)
     parser.add_argument("--preprocess", choices=OCR_PREPROCESS_OPTIONS, default=default_preprocess)
     parser.add_argument("--scale", choices=OCR_SCALE_OPTIONS, default=default_scale)
     parser.add_argument("--threshold", type=int, default=default_threshold)
+    parser.add_argument("--line-split", choices=["none", "fixed", "expected", "detected"], default=default_line_split)
+    parser.add_argument("--line-count", type=int, default=3, help="--line-split fixed の分割行数。")
+    parser.add_argument("--line-padding", type=int, default=12, help="行分割時に各行へ追加する上下余白px。")
+    parser.add_argument("--line-detect-threshold", type=int, default=90, help="--line-split detected で黒画素とみなす明度。")
+    parser.add_argument("--line-detect-min-ratio", type=float, default=0.015, help="--line-split detected で行とみなす黒画素数の横幅比率。")
+    parser.add_argument("--line-detect-gap", type=int, default=10, help="--line-split detected で同一行として結合する縦方向gap。")
     parser.add_argument("--match-space-normalized", action="store_true", help="比較時だけ空白、改行、全角スペースを除外します。")
     parser.add_argument("--limit", type=int, default=0, help="先頭N件だけ測定します。0なら全件。")
     parser.add_argument("--csv-out", type=Path, default=None)
@@ -69,6 +77,7 @@ def run_accuracy(
     default_scale: str = "auto",
     default_threshold: int = 180,
     default_lang: str = "",
+    default_line_split: str = "none",
     default_match_space_normalized: bool = False,
 ) -> int:
     args = build_parser(
@@ -78,6 +87,7 @@ def run_accuracy(
         default_scale,
         default_threshold,
         default_lang,
+        default_line_split,
     ).parse_args()
     if default_match_space_normalized:
         args.match_space_normalized = True
@@ -110,7 +120,7 @@ def run_accuracy(
     rows: list[AccuracyRow] = []
     for image_path, csv_path in pairs:
         expected = read_expected(csv_path, field.name)
-        actual, error = recognize(image_path, field, args)
+        actual, error = recognize(image_path, field, args, expected)
         similarity = score_text(expected, actual)
         exact = expected == actual
         rows.append(AccuracyRow(image_path.name, expected, actual, similarity, exact, is_match(expected, actual), error))
@@ -148,7 +158,7 @@ def read_expected(csv_path: Path, field_name: str) -> str:
     return data.get(field_name, "")
 
 
-def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace) -> tuple[str, str]:
+def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, expected: str = "") -> tuple[str, str]:
     try:
         image = Image.open(image_path).convert("RGB")
     except Exception as exc:
@@ -159,19 +169,107 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace) 
         return "", "読み取り範囲が画像外、または小さすぎます。"
 
     crop = image.crop((region.x1, region.y1, region.x2, region.y2))
+    if args.line_split != "none":
+        return recognize_lines(crop, field, args, expected, image_path.stem)
+
     prepared = prepare_for_ocr(crop, args.preprocess, args.scale, args.threshold)
     if args.save_crops:
         prepared.save(args.save_crops / f"{image_path.stem}_{field.name}.png")
 
-    config = f"--oem {args.oem} --psm {args.psm}"
     try:
-        raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or DEFAULT_LANG, config=config)
+        raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or DEFAULT_LANG, config=ocr_config(args))
     except pytesseract.TesseractNotFoundError:
         return "", "Tesseractが見つかりません。"
     except pytesseract.TesseractError as exc:
         return "", str(exc)
 
     return apply_postprocess(clean_text(raw_text), field), ""
+
+
+def recognize_lines(crop: Image.Image, field: TemplateField, args: argparse.Namespace, expected: str, image_stem: str) -> tuple[str, str]:
+    bands = line_bands(crop, args, expected)
+    parts: list[str] = []
+    errors: list[str] = []
+
+    for index, (y1, y2) in enumerate(bands):
+        line_crop = crop.crop((0, y1, crop.width, y2))
+        prepared = prepare_for_ocr(line_crop, args.preprocess, args.scale, args.threshold)
+        if args.save_crops:
+            prepared.save(args.save_crops / f"{image_stem}_{field.name}_line{index + 1}.png")
+        try:
+            raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or DEFAULT_LANG, config=ocr_config(args))
+        except pytesseract.TesseractNotFoundError:
+            return "", "Tesseractが見つかりません。"
+        except pytesseract.TesseractError as exc:
+            errors.append(str(exc))
+            continue
+        cleaned = clean_text(raw_text)
+        if cleaned:
+            parts.append(cleaned)
+
+    if errors:
+        return apply_postprocess(" ".join(parts), field), " / ".join(errors)
+    return apply_postprocess(" ".join(parts), field), ""
+
+
+def line_bands(crop: Image.Image, args: argparse.Namespace, expected: str) -> list[tuple[int, int]]:
+    if args.line_split == "detected":
+        return detect_line_bands(crop, args)
+
+    line_count = count_expected_lines(expected) if args.line_split == "expected" else max(1, args.line_count)
+    height = crop.height
+    bands = []
+    for index in range(line_count):
+        y1 = round(height * index / line_count)
+        y2 = round(height * (index + 1) / line_count)
+        bands.append((max(0, y1 - args.line_padding), min(height, y2 + args.line_padding)))
+    return bands
+
+
+def detect_line_bands(crop: Image.Image, args: argparse.Namespace) -> list[tuple[int, int]]:
+    gray = ImageOps.grayscale(crop)
+    pixels = gray.load()
+    min_count = max(3, int(crop.width * args.line_detect_min_ratio))
+    rows: list[int] = []
+    for y in range(gray.height):
+        count = 0
+        for x in range(gray.width):
+            if pixels[x, y] < args.line_detect_threshold:
+                count += 1
+        if count >= min_count:
+            rows.append(y)
+
+    if not rows:
+        return [(0, crop.height)]
+
+    bands: list[tuple[int, int]] = []
+    start = previous = rows[0]
+    for y in rows[1:]:
+        if y - previous <= args.line_detect_gap:
+            previous = y
+            continue
+        add_detected_band(bands, crop.height, start, previous, args.line_padding)
+        start = previous = y
+    add_detected_band(bands, crop.height, start, previous, args.line_padding)
+    return bands or [(0, crop.height)]
+
+
+def add_detected_band(bands: list[tuple[int, int]], height: int, start: int, end: int, padding: int) -> None:
+    if end - start <= 8:
+        return
+    bands.append((max(0, start - padding), min(height, end + padding)))
+
+
+def count_expected_lines(expected: str) -> int:
+    parts = [part for part in re.split(r"\u3000+", expected) if part.strip()]
+    return max(1, len(parts))
+
+
+def ocr_config(args: argparse.Namespace) -> str:
+    config_parts = [f"--oem {args.oem}", f"--psm {args.psm}"]
+    if args.tessdata_dir:
+        config_parts.append(f"--tessdata-dir {args.tessdata_dir}")
+    return " ".join(config_parts)
 
 
 def normalize_text(value: str) -> str:
@@ -194,7 +292,15 @@ def print_report(field_name: str, args: argparse.Namespace, rows: list[AccuracyR
     matched = normalized if args.match_space_normalized else exact
     match_label = "space_normalized_match" if args.match_space_normalized else "exact_match"
     print(f"field: {field_name}")
-    print(f"settings: preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or DEFAULT_LANG}")
+    tessdata = f" tessdata_dir={args.tessdata_dir}" if args.tessdata_dir else ""
+    line_split = f" line_split={args.line_split}"
+    if args.line_split == "fixed":
+        line_split += f" line_count={args.line_count}"
+    if args.line_split != "none":
+        line_split += f" line_padding={args.line_padding}"
+    if args.line_split == "detected":
+        line_split += f" line_detect_threshold={args.line_detect_threshold} line_detect_min_ratio={args.line_detect_min_ratio} line_detect_gap={args.line_detect_gap}"
+    print(f"settings: preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or DEFAULT_LANG}{tessdata}{line_split}")
     if args.match_space_normalized:
         print(f"samples: {len(rows)}  avg_similarity: {avg:.3f}  {match_label}: {matched}/{len(rows)}  exact_match: {exact}/{len(rows)}")
     else:

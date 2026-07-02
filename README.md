@@ -112,4 +112,7 @@ uv run python scripts/measure_dialogue_ocr.py
 ```powershell
 uv run python scripts/measure_speaker_ocr.py --preprocess white-glyph --scale 4 --threshold 190 --psm 6 --lang jpn
 uv run python scripts/measure_dialogue_ocr.py --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn --csv-out C:\tmp\dialogue-ocr.csv
+uv run python scripts/measure_dialogue_ocr.py --line-split detected --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn
+uv run python scripts/measure_dialogue_ocr.py --line-split none
+uv run python scripts/measure_dialogue_ocr.py --tessdata-dir C:\tessdata_best --oem 1
 ```

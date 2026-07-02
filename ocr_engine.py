@@ -64,6 +64,11 @@ def scaled_field(field: TemplateField, image: Image.Image | None) -> TemplateFie
         region.ocr_threshold,
         region.ocr_psm,
         region.ocr_lang,
+        region.ocr_line_split,
+        region.ocr_line_padding,
+        region.ocr_line_detect_threshold,
+        region.ocr_line_detect_min_ratio,
+        region.ocr_line_detect_gap,
     )
 
 
@@ -151,6 +156,46 @@ def clean_text(text: str) -> str:
     return " ".join(line for line in lines if line).strip()
 
 
+def detect_line_bands(
+    image: Image.Image,
+    threshold: int = 90,
+    min_ratio: float = 0.015,
+    gap: int = 10,
+    padding: int = 12,
+) -> list[tuple[int, int]]:
+    gray = ImageOps.grayscale(image)
+    pixels = gray.load()
+    min_count = max(3, int(image.width * min_ratio))
+    rows: list[int] = []
+    for y in range(gray.height):
+        count = 0
+        for x in range(gray.width):
+            if pixels[x, y] < threshold:
+                count += 1
+        if count >= min_count:
+            rows.append(y)
+
+    if not rows:
+        return [(0, image.height)]
+
+    bands: list[tuple[int, int]] = []
+    start = previous = rows[0]
+    for y in rows[1:]:
+        if y - previous <= gap:
+            previous = y
+            continue
+        add_detected_band(bands, image.height, start, previous, padding)
+        start = previous = y
+    add_detected_band(bands, image.height, start, previous, padding)
+    return bands or [(0, image.height)]
+
+
+def add_detected_band(bands: list[tuple[int, int]], height: int, start: int, end: int, padding: int) -> None:
+    if end - start <= 8:
+        return
+    bands.append((max(0, start - padding), min(height, end + padding)))
+
+
 def apply_postprocess(text: str, field: TemplateField) -> str:
     value = text
     if field.replace_from:
@@ -188,11 +233,15 @@ class OcrEngine:
             return None, None, "読み取り範囲が画像外、または小さすぎます。"
 
         crop = image.crop((region.x1, region.y1, region.x2, region.y2))
-        prepared = prepare_for_ocr(crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
         ocr_lang = field.ocr_lang.strip() or lang.strip() or DEFAULT_LANG
         psm = field.ocr_psm or 6
+        config = f"--oem 3 --psm {psm}"
         try:
-            raw_text = pytesseract.image_to_string(prepared, lang=ocr_lang, config=f"--oem 3 --psm {psm}")
+            if field.ocr_line_split == "detected":
+                raw_text = self.recognize_detected_lines(crop, field, ocr_lang, config)
+            else:
+                prepared = prepare_for_ocr(crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
+                raw_text = pytesseract.image_to_string(prepared, lang=ocr_lang, config=config)
         except pytesseract.TesseractNotFoundError:
             return None, None, "Tesseractが見つかりません。設定で実行ファイルのパスを指定してください。"
         except pytesseract.TesseractError as exc:
@@ -200,6 +249,24 @@ class OcrEngine:
 
         cleaned = clean_text(raw_text)
         return cleaned, apply_postprocess(cleaned, field), None
+
+    def recognize_detected_lines(self, crop: Image.Image, field: TemplateField, lang: str, config: str) -> str:
+        parts: list[str] = []
+        bands = detect_line_bands(
+            crop,
+            field.ocr_line_detect_threshold,
+            field.ocr_line_detect_min_ratio,
+            field.ocr_line_detect_gap,
+            field.ocr_line_padding,
+        )
+        for y1, y2 in bands:
+            line_crop = crop.crop((0, y1, crop.width, y2))
+            prepared = prepare_for_ocr(line_crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
+            text = pytesseract.image_to_string(prepared, lang=lang, config=config)
+            cleaned = clean_text(text)
+            if cleaned:
+                parts.append(cleaned)
+        return " ".join(parts)
 
     def recognize_field(
         self,
