@@ -91,6 +91,7 @@ class ImageOcrExcelApp:
         self.field_count_var = StringVar(value="0 項目")
         self.status_var = StringVar(value=THEME.copy.initial_status)
         self.progress_var = StringVar(value="")
+        self.loading_var = StringVar(value="")
         self.lang_var = StringVar(value=DEFAULT_LANG)
         self.lang_display_var = StringVar(value=self._lang_display(DEFAULT_LANG))
         self.backend_var = StringVar(value=DEFAULT_BACKEND)
@@ -105,6 +106,8 @@ class ImageOcrExcelApp:
         self.canvas: Canvas
         self.hbar: Scrollbar | None = None
         self.vbar: Scrollbar | None = None
+        self.loading_overlay: ctk.CTkFrame | None = None
+        self.loading_progress: ctk.CTkProgressBar | None = None
 
         self._build_ui()
         self._bind_shortcuts()
@@ -185,9 +188,49 @@ class ImageOcrExcelApp:
         self.side_body = ctk.CTkFrame(side, corner_radius=0, fg_color=COLOR_SURFACE)
         self.side_body.pack(side=TOP, fill=BOTH, expand=True)
         self._render_side_body()
+        self._build_loading_overlay()
 
     def _toolbar_button(self, parent, text: str, command, fg: str, hover: str, width: int) -> ctk.CTkButton:
         return ctk.CTkButton(parent, text=text, command=command, width=width, height=THEME.layout.button_height, font=UI_FONT_SMALL, fg_color=fg, hover_color=hover)
+
+    def _build_loading_overlay(self) -> None:
+        overlay = ctk.CTkFrame(
+            self.root,
+            width=360,
+            height=116,
+            corner_radius=THEME.layout.panel_radius,
+            fg_color=COLOR_SURFACE,
+            border_width=1,
+            border_color=COLOR_PRIMARY,
+        )
+        overlay.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(overlay, textvariable=self.loading_var, anchor="center", justify="center", font=UI_FONT_BOLD, text_color=COLOR_TEXT, wraplength=300).grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 10))
+        self.loading_progress = ctk.CTkProgressBar(overlay, mode="indeterminate", height=8, fg_color=COLOR_SECONDARY, progress_color=COLOR_PRIMARY)
+        self.loading_progress.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 18))
+        self.loading_overlay = overlay
+        self.loading_overlay.place_forget()
+
+    def _show_loading(self, message: str) -> None:
+        self.loading_var.set(message)
+        if self.loading_overlay is not None:
+            self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
+            self.loading_overlay.lift()
+        if self.loading_progress is not None:
+            self.loading_progress.start()
+        self.root.update_idletasks()
+
+    def _update_loading(self, message: str) -> None:
+        self.loading_var.set(message)
+        if self.loading_overlay is not None:
+            self.loading_overlay.lift()
+        self.root.update_idletasks()
+
+    def _hide_loading(self) -> None:
+        if self.loading_progress is not None:
+            self.loading_progress.stop()
+        if self.loading_overlay is not None:
+            self.loading_overlay.place_forget()
+        self.root.update_idletasks()
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-Left>", self.previous_image)
@@ -524,7 +567,11 @@ class ImageOcrExcelApp:
         self.undo_action = None
         self.redraw()
         if auto_ocr:
-            self._ocr_all_current(show_errors=False)
+            self._show_loading("OCRを準備しています。初回はモデル読み込みに時間がかかります。")
+            try:
+                self._ocr_all_current(show_errors=False)
+            finally:
+                self._hide_loading()
         self.status_var.set("画像を読み込みました。読み取り結果を確認できます。")
 
     def _image_status_text(self) -> str:
@@ -1245,9 +1292,13 @@ class ImageOcrExcelApp:
         if not self._enabled_fields():
             messagebox.showerror("項目なし", "有効な読み取り項目がありません。")
             return
-        if self._ocr_all_current(show_errors=True):
-            self.status_var.set("現在の画像をOCRしました。")
-            self._render_side_body()
+        self._show_loading("OCR中です。初回はPaddleOCRの準備に時間がかかります。")
+        try:
+            if self._ocr_all_current(show_errors=True):
+                self.status_var.set("現在の画像をOCRしました。")
+                self._render_side_body()
+        finally:
+            self._hide_loading()
 
     def ocr_field_at(self, idx: int) -> None:
         if not self.original_image:
@@ -1255,15 +1306,19 @@ class ImageOcrExcelApp:
             return
         if not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
             return
-        raw_text, text = self._ocr_field_detail(self.original_image, self.fields[idx], show_errors=True)
-        if text is None:
-            return
-        self._ensure_result_buffers()
-        self.current_raw_results[idx] = raw_text or ""
-        self.current_results[idx] = text
-        self.selected_index = idx
-        self.status_var.set(f"{self.fields[idx].name} をOCRしました。")
-        self._render_side_body()
+        self._show_loading(f"{self.fields[idx].name} をOCR中です。")
+        try:
+            raw_text, text = self._ocr_field_detail(self.original_image, self.fields[idx], show_errors=True)
+            if text is None:
+                return
+            self._ensure_result_buffers()
+            self.current_raw_results[idx] = raw_text or ""
+            self.current_results[idx] = text
+            self.selected_index = idx
+            self.status_var.set(f"{self.fields[idx].name} をOCRしました。")
+            self._render_side_body()
+        finally:
+            self._hide_loading()
 
     def _ocr_all_current(self, show_errors: bool) -> bool:
         if not self.original_image:
@@ -1333,22 +1388,29 @@ class ImageOcrExcelApp:
         total = len(self.image_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set("Excel出力を開始しました。")
-        self.root.update_idletasks()
+        self._show_loading(f"Excel出力中です。0 / {total}")
 
         def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
             self.progress_var.set(f"{row_index} / {total_count}")
             self.status_var.set(f"OCR中: {image_path.name}")
-            self.root.update_idletasks()
+            self._update_loading(f"Excel出力中です。{row_index} / {total_count}\n{image_path.name}")
 
-        result = self.excel_exporter.export(
-            self.output_path,
-            self.image_files,
-            fields,
-            settings,
-            lambda image, field: self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get()),
-            update_progress,
-        )
-        self.progress_var.set("")
+        try:
+            result = self.excel_exporter.export(
+                self.output_path,
+                self.image_files,
+                fields,
+                settings,
+                lambda image, field: self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get()),
+                update_progress,
+            )
+        except Exception as exc:
+            self.status_var.set("Excel出力に失敗しました。")
+            messagebox.showerror("出力エラー", f"Excelへ出力できませんでした。\n{exc}")
+            return
+        finally:
+            self.progress_var.set("")
+            self._hide_loading()
         if result.errors:
             self.status_var.set(f"Excelへ出力しました（エラー {len(result.errors)} 件）: {self.output_path}")
             messagebox.showwarning("完了（エラーあり）", f"{result.total_images} 画像の処理が完了しました。\nエラー {len(result.errors)} 件は Errors シートに出力しました。\n{self.output_path}")
