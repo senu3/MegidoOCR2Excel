@@ -11,7 +11,7 @@ from excel_exporter import ExcelExporter, ExportSettings
 from megido_app_config import APP_TITLE, DEFAULT_LANG, IMAGE_EXTENSIONS
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, detect_tesseract, fill_missing_field_source_size, scaled_field
-from ocr_models import TemplateField
+from ocr_models import POSTPROCESS_OPTIONS, TemplateField
 from template_store import build_template_data, fields_from_template, load_template, save_template
 
 
@@ -63,6 +63,7 @@ class ImageOcrExcelApp:
 
         self.fields: list[TemplateField] = []
         self.current_results: list[str] = []
+        self.current_raw_results: list[str] = []
         self.result_vars: list[StringVar] = []
         self.field_check_vars: list[BooleanVar] = []
         self.field_row_widgets: list[ctk.CTkFrame] = []
@@ -227,13 +228,18 @@ class ImageOcrExcelApp:
     def _render_review_mode(self) -> None:
         body = self.side_body
         assert body is not None
-        self._section_note(body, "2. 読み取り確認", "現在の画像のOCR結果を確認し、必要なら直接修正します。")
+        self._section_note(body, "2. 読み取り確認", "OCR結果と後処理の効き方を確認します。修正作業はExcel側で行います。")
 
-        ctk.CTkButton(body, text="現在の画像をOCR", command=self.ocr_current_image, height=THEME.layout.primary_button_height, font=UI_FONT_BOLD, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).pack(fill="x", padx=16, pady=(0, 8))
+        action_bar = ctk.CTkFrame(body, fg_color="transparent")
+        action_bar.pack(fill="x", padx=16, pady=(0, 8))
+        action_bar.grid_columnconfigure(0, weight=1)
+        action_bar.grid_columnconfigure(1, weight=1)
+        ctk.CTkButton(action_bar, text="現在の画像をOCR", command=self.ocr_current_image, height=THEME.layout.primary_button_height, font=UI_FONT_BOLD, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(action_bar, text="選択項目を再OCR", command=self.ocr_selected_field, height=THEME.layout.primary_button_height, font=UI_FONT_BOLD, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         ctk.CTkLabel(body, textvariable=self.folder_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
 
         scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
-        scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 12))
+        scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
         if not self.fields:
             self._empty_state(scroller, "テンプレートがありません", "先に読み取り項目を作成")
             return
@@ -241,19 +247,100 @@ class ImageOcrExcelApp:
             self._empty_state(scroller, "画像がありません", "サンプル画像またはフォルダを選択")
             return
 
-        self._ensure_current_results()
+        self._ensure_result_buffers()
+        self._ensure_review_selection()
         self.result_vars = []
         for idx, field in enumerate(self.fields):
             if not field.enabled:
                 continue
-            row = ctk.CTkFrame(scroller, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
-            row.pack(fill="x", padx=8, pady=5)
-            row.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 4))
-            var = StringVar(value=self.current_results[idx])
-            var.trace_add("write", lambda *_args, i=idx, v=var: self._set_result(i, v.get()))
-            self.result_vars.append(var)
-            ctk.CTkEntry(row, textvariable=var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE_ALT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+            self._review_result_row(scroller, idx)
+
+        self._render_postprocess_panel(body)
+
+    def _review_result_row(self, parent, idx: int) -> None:
+        field = self.fields[idx]
+        selected = idx == self.selected_index
+        row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE, border_width=1, border_color=COLOR_PRIMARY if selected else COLOR_BORDER)
+        row.pack(fill="x", padx=8, pady=5)
+        row.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if selected else COLOR_SECONDARY, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=0, sticky="nw", padx=(10, 8), pady=(10, 4))
+        ctk.CTkLabel(row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(9, 2))
+        ctk.CTkLabel(row, text=self._postprocess_summary(field), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(0, 4))
+
+        raw_text = self.current_raw_results[idx] or "未OCR"
+        result_text = self.current_results[idx] or "未OCR"
+        ctk.CTkLabel(row, text=f"生OCR: {raw_text}", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=300).grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(2, 2))
+        ctk.CTkLabel(row, text=f"後処理: {result_text}", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=300).grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+
+        for widget in [row, *row.winfo_children()]:
+            widget.bind("<Button-1>", lambda _event, i=idx: self.select_review_field(i))
+
+    def _render_postprocess_panel(self, parent) -> None:
+        idx = self.selected_index
+        if idx is None or not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
+            self._empty_state(parent, "後処理対象がありません", "有効な項目を選択")
+            return
+
+        field = self.fields[idx]
+        panel = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        panel.pack(fill="x", padx=16, pady=(0, 12))
+        panel.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(panel, text=f"後処理設定: {field.name}", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
+
+        mode_var = StringVar(value=field.postprocess if field.postprocess in POSTPROCESS_OPTIONS else POSTPROCESS_OPTIONS[0])
+        self.result_vars.append(mode_var)
+        ctk.CTkLabel(panel, text="抽出", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkOptionMenu(panel, variable=mode_var, values=POSTPROCESS_OPTIONS, command=lambda value, i=idx: self.set_field_postprocess(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=4)
+
+        self._postprocess_entry(panel, 2, "置換前", field.replace_from, lambda value, i=idx: self.set_field_text_attr(i, "replace_from", value))
+        self._postprocess_entry(panel, 3, "置換後", field.replace_to, lambda value, i=idx: self.set_field_text_attr(i, "replace_to", value))
+        self._postprocess_entry(panel, 4, "削除文字", field.remove_text, lambda value, i=idx: self.set_field_text_attr(i, "remove_text", value), placeholder="カンマ区切り")
+
+        button_row = ctk.CTkFrame(panel, fg_color="transparent")
+        button_row.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
+        button_row.grid_columnconfigure(0, weight=1)
+        button_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkButton(button_row, text="この項目を再OCR", command=lambda i=idx: self.ocr_field_at(i), height=THEME.layout.row_button_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(button_row, text="全項目を再OCR", command=self.ocr_current_image, height=THEME.layout.row_button_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+
+    def _postprocess_entry(self, parent, row: int, label: str, value: str, command, placeholder: str = "") -> None:
+        var = StringVar(value=value)
+        self.result_vars.append(var)
+        var.trace_add("write", lambda *_args, v=var, c=command: c(v.get()))
+        ctk.CTkLabel(parent, text=label, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=row, column=0, sticky="w", padx=(12, 8), pady=4)
+        entry = ctk.CTkEntry(parent, textvariable=var, placeholder_text=placeholder, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT)
+        entry.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=4)
+
+    def _postprocess_summary(self, field: TemplateField) -> str:
+        parts = [field.postprocess or "そのまま"]
+        if field.replace_from:
+            parts.append("置換あり")
+        if field.remove_text:
+            parts.append("削除あり")
+        return " / ".join(parts)
+
+    def select_review_field(self, idx: int) -> str:
+        if not (0 <= idx < len(self.fields)):
+            return "break"
+        self.selected_index = idx
+        self._render_side_body()
+        self.redraw()
+        return "break"
+
+    def set_field_postprocess(self, idx: int, value: str) -> None:
+        if not (0 <= idx < len(self.fields)):
+            return
+        self.fields[idx].postprocess = value if value in POSTPROCESS_OPTIONS else POSTPROCESS_OPTIONS[0]
+        self.status_var.set(f"{self.fields[idx].name} の後処理を更新しました。再OCRで確認できます。")
+        self._render_side_body()
+
+    def set_field_text_attr(self, idx: int, attr: str, value: str) -> None:
+        if not (0 <= idx < len(self.fields)) or attr not in {"replace_from", "replace_to", "remove_text"}:
+            return
+        setattr(self.fields[idx], attr, value)
+        self.status_var.set(f"{self.fields[idx].name} の後処理を更新しました。再OCRで確認できます。")
 
     def _render_export_mode(self) -> None:
         body = self.side_body
@@ -390,6 +477,7 @@ class ImageOcrExcelApp:
         fill_missing_field_source_size(self.fields, self.original_image.size)
         self.zoom = self._initial_zoom()
         self.current_results = [""] * len(self.fields)
+        self.current_raw_results = [""] * len(self.fields)
         self.image_var.set(self._image_status_text())
         self.image_count_var.set(f"{self.current_image_index + 1} / {len(self.image_files)}")
         self.selected_index = self.selected_index if self.fields else None
@@ -471,6 +559,7 @@ class ImageOcrExcelApp:
             return
         self.fields = fields
         self.current_results = [""] * len(self.fields)
+        self.current_raw_results = [""] * len(self.fields)
         self.selected_index = 0
         self.undo_action = None
         self.template_path = path
@@ -567,6 +656,7 @@ class ImageOcrExcelApp:
         self._ensure_current_results()
         self.fields[idx], self.fields[new_idx] = self.fields[new_idx], self.fields[idx]
         self.current_results[idx], self.current_results[new_idx] = self.current_results[new_idx], self.current_results[idx]
+        self.current_raw_results[idx], self.current_raw_results[new_idx] = self.current_raw_results[new_idx], self.current_raw_results[idx]
         self.selected_index = new_idx
         self.status_var.set("項目順を変更しました。Excel出力の列順にも反映されます。")
         self._render_side_body()
@@ -584,8 +674,10 @@ class ImageOcrExcelApp:
         self._ensure_current_results()
         field = self.fields.pop(source_idx)
         result = self.current_results.pop(source_idx)
+        raw_result = self.current_raw_results.pop(source_idx)
         self.fields.insert(target_idx, field)
         self.current_results.insert(target_idx, result)
+        self.current_raw_results.insert(target_idx, raw_result)
         self.selected_index = target_idx
         self.status_var.set("項目順を変更しました。Excel出力の列順にも反映されます。")
         self._render_side_body()
@@ -714,10 +806,12 @@ class ImageOcrExcelApp:
         field_name = self.fields[idx].name
         if confirm and not messagebox.askyesno("項目削除", f"{field_name} を削除しますか。"):
             return
-        self._set_undo("delete", idx=idx, field=replace(self.fields[idx]), result=self.current_results[idx] if idx < len(self.current_results) else "")
+        self._set_undo("delete", idx=idx, field=replace(self.fields[idx]), result=self.current_results[idx] if idx < len(self.current_results) else "", raw_result=self.current_raw_results[idx] if idx < len(self.current_raw_results) else "")
         del self.fields[idx]
         if idx < len(self.current_results):
             del self.current_results[idx]
+        if idx < len(self.current_raw_results):
+            del self.current_raw_results[idx]
         self.selected_index = min(idx, len(self.fields) - 1) if self.fields else None
         self.status_var.set(f"{field_name} を削除しました。Esc / Ctrl+Z で戻せます。")
         self._render_side_body()
@@ -796,6 +890,8 @@ class ImageOcrExcelApp:
         del self.fields[remove_idx]
         if remove_idx < len(self.current_results):
             del self.current_results[remove_idx]
+        if remove_idx < len(self.current_raw_results):
+            del self.current_raw_results[remove_idx]
         self.selected_index = min(remove_idx, len(self.fields) - 1) if self.fields else None
         self.status_var.set(f"{field_name} の追加を取り消しました。")
 
@@ -804,6 +900,7 @@ class ImageOcrExcelApp:
         field = replace(action["field"])
         self.fields.insert(idx, field)
         self.current_results.insert(idx, str(action.get("result") or ""))
+        self.current_raw_results.insert(idx, str(action.get("raw_result") or ""))
         self.selected_index = idx
         self.status_var.set(f"{field.name} の削除を取り消しました。")
 
@@ -818,6 +915,7 @@ class ImageOcrExcelApp:
         current.source_width, current.source_height = field.source_width, field.source_height
         self._ensure_current_results()
         self.current_results[idx] = str(action.get("result") or "")
+        self.current_raw_results[idx] = str(action.get("raw_result") or "")
         self.selected_index = idx
         self.status_var.set(f"{current.name} の範囲変更を取り消しました。")
 
@@ -1002,12 +1100,15 @@ class ImageOcrExcelApp:
             field = self.fields[idx]
             before_field = replace(field)
             before_result = self.current_results[idx] if idx < len(self.current_results) else ""
+            before_raw_result = self.current_raw_results[idx] if idx < len(self.current_raw_results) else ""
             field.x1, field.y1, field.x2, field.y2 = x1, y1, x2, y2
             field.source_width, field.source_height = self.original_image.size
             if idx < len(self.current_results):
                 self.current_results[idx] = ""
+            if idx < len(self.current_raw_results):
+                self.current_raw_results[idx] = ""
             self.selected_index = idx
-            self._set_undo("update_rect", idx=idx, field=before_field, result=before_result)
+            self._set_undo("update_rect", idx=idx, field=before_field, result=before_result, raw_result=before_raw_result)
             self.status_var.set(f"{field.name} の範囲を更新しました。Esc / Ctrl+Z で戻せます。")
             self._render_side_body()
             self.redraw()
@@ -1032,6 +1133,7 @@ class ImageOcrExcelApp:
         source_width, source_height = self.original_image.size
         self.fields.append(TemplateField(name, x1, y1, x2, y2, True, source_width, source_height))
         self.current_results.append("")
+        self.current_raw_results.append("")
         self.selected_index = len(self.fields) - 1
         self.mode_var.set("テンプレート")
         self._set_undo("add", idx=self.selected_index, field=replace(self.fields[self.selected_index]), field_ref=self.fields[self.selected_index], result="")
@@ -1061,18 +1163,48 @@ class ImageOcrExcelApp:
             self.status_var.set("現在の画像をOCRしました。")
             self._render_side_body()
 
+    def ocr_selected_field(self, _event=None) -> None:
+        idx = self.selected_index
+        if idx is None or not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
+            messagebox.showinfo("項目未選択", "確認する有効な項目を選択してください。")
+            return
+        self.ocr_field_at(idx)
+
+    def ocr_field_at(self, idx: int) -> None:
+        if not self.original_image:
+            messagebox.showerror("画像未選択", "先に画像を開いてください。")
+            return
+        if not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
+            return
+        raw_text, text = self._ocr_field_detail(self.original_image, self.fields[idx], show_errors=True)
+        if text is None:
+            return
+        self._ensure_result_buffers()
+        self.current_raw_results[idx] = raw_text or ""
+        self.current_results[idx] = text
+        self.selected_index = idx
+        self.status_var.set(f"{self.fields[idx].name} を再OCRしました。")
+        self._render_side_body()
+
     def _ocr_all_current(self, show_errors: bool) -> bool:
         if not self.original_image:
             return False
-        self._ensure_current_results()
+        self._ensure_result_buffers()
         for idx, field in enumerate(self.fields):
             if not field.enabled:
                 continue
-            text = self._ocr_field(self.original_image, field, show_errors=show_errors)
+            raw_text, text = self._ocr_field_detail(self.original_image, field, show_errors=show_errors)
             if text is None:
                 return False
+            self.current_raw_results[idx] = raw_text or ""
             self.current_results[idx] = text
         return True
+
+    def _ocr_field_detail(self, image: Image.Image, field: TemplateField, show_errors: bool) -> tuple[str | None, str | None]:
+        raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, self.lang_var.get(), self.tesseract_var.get().strip())
+        if error and show_errors:
+            messagebox.showerror("OCRエラー", error)
+        return raw_text, text
 
     def _ocr_field(self, image: Image.Image, field: TemplateField, show_errors: bool) -> str | None:
         text, error = self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip())
@@ -1133,10 +1265,26 @@ class ImageOcrExcelApp:
         return [field for field in self.fields if field.enabled]
 
     def _ensure_current_results(self) -> None:
+        self._ensure_result_buffers()
+
+    def _ensure_result_buffers(self) -> None:
         if len(self.current_results) < len(self.fields):
             self.current_results.extend([""] * (len(self.fields) - len(self.current_results)))
         elif len(self.current_results) > len(self.fields):
             self.current_results = self.current_results[: len(self.fields)]
+        if len(self.current_raw_results) < len(self.fields):
+            self.current_raw_results.extend([""] * (len(self.fields) - len(self.current_raw_results)))
+        elif len(self.current_raw_results) > len(self.fields):
+            self.current_raw_results = self.current_raw_results[: len(self.fields)]
+
+    def _ensure_review_selection(self) -> None:
+        if self.selected_index is not None and 0 <= self.selected_index < len(self.fields) and self.fields[self.selected_index].enabled:
+            return
+        for idx, field in enumerate(self.fields):
+            if field.enabled:
+                self.selected_index = idx
+                return
+        self.selected_index = None
 
     def _set_result(self, idx: int, value: str) -> None:
         self._ensure_current_results()
