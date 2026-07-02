@@ -262,12 +262,12 @@ class ImageOcrExcelApp:
         field = self.fields[idx]
         selected = idx == self.selected_index
         row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE, border_width=1, border_color=COLOR_PRIMARY if selected else COLOR_BORDER)
-        row.pack(fill="x", padx=8, pady=5)
+        row.pack(fill="x", padx=8, pady=4)
         row.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if selected else COLOR_SECONDARY, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=0, sticky="nw", padx=(10, 8), pady=(10, 4))
-        ctk.CTkLabel(row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(9, 2))
-        ctk.CTkLabel(row, text=self._postprocess_summary(field), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(0, 10))
+        ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if selected else COLOR_SECONDARY, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=0, sticky="w", padx=(8, 8), pady=8)
+        ctk.CTkLabel(row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
+        ctk.CTkLabel(row, text=self._postprocess_summary(field), anchor="e", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=2, sticky="e", padx=(0, 8), pady=8)
 
         for widget in [row, *row.winfo_children()]:
             widget.bind("<Button-1>", lambda _event, i=idx: self.select_review_field(i))
@@ -283,44 +283,58 @@ class ImageOcrExcelApp:
         panel.pack(fill="x", padx=16, pady=(0, 12))
         panel.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(panel, text=f"後処理設定: {field.name}", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
+        ctk.CTkLabel(panel, text=f"後処理: {field.name}", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(12, 8), pady=(10, 6))
+        button_row = ctk.CTkFrame(panel, fg_color="transparent")
+        button_row.grid(row=0, column=1, sticky="e", padx=(0, 12), pady=(8, 6))
+        ctk.CTkButton(button_row, text="OCR", width=64, command=lambda i=idx: self.ocr_field_at(i), height=28, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="e", padx=(0, 4))
+        ctk.CTkButton(button_row, text="全項目", width=78, command=self.ocr_current_image, height=28, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="e")
 
         self._result_preview(panel, idx)
 
         mode_var = StringVar(value=field.postprocess if field.postprocess in POSTPROCESS_OPTIONS else POSTPROCESS_OPTIONS[0])
         self.result_vars.append(mode_var)
-        ctk.CTkLabel(panel, text="抽出", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
-        ctk.CTkOptionMenu(panel, variable=mode_var, values=POSTPROCESS_OPTIONS, command=lambda value, i=idx: self.set_field_postprocess(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+        ctk.CTkLabel(panel, text="抽出", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=2)
+        ctk.CTkOptionMenu(panel, variable=mode_var, values=POSTPROCESS_OPTIONS, command=lambda value, i=idx: self.set_field_postprocess(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=2)
 
-        self._postprocess_entry(panel, 4, "置換前", field.replace_from, lambda value, i=idx: self.set_field_text_attr(i, "replace_from", value))
-        self._postprocess_entry(panel, 5, "置換後", field.replace_to, lambda value, i=idx: self.set_field_text_attr(i, "replace_to", value))
-        self._postprocess_entry(panel, 6, "削除文字", field.remove_text, lambda value, i=idx: self.set_field_text_attr(i, "remove_text", value), placeholder="カンマ区切り")
-
-        button_row = ctk.CTkFrame(panel, fg_color="transparent")
-        button_row.grid(row=7, column=0, columnspan=2, sticky="ew", padx=12, pady=(8, 12))
-        button_row.grid_columnconfigure(0, weight=1)
-        button_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(button_row, text="OCR", command=lambda i=idx: self.ocr_field_at(i), height=THEME.layout.row_button_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(button_row, text="全項目OCR", command=self.ocr_current_image, height=THEME.layout.row_button_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        self._postprocess_pair_entries(panel, 3, field, idx)
+        self._postprocess_entry(panel, 4, "削除文字", field.remove_text, lambda value, i=idx: self.set_field_text_attr(i, "remove_text", value), placeholder="カンマ区切り")
 
     def _result_preview(self, parent, idx: int) -> None:
-        raw_text = self.current_raw_results[idx] or "未OCR"
-        result_text = self.current_results[idx] or "未OCR"
+        raw_text = self._compact_preview_text(self.current_raw_results[idx] or "未OCR")
+        result_text = self._compact_preview_text(self.current_results[idx] or "未OCR")
         preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
-        preview.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10))
+        preview.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 6))
         preview.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(10, 8), pady=(8, 3))
-        ctk.CTkLabel(preview, text=raw_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(8, 3))
-        ctk.CTkLabel(preview, text="後処理後", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="nw", padx=(10, 8), pady=(3, 8))
-        ctk.CTkLabel(preview, text=result_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(3, 8))
+        ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(8, 8), pady=(5, 0))
+        ctk.CTkLabel(preview, text=raw_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(5, 0))
+        ctk.CTkLabel(preview, text="後処理後", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="nw", padx=(8, 8), pady=(0, 5))
+        ctk.CTkLabel(preview, text=result_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 5))
+
+    def _compact_preview_text(self, value: str, limit: int = 34) -> str:
+        value = " ".join(value.split())
+        return value if len(value) <= limit else f"{value[:limit - 3]}..."
+
+    def _postprocess_pair_entries(self, parent, row: int, field: TemplateField, idx: int) -> None:
+        ctk.CTkLabel(parent, text="置換", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=row, column=0, sticky="w", padx=(12, 8), pady=2)
+        group = ctk.CTkFrame(parent, fg_color="transparent")
+        group.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=2)
+        group.grid_columnconfigure(0, weight=1)
+        group.grid_columnconfigure(1, weight=1)
+        from_var = StringVar(value=field.replace_from)
+        to_var = StringVar(value=field.replace_to)
+        self.result_vars.extend([from_var, to_var])
+        from_var.trace_add("write", lambda *_args, i=idx, v=from_var: self.set_field_text_attr(i, "replace_from", v.get()))
+        to_var.trace_add("write", lambda *_args, i=idx, v=to_var: self.set_field_text_attr(i, "replace_to", v.get()))
+        ctk.CTkEntry(group, textvariable=from_var, placeholder_text="前", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkEntry(group, textvariable=to_var, placeholder_text="後", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
     def _postprocess_entry(self, parent, row: int, label: str, value: str, command, placeholder: str = "") -> None:
         var = StringVar(value=value)
         self.result_vars.append(var)
         var.trace_add("write", lambda *_args, v=var, c=command: c(v.get()))
-        ctk.CTkLabel(parent, text=label, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=row, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkLabel(parent, text=label, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=row, column=0, sticky="w", padx=(12, 8), pady=2)
         entry = ctk.CTkEntry(parent, textvariable=var, placeholder_text=placeholder, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT)
-        entry.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=4)
+        entry.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=2)
 
     def _postprocess_summary(self, field: TemplateField) -> str:
         parts = [field.postprocess or "そのまま"]
@@ -362,21 +376,19 @@ class ImageOcrExcelApp:
         panel = ctk.CTkFrame(content, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         panel.pack(fill="x", padx=16, pady=(0, 10))
         panel.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(panel, text="画像フォルダ", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 2))
-        ctk.CTkLabel(panel, textvariable=self.folder_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=320).grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 8))
-        ctk.CTkButton(panel, text="フォルダ選択", command=self.open_image_folder, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
-        ctk.CTkLabel(panel, text="出力ファイル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=3, column=0, sticky="ew", padx=12, pady=(0, 2))
-        ctk.CTkLabel(panel, textvariable=self.output_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=320).grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 8))
-        ctk.CTkButton(panel, text="出力先を選択", command=self.select_output_file, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 12))
+        ctk.CTkLabel(panel, text="画像フォルダ", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(12, 8), pady=(12, 2))
+        ctk.CTkLabel(panel, textvariable=self.folder_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=210).grid(row=1, column=0, sticky="ew", padx=(12, 8), pady=(0, 8))
+        ctk.CTkButton(panel, text="フォルダ選択", command=self.open_image_folder, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(12, 8))
+        ctk.CTkLabel(panel, text="出力ファイル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=2, column=0, sticky="ew", padx=(12, 8), pady=(2, 2))
+        ctk.CTkLabel(panel, textvariable=self.output_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=210).grid(row=3, column=0, sticky="ew", padx=(12, 8), pady=(0, 12))
+        ctk.CTkButton(panel, text="出力先を選択", command=self.select_output_file, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
 
         self._render_excel_output_settings(content)
 
         enabled_count = len(self._enabled_fields())
         image_count = len(self.image_files)
-        summary = ctk.CTkFrame(content, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
-        summary.pack(fill="x", padx=16, pady=(0, 10))
-        ctk.CTkLabel(summary, text=f"出力対象: {image_count} 画像 / {enabled_count} 項目", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).pack(fill="x", padx=12, pady=(12, 4))
-        ctk.CTkLabel(summary, text=self._export_column_summary(), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).pack(fill="x", padx=12, pady=(0, 12))
+        summary_text = f"出力対象: {image_count} 画像 / {enabled_count} 項目  |  {self._export_column_summary()}"
+        ctk.CTkLabel(content, text=summary_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=330).pack(fill="x", padx=18, pady=(0, 12))
 
         ctk.CTkButton(body, text="Excelへ一括出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
 
