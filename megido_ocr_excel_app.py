@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, BooleanVar, Canvas, Menu, Scrollbar, StringVar, filedialog, messagebox
 
@@ -64,14 +65,18 @@ class ImageOcrExcelApp:
         self.current_results: list[str] = []
         self.result_vars: list[StringVar] = []
         self.field_check_vars: list[BooleanVar] = []
+        self.field_row_widgets: list[ctk.CTkFrame] = []
         self.selected_index: int | None = None
-        self.reselect_index: int | None = None
         self.editing_name_index: int | None = None
+        self.dragging_field_index: int | None = None
+        self.canvas_edit_state: dict | None = None
+        self.undo_action: dict | None = None
 
         self.drag_start: tuple[int, int] | None = None
         self.drag_rect: int | None = None
         self.canvas_rects: dict[int, int] = {}
         self.canvas_labels: dict[int, int] = {}
+        self.canvas_label_bgs: dict[int, int] = {}
         self.ocr_engine = OcrEngine()
         self.excel_exporter = ExcelExporter()
 
@@ -136,6 +141,7 @@ class ImageOcrExcelApp:
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Control-MouseWheel>", self.on_mouse_wheel)
+        self.canvas.bind("<Button-3>", self.show_canvas_context_menu)
 
         status_bar = ctk.CTkFrame(canvas_area, height=THEME.layout.status_bar_height, corner_radius=0, fg_color=COLOR_CANVAS_TOOLBAR)
         status_bar.pack(side=BOTTOM, fill="x")
@@ -180,6 +186,9 @@ class ImageOcrExcelApp:
         self.root.bind_all("<Control-Return>", self.export_to_excel)
         self.root.bind_all("<Alt-Up>", self.move_selected_field_up)
         self.root.bind_all("<Alt-Down>", self.move_selected_field_down)
+        self.root.bind_all("<Escape>", self.undo_last_action)
+        self.root.bind_all("<Control-z>", self.undo_last_action)
+        self.root.bind_all("<Control-Z>", self.undo_last_action)
 
     def _on_mode_change(self, _value: str | None = None) -> None:
         self._render_side_body()
@@ -203,7 +212,8 @@ class ImageOcrExcelApp:
         body = self.side_body
         assert body is not None
         self.field_check_vars = []
-        self._section_note(body, "1. テンプレート作成", "サンプル画像上で読み取り範囲をドラッグし、項目名を付けます。")
+        self.field_row_widgets = []
+        self._section_note(body, "1. テンプレート作成", "サンプル画像上で読み取り範囲を作成し、ドラッグで調整します。")
         ctk.CTkLabel(body, textvariable=self.template_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
 
         scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -213,11 +223,6 @@ class ImageOcrExcelApp:
         else:
             for idx, field in enumerate(self.fields):
                 self._field_row(scroller, idx)
-
-        actions = ctk.CTkFrame(body, fg_color="transparent")
-        actions.pack(fill="x", padx=16, pady=(0, 12))
-        ctk.CTkButton(actions, text="項目名", command=self.rename_field, height=THEME.layout.row_button_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).pack(side=LEFT, fill="x", expand=True, padx=(0, 4))
-        ctk.CTkButton(actions, text="範囲変更", command=self.reselect_field, height=THEME.layout.row_button_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).pack(side=LEFT, fill="x", expand=True, padx=(4, 0))
 
     def _render_review_mode(self) -> None:
         body = self.side_body
@@ -289,6 +294,7 @@ class ImageOcrExcelApp:
         selected = idx == self.selected_index
         row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE, border_width=1, border_color=COLOR_PRIMARY if selected else COLOR_BORDER)
         row.pack(fill="x", padx=8, pady=5)
+        self.field_row_widgets.append(row)
         row.grid_columnconfigure(2, weight=1)
         var = BooleanVar(value=field.enabled)
         self.field_check_vars.append(var)
@@ -298,13 +304,13 @@ class ImageOcrExcelApp:
         name_widget.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=(8, 2))
         detail_label = ctk.CTkLabel(row, text=self._field_size_text(field), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED)
         detail_label.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=(0, 8))
-        order_controls = ctk.CTkFrame(row, fg_color="transparent")
-        order_controls.grid(row=0, column=3, rowspan=2, sticky="e", padx=(0, 8), pady=8)
-        up_state = "normal" if idx > 0 else "disabled"
-        down_state = "normal" if idx < len(self.fields) - 1 else "disabled"
-        ctk.CTkButton(order_controls, text="▲", command=lambda i=idx: self.move_field(i, -1), width=30, height=24, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER, state=up_state).pack(side=TOP, pady=(0, 3))
-        ctk.CTkButton(order_controls, text="▼", command=lambda i=idx: self.move_field(i, 1), width=30, height=24, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER, state=down_state).pack(side=TOP)
-        interactive_children = [child for child in row.winfo_children() if child is not name_widget and child is not order_controls]
+        drag_handle = ctk.CTkLabel(row, text="☰", width=30, font=UI_FONT_BOLD, text_color=COLOR_MUTED)
+        drag_handle.grid(row=0, column=3, rowspan=2, sticky="e", padx=(0, 8), pady=8)
+        drag_handle.bind("<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i))
+        drag_handle.bind("<B1-Motion>", lambda event, i=idx: self.update_field_drag(event, i))
+        drag_handle.bind("<ButtonRelease-1>", lambda event, i=idx: self.finish_field_drag(event, i))
+        drag_handle.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
+        interactive_children = [child for child in row.winfo_children() if child is not name_widget and child is not drag_handle]
         for widget in interactive_children + [row]:
             widget.bind("<Button-1>", lambda _event, i=idx: self.select_field(i))
             widget.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
@@ -387,7 +393,8 @@ class ImageOcrExcelApp:
         self.image_var.set(self._image_status_text())
         self.image_count_var.set(f"{self.current_image_index + 1} / {len(self.image_files)}")
         self.selected_index = self.selected_index if self.fields else None
-        self.reselect_index = None
+        self.canvas_edit_state = None
+        self.undo_action = None
         self.redraw()
         if auto_ocr:
             self._ocr_all_current(show_errors=False)
@@ -465,6 +472,7 @@ class ImageOcrExcelApp:
         self.fields = fields
         self.current_results = [""] * len(self.fields)
         self.selected_index = 0
+        self.undo_action = None
         self.template_path = path
         self.template_var.set(str(path))
         self.lang_var.set(data.get("lang") or DEFAULT_LANG)
@@ -564,6 +572,62 @@ class ImageOcrExcelApp:
         self._render_side_body()
         self.redraw()
 
+    def move_field_to(self, source_idx: int, target_idx: int) -> None:
+        if not (0 <= source_idx < len(self.fields)):
+            return
+        target_idx = max(0, min(len(self.fields) - 1, target_idx))
+        if source_idx == target_idx:
+            self.selected_index = source_idx
+            self._render_side_body()
+            self.redraw()
+            return
+        self._ensure_current_results()
+        field = self.fields.pop(source_idx)
+        result = self.current_results.pop(source_idx)
+        self.fields.insert(target_idx, field)
+        self.current_results.insert(target_idx, result)
+        self.selected_index = target_idx
+        self.status_var.set("項目順を変更しました。Excel出力の列順にも反映されます。")
+        self._render_side_body()
+        self.redraw()
+
+    def start_field_drag(self, _event, idx: int) -> str:
+        if not (0 <= idx < len(self.fields)):
+            return "break"
+        self.editing_name_index = None
+        self.dragging_field_index = idx
+        self.selected_index = idx
+        self.status_var.set(f"{self.fields[idx].name} をドラッグして並び替えます。")
+        return "break"
+
+    def update_field_drag(self, event, idx: int) -> str:
+        if self.dragging_field_index != idx or not (0 <= idx < len(self.fields)):
+            return "break"
+        target_idx = self._field_drop_index(event.y_root, idx)
+        if target_idx != idx:
+            self.status_var.set(f"{self.fields[idx].name} を #{target_idx + 1} に移動")
+        return "break"
+
+    def finish_field_drag(self, event, idx: int) -> str:
+        if self.dragging_field_index != idx:
+            return "break"
+        self.dragging_field_index = None
+        target_idx = self._field_drop_index(event.y_root, idx)
+        self.move_field_to(idx, target_idx)
+        return "break"
+
+    def _field_drop_index(self, y_root: int, source_idx: int) -> int:
+        if len(self.fields) <= 1:
+            return source_idx
+        target_idx = 0
+        for row_idx, row in enumerate(self.field_row_widgets):
+            if row_idx == source_idx:
+                continue
+            center_y = row.winfo_rooty() + (row.winfo_height() / 2)
+            if y_root > center_y:
+                target_idx += 1
+        return max(0, min(len(self.fields) - 1, target_idx))
+
     def rename_field(self) -> None:
         idx = self._require_field_selection()
         if idx is None:
@@ -616,12 +680,26 @@ class ImageOcrExcelApp:
             menu.grab_release()
         return "break"
 
-    def reselect_field(self) -> None:
-        idx = self._require_field_selection()
-        if idx is None:
-            return
-        self.reselect_index = idx
-        self.status_var.set(f"{self.fields[idx].name} の範囲を再設定します。画像上で新しい範囲をドラッグしてください。")
+    def show_canvas_context_menu(self, event) -> str:
+        if not self.original_image:
+            return "break"
+        x, y = self._event_image_point(event)
+        hit_idx, _mode = self._hit_test_field(x, y)
+        menu = Menu(self.root, tearoff=0)
+        if hit_idx is not None:
+            self.editing_name_index = None
+            self.selected_index = hit_idx
+            self._render_side_body()
+            self.redraw()
+            menu.add_command(label="項目名を編集", command=lambda i=hit_idx: self.rename_field_at(i))
+            menu.add_command(label="削除", command=lambda i=hit_idx: self.delete_field_at(i, confirm=False))
+            menu.add_separator()
+        menu.add_command(label="直前の操作を取り消す", command=self.undo_last_action, state="normal" if self.undo_action else "disabled")
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
 
     def delete_field(self) -> None:
         idx = self._require_field_selection()
@@ -636,11 +714,12 @@ class ImageOcrExcelApp:
         field_name = self.fields[idx].name
         if confirm and not messagebox.askyesno("項目削除", f"{field_name} を削除しますか。"):
             return
+        self._set_undo("delete", idx=idx, field=replace(self.fields[idx]), result=self.current_results[idx] if idx < len(self.current_results) else "")
         del self.fields[idx]
         if idx < len(self.current_results):
             del self.current_results[idx]
         self.selected_index = min(idx, len(self.fields) - 1) if self.fields else None
-        self.status_var.set(f"{field_name} を削除しました。")
+        self.status_var.set(f"{field_name} を削除しました。Esc / Ctrl+Z で戻せます。")
         self._render_side_body()
         self.redraw()
 
@@ -650,10 +729,103 @@ class ImageOcrExcelApp:
             return None
         return self.selected_index
 
+    def _set_undo(self, action_type: str, **payload) -> None:
+        self.undo_action = {"type": action_type, **payload}
+
+    def _focus_is_text_entry(self) -> bool:
+        focused = self.root.focus_get()
+        if focused is None:
+            return False
+        return "Entry" in str(focused.winfo_class())
+
+    def undo_last_action(self, event=None) -> str | None:
+        if event is not None and getattr(event, "keysym", "").lower() == "z" and self._focus_is_text_entry():
+            return None
+        if self.canvas_edit_state is not None or self.drag_start is not None:
+            self.canvas_edit_state = None
+            self.drag_start = None
+            if self.drag_rect:
+                self.canvas.delete(self.drag_rect)
+                self.drag_rect = None
+            self.status_var.set("Canvas操作をキャンセルしました。")
+            self.redraw()
+            return "break"
+
+        action = self.undo_action
+        if not action:
+            self.status_var.set("取り消せる直前操作がありません。")
+            return "break"
+
+        self.editing_name_index = None
+        action_type = action.get("type")
+        if action_type == "add":
+            self._undo_added_field(action)
+        elif action_type == "delete":
+            self._undo_deleted_field(action)
+        elif action_type == "update_rect":
+            self._undo_updated_rect(action)
+        else:
+            self.status_var.set("取り消せる直前操作がありません。")
+            self.undo_action = None
+            return "break"
+
+        self.undo_action = None
+        self._render_side_body()
+        self.redraw()
+        return "break"
+
+    def _undo_added_field(self, action: dict) -> None:
+        idx = int(action["idx"])
+        field = action["field"]
+        field_ref = action.get("field_ref")
+        remove_idx = idx if 0 <= idx < len(self.fields) and self.fields[idx] == field else None
+        if field_ref is not None:
+            for candidate_idx, candidate in enumerate(self.fields):
+                if candidate is field_ref:
+                    remove_idx = candidate_idx
+                    break
+        if remove_idx is None:
+            for candidate_idx, candidate in enumerate(self.fields):
+                if candidate == field:
+                    remove_idx = candidate_idx
+                    break
+        if remove_idx is None:
+            self.status_var.set("追加した項目が見つからないため、取り消せませんでした。")
+            return
+        field_name = self.fields[remove_idx].name
+        del self.fields[remove_idx]
+        if remove_idx < len(self.current_results):
+            del self.current_results[remove_idx]
+        self.selected_index = min(remove_idx, len(self.fields) - 1) if self.fields else None
+        self.status_var.set(f"{field_name} の追加を取り消しました。")
+
+    def _undo_deleted_field(self, action: dict) -> None:
+        idx = max(0, min(int(action["idx"]), len(self.fields)))
+        field = replace(action["field"])
+        self.fields.insert(idx, field)
+        self.current_results.insert(idx, str(action.get("result") or ""))
+        self.selected_index = idx
+        self.status_var.set(f"{field.name} の削除を取り消しました。")
+
+    def _undo_updated_rect(self, action: dict) -> None:
+        idx = int(action["idx"])
+        if not (0 <= idx < len(self.fields)):
+            self.status_var.set("更新前の項目が見つからないため、取り消せませんでした。")
+            return
+        field = action["field"]
+        current = self.fields[idx]
+        current.x1, current.y1, current.x2, current.y2 = field.x1, field.y1, field.x2, field.y2
+        current.source_width, current.source_height = field.source_width, field.source_height
+        self._ensure_current_results()
+        self.current_results[idx] = str(action.get("result") or "")
+        self.selected_index = idx
+        self.status_var.set(f"{current.name} の範囲変更を取り消しました。")
+
     def redraw(self) -> None:
         self.canvas.delete("all")
         self.canvas_rects.clear()
         self.canvas_labels.clear()
+        self.canvas_label_bgs.clear()
         if not self.original_image:
             self._draw_canvas_empty()
             return
@@ -674,8 +846,12 @@ class ImageOcrExcelApp:
         field = scaled_field(self.fields[idx], self.original_image)
         x1, y1, x2, y2 = [value * self.zoom for value in (field.x1, field.y1, field.x2, field.y2)]
         selected = idx == self.selected_index
-        color = COLOR_CTA if selected else (THEME.palette.enabled_region if field.enabled else THEME.palette.disabled_fill)
-        label_bg = COLOR_CTA_HOVER if selected else (COLOR_PRIMARY if field.enabled else COLOR_MUTED)
+        if field.enabled:
+            color = COLOR_CTA if selected else THEME.palette.enabled_region
+            label_bg = COLOR_CTA_HOVER if selected else COLOR_PRIMARY
+        else:
+            color = THEME.palette.disabled_fill
+            label_bg = COLOR_MUTED
         rect = self.canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=3 if selected else 2)
         label_text = f"{self._field_order_label(idx)} {field.name}"
         label = self.canvas.create_text(x1 + 10, max(6, y1 - 22), anchor="nw", text=label_text, fill=THEME.palette.on_color, font=UI_FONT_CANVAS)
@@ -683,31 +859,164 @@ class ImageOcrExcelApp:
         if label_box:
             bg = self.canvas.create_rectangle(label_box[0] - 5, label_box[1] - 3, label_box[2] + 5, label_box[3] + 3, fill=label_bg, outline=label_bg)
             self.canvas.tag_lower(bg, label)
+            self.canvas_label_bgs[idx] = bg
         self.canvas_rects[idx] = rect
         self.canvas_labels[idx] = label
+
+    def _event_image_point(self, event) -> tuple[int, int]:
+        return int(self.canvas.canvasx(event.x) / self.zoom), int(self.canvas.canvasy(event.y) / self.zoom)
+
+    def _hit_test_field(self, x: int, y: int) -> tuple[int | None, str | None]:
+        tolerance = max(10.0, 16.0 / max(self.zoom, 0.1))
+        for idx in range(len(self.fields) - 1, -1, -1):
+            field = scaled_field(self.fields[idx], self.original_image).normalized()
+            x1, y1, x2, y2 = field.x1, field.y1, field.x2, field.y2
+            near_left = abs(x - x1) <= tolerance
+            near_right = abs(x - x2) <= tolerance
+            near_top = abs(y - y1) <= tolerance
+            near_bottom = abs(y - y2) <= tolerance
+            inside_x = x1 - tolerance <= x <= x2 + tolerance
+            inside_y = y1 - tolerance <= y <= y2 + tolerance
+
+            if near_left and near_top:
+                return idx, "nw"
+            if near_right and near_top:
+                return idx, "ne"
+            if near_left and near_bottom:
+                return idx, "sw"
+            if near_right and near_bottom:
+                return idx, "se"
+            if near_left and inside_y:
+                return idx, "w"
+            if near_right and inside_y:
+                return idx, "e"
+            if near_top and inside_x:
+                return idx, "n"
+            if near_bottom and inside_x:
+                return idx, "s"
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return idx, "move"
+        return None, None
+
+    def _edited_rect_from_state(self, x: int, y: int) -> tuple[int, int, int, int]:
+        assert self.canvas_edit_state is not None
+        mode = str(self.canvas_edit_state["mode"])
+        start_x = int(self.canvas_edit_state["start_x"])
+        start_y = int(self.canvas_edit_state["start_y"])
+        x1, y1, x2, y2 = self.canvas_edit_state["orig"]
+        dx = x - start_x
+        dy = y - start_y
+
+        if mode == "move":
+            return int(x1 + dx), int(y1 + dy), int(x2 + dx), int(y2 + dy)
+        if "w" in mode:
+            x1 += dx
+        if "e" in mode:
+            x2 += dx
+        if "n" in mode:
+            y1 += dy
+        if "s" in mode:
+            y2 += dy
+        return int(x1), int(y1), int(x2), int(y2)
+
+    def _clamp_rect_to_image(self, rect: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        assert self.original_image is not None
+        w, h = self.original_image.size
+        x1, y1, x2, y2 = rect
+        if self.canvas_edit_state and self.canvas_edit_state.get("mode") == "move":
+            width = x2 - x1
+            height = y2 - y1
+            x1 = max(0, min(w - width, x1))
+            y1 = max(0, min(h - height, y1))
+            return x1, y1, x1 + width, y1 + height
+
+        x1, x2 = sorted((max(0, min(w, x1)), max(0, min(w, x2))))
+        y1, y2 = sorted((max(0, min(h, y1)), max(0, min(h, y2))))
+        return x1, y1, x2, y2
+
+    def _set_canvas_edit_preview(self, idx: int, rect: tuple[int, int, int, int]) -> None:
+        item = self.canvas_rects.get(idx)
+        if item is None:
+            return
+        x1, y1, x2, y2 = rect
+        self.canvas.coords(item, x1 * self.zoom, y1 * self.zoom, x2 * self.zoom, y2 * self.zoom)
+        label = self.canvas_labels.get(idx)
+        if label is None:
+            return
+        label_x = x1 * self.zoom + 10
+        label_y = max(6, y1 * self.zoom - 22)
+        self.canvas.coords(label, label_x, label_y)
+        label_box = self.canvas.bbox(label)
+        label_bg = self.canvas_label_bgs.get(idx)
+        if label_bg is not None and label_box:
+            self.canvas.coords(label_bg, label_box[0] - 5, label_box[1] - 3, label_box[2] + 5, label_box[3] + 3)
 
     def on_mouse_down(self, event) -> None:
         if not self.original_image:
             return
-        self.drag_start = (int(self.canvas.canvasx(event.x) / self.zoom), int(self.canvas.canvasy(event.y) / self.zoom))
+        self.editing_name_index = None
+        x, y = self._event_image_point(event)
+        hit_idx, mode = self._hit_test_field(x, y)
+        if hit_idx is not None and mode is not None:
+            field = scaled_field(self.fields[hit_idx], self.original_image).normalized()
+            self.selected_index = hit_idx
+            self.canvas_edit_state = {
+                "idx": hit_idx,
+                "mode": mode,
+                "start_x": x,
+                "start_y": y,
+                "orig": (field.x1, field.y1, field.x2, field.y2),
+            }
+            self.status_var.set(f"{self.fields[hit_idx].name} の範囲を調整中です。")
+            self._render_side_body()
+            self.redraw()
+            return
+
+        self.drag_start = (x, y)
         x = self.drag_start[0] * self.zoom
         y = self.drag_start[1] * self.zoom
         self.drag_rect = self.canvas.create_rectangle(x, y, x, y, outline=COLOR_CTA, width=2, dash=(4, 2))
 
     def on_mouse_drag(self, event) -> None:
+        if self.canvas_edit_state is not None:
+            idx = int(self.canvas_edit_state["idx"])
+            x, y = self._event_image_point(event)
+            rect = self._clamp_rect_to_image(self._edited_rect_from_state(x, y))
+            self._set_canvas_edit_preview(idx, rect)
+            return
         if not self.drag_start or not self.drag_rect:
             return
         x1, y1 = self.drag_start
-        x2 = int(self.canvas.canvasx(event.x) / self.zoom)
-        y2 = int(self.canvas.canvasy(event.y) / self.zoom)
+        x2, y2 = self._event_image_point(event)
         self.canvas.coords(self.drag_rect, x1 * self.zoom, y1 * self.zoom, x2 * self.zoom, y2 * self.zoom)
 
     def on_mouse_up(self, event) -> None:
+        if self.canvas_edit_state is not None:
+            idx = int(self.canvas_edit_state["idx"])
+            x, y = self._event_image_point(event)
+            x1, y1, x2, y2 = self._clamp_rect_to_image(self._edited_rect_from_state(x, y))
+            self.canvas_edit_state = None
+            if (x2 - x1) < 8 or (y2 - y1) < 8:
+                self.redraw()
+                return
+            field = self.fields[idx]
+            before_field = replace(field)
+            before_result = self.current_results[idx] if idx < len(self.current_results) else ""
+            field.x1, field.y1, field.x2, field.y2 = x1, y1, x2, y2
+            field.source_width, field.source_height = self.original_image.size
+            if idx < len(self.current_results):
+                self.current_results[idx] = ""
+            self.selected_index = idx
+            self._set_undo("update_rect", idx=idx, field=before_field, result=before_result)
+            self.status_var.set(f"{field.name} の範囲を更新しました。Esc / Ctrl+Z で戻せます。")
+            self._render_side_body()
+            self.redraw()
+            return
+
         if not self.original_image or not self.drag_start:
             return
         x1, y1 = self.drag_start
-        x2 = int(self.canvas.canvasx(event.x) / self.zoom)
-        y2 = int(self.canvas.canvasy(event.y) / self.zoom)
+        x2, y2 = self._event_image_point(event)
         self.drag_start = None
         if self.drag_rect:
             self.canvas.delete(self.drag_rect)
@@ -719,29 +1028,14 @@ class ImageOcrExcelApp:
         if (x2 - x1) < 8 or (y2 - y1) < 8:
             return
 
-        if self.reselect_index is not None:
-            idx = self.reselect_index
-            self.reselect_index = None
-            if not (0 <= idx < len(self.fields)):
-                return
-            field = self.fields[idx]
-            field.x1, field.y1, field.x2, field.y2 = x1, y1, x2, y2
-            field.source_width, field.source_height = self.original_image.size
-            if idx < len(self.current_results):
-                self.current_results[idx] = ""
-            self.selected_index = idx
-            self.status_var.set(f"{field.name} の範囲を更新しました。")
-            self._render_side_body()
-            self.redraw()
-            return
-
         name = self._next_field_name()
         source_width, source_height = self.original_image.size
         self.fields.append(TemplateField(name, x1, y1, x2, y2, True, source_width, source_height))
         self.current_results.append("")
         self.selected_index = len(self.fields) - 1
         self.mode_var.set("テンプレート")
-        self.status_var.set(f"{name} を追加しました。")
+        self._set_undo("add", idx=self.selected_index, field=replace(self.fields[self.selected_index]), field_ref=self.fields[self.selected_index], result="")
+        self.status_var.set(f"{name} を追加しました。Esc / Ctrl+Z で戻せます。")
         self._render_side_body()
         self.redraw()
 
