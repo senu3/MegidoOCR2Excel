@@ -95,3 +95,20 @@ uv run megido_ocr_excel_app.py
 - シート名、上書き/追記、開始セルを設定
 - 画像ファイル名列とヘッダー行の出力有無を設定
 - 出力設定はテンプレートJSONに保存
+
+## OCR精度測定
+
+`.samples` の `*.png` と同名の `*.csv` を正解データとして比較します。
+話者、セリフ本文ともに、OCR結果をそのままCSVの正解値と完全一致で比較します。
+
+```powershell
+uv run python scripts/measure_speaker_ocr.py
+uv run python scripts/measure_dialogue_ocr.py
+```
+
+調整例:
+
+```powershell
+uv run python scripts/measure_speaker_ocr.py --preprocess white-glyph --scale 4 --threshold 190 --psm 6 --lang jpn
+uv run python scripts/measure_dialogue_ocr.py --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn --csv-out C:\tmp\dialogue-ocr.csv
+```

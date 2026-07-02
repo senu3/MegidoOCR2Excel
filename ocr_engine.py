@@ -4,9 +4,9 @@ import re
 import shutil
 from pathlib import Path
 
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
-from ocr_models import POSTPROCESS_OPTIONS, TemplateField
+from ocr_models import TemplateField
 
 try:
     import pytesseract
@@ -59,16 +59,91 @@ def scaled_field(field: TemplateField, image: Image.Image | None) -> TemplateFie
         region.replace_from,
         region.replace_to,
         region.remove_text,
+        region.ocr_preprocess,
+        region.ocr_scale,
+        region.ocr_threshold,
+        region.ocr_psm,
+        region.ocr_lang,
     )
 
 
-def prepare_for_ocr(image: Image.Image) -> Image.Image:
-    scale = 3 if max(image.size) < 500 else 2
-    image = image.resize((image.width * scale, image.height * scale), Image.Resampling.LANCZOS)
+def prepare_for_ocr(
+    image: Image.Image,
+    preprocess: str = "default",
+    scale: str = "auto",
+    threshold: int = 180,
+) -> Image.Image:
+    if preprocess == "outline-threshold":
+        image = crop_dark_content(image, threshold=120, margin=20)
+        image = ImageOps.expand(image, border=30, fill="white")
+    elif preprocess == "white-glyph":
+        return prepare_white_glyph(image, scale, threshold)
+
+    scale_value = 3 if scale == "auto" and max(image.size) < 500 else 2 if scale == "auto" else int(scale)
+    image = image.resize((image.width * scale_value, image.height * scale_value), Image.Resampling.LANCZOS)
     image = ImageOps.grayscale(image)
+    if preprocess == "gray":
+        return image
+
     image = ImageEnhance.Contrast(image).enhance(1.8)
     image = image.filter(ImageFilter.SHARPEN)
-    return image
+    if preprocess == "default":
+        return image
+
+    thresholded = image.point(lambda value: 255 if value >= threshold else 0)
+    if preprocess == "invert-threshold":
+        return ImageOps.invert(thresholded)
+    return thresholded
+
+
+def prepare_white_glyph(image: Image.Image, scale: str = "auto", threshold: int = 190) -> Image.Image:
+    gray = ImageOps.grayscale(image)
+    min_near = gray.filter(ImageFilter.MinFilter(5))
+    bright_mask = gray.point(lambda value: 255 if value >= threshold else 0)
+    dark_near = min_near.point(lambda value: 255 if value <= 100 else 0)
+    glyph = ImageChops.multiply(bright_mask, dark_near)
+    image = ImageOps.invert(glyph)
+    image = crop_black_content(image, margin=12)
+    image = ImageOps.expand(image, border=24, fill="white")
+    scale_value = 3 if scale == "auto" and max(image.size) < 500 else 2 if scale == "auto" else int(scale)
+    return image.resize((image.width * scale_value, image.height * scale_value), Image.Resampling.LANCZOS)
+
+
+def crop_dark_content(image: Image.Image, threshold: int, margin: int) -> Image.Image:
+    gray = ImageOps.grayscale(image)
+    pixels = gray.load()
+    xs: list[int] = []
+    ys: list[int] = []
+    for y in range(gray.height):
+        for x in range(gray.width):
+            if pixels[x, y] < threshold:
+                xs.append(x)
+                ys.append(y)
+
+    if not xs:
+        return image
+
+    box = (
+        max(0, min(xs) - margin),
+        max(0, min(ys) - margin),
+        min(image.width, max(xs) + margin),
+        min(image.height, max(ys) + margin),
+    )
+    return image.crop(box)
+
+
+def crop_black_content(image: Image.Image, margin: int) -> Image.Image:
+    bbox = image.point(lambda value: 255 if value < 128 else 0).getbbox()
+    if bbox is None:
+        return image
+    left, top, right, bottom = bbox
+    box = (
+        max(0, left - margin),
+        max(0, top - margin),
+        min(image.width, right + margin),
+        min(image.height, bottom + margin),
+    )
+    return image.crop(box)
 
 
 def clean_text(text: str) -> str:
@@ -113,9 +188,11 @@ class OcrEngine:
             return None, None, "読み取り範囲が画像外、または小さすぎます。"
 
         crop = image.crop((region.x1, region.y1, region.x2, region.y2))
-        prepared = prepare_for_ocr(crop)
+        prepared = prepare_for_ocr(crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
+        ocr_lang = field.ocr_lang.strip() or lang.strip() or DEFAULT_LANG
+        psm = field.ocr_psm or 6
         try:
-            raw_text = pytesseract.image_to_string(prepared, lang=lang.strip() or DEFAULT_LANG, config="--oem 3 --psm 6")
+            raw_text = pytesseract.image_to_string(prepared, lang=ocr_lang, config=f"--oem 3 --psm {psm}")
         except pytesseract.TesseractNotFoundError:
             return None, None, "Tesseractが見つかりません。設定で実行ファイルのパスを指定してください。"
         except pytesseract.TesseractError as exc:
