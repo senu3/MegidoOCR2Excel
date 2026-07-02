@@ -100,6 +100,7 @@ uv run megido_ocr_excel_app.py
 
 `.samples` の `*.png` と同名の `*.csv` を正解データとして比較します。
 話者、セリフ本文ともに、OCR結果をそのままCSVの正解値と完全一致で比較します。
+セリフ本文はCSV内の全角スペースを改行相当として扱うため、空白正規化後の一致数も併記します。
 
 ```powershell
 uv run python scripts/measure_speaker_ocr.py

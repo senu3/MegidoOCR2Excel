@@ -31,7 +31,8 @@ class AccuracyRow:
     expected: str
     actual: str
     similarity: float
-    matched: bool
+    exact: bool
+    normalized_match: bool
     error: str
 
 
@@ -54,6 +55,7 @@ def build_parser(
     parser.add_argument("--preprocess", choices=OCR_PREPROCESS_OPTIONS, default=default_preprocess)
     parser.add_argument("--scale", choices=OCR_SCALE_OPTIONS, default=default_scale)
     parser.add_argument("--threshold", type=int, default=default_threshold)
+    parser.add_argument("--match-space-normalized", action="store_true", help="比較時だけ空白、改行、全角スペースを除外します。")
     parser.add_argument("--limit", type=int, default=0, help="先頭N件だけ測定します。0なら全件。")
     parser.add_argument("--csv-out", type=Path, default=None)
     parser.add_argument("--save-crops", type=Path, default=None)
@@ -67,6 +69,7 @@ def run_accuracy(
     default_scale: str = "auto",
     default_threshold: int = 180,
     default_lang: str = "",
+    default_match_space_normalized: bool = False,
 ) -> int:
     args = build_parser(
         field_name,
@@ -76,6 +79,8 @@ def run_accuracy(
         default_threshold,
         default_lang,
     ).parse_args()
+    if default_match_space_normalized:
+        args.match_space_normalized = True
     if pytesseract is None:
         print("pytesseract がインストールされていません。", file=sys.stderr)
         return 2
@@ -107,7 +112,8 @@ def run_accuracy(
         expected = read_expected(csv_path, field.name)
         actual, error = recognize(image_path, field, args)
         similarity = score_text(expected, actual)
-        rows.append(AccuracyRow(image_path.name, expected, actual, similarity, is_match(expected, actual), error))
+        exact = expected == actual
+        rows.append(AccuracyRow(image_path.name, expected, actual, similarity, exact, is_match(expected, actual), error))
 
     print_report(args.field, args, rows)
     if args.csv_out:
@@ -167,6 +173,7 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace) 
 
     return apply_postprocess(clean_text(raw_text), field), ""
 
+
 def normalize_text(value: str) -> str:
     value = unicodedata.normalize("NFKC", value)
     return re.sub(r"\s+", "", value)
@@ -177,17 +184,23 @@ def score_text(expected: str, actual: str) -> float:
 
 
 def is_match(expected: str, actual: str) -> bool:
-    return expected == actual
+    return normalize_text(expected) == normalize_text(actual)
 
 
 def print_report(field_name: str, args: argparse.Namespace, rows: list[AccuracyRow]) -> None:
     avg = sum(row.similarity for row in rows) / len(rows) if rows else 0.0
-    matched = sum(1 for row in rows if row.matched)
+    exact = sum(1 for row in rows if row.exact)
+    normalized = sum(1 for row in rows if row.normalized_match)
+    matched = normalized if args.match_space_normalized else exact
+    match_label = "space_normalized_match" if args.match_space_normalized else "exact_match"
     print(f"field: {field_name}")
     print(f"settings: preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or DEFAULT_LANG}")
-    print(f"samples: {len(rows)}  avg_similarity: {avg:.3f}  match: {matched}/{len(rows)}")
+    if args.match_space_normalized:
+        print(f"samples: {len(rows)}  avg_similarity: {avg:.3f}  {match_label}: {matched}/{len(rows)}  exact_match: {exact}/{len(rows)}")
+    else:
+        print(f"samples: {len(rows)}  avg_similarity: {avg:.3f}  {match_label}: {matched}/{len(rows)}")
     for row in rows:
-        marker = "OK" if row.matched else "NG"
+        marker = "OK" if (row.normalized_match if args.match_space_normalized else row.exact) else "NG"
         print(f"{row.image}: {marker} similarity={row.similarity:.3f}")
         if row.error:
             print(f"  error: {row.error}")
@@ -199,6 +212,6 @@ def write_csv(path: Path, rows: list[AccuracyRow]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(["image", "expected", "actual", "similarity", "matched", "error"])
+        writer.writerow(["image", "expected", "actual", "similarity", "exact", "space_normalized", "error"])
         for row in rows:
-            writer.writerow([row.image, row.expected, row.actual, f"{row.similarity:.6f}", row.matched, row.error])
+            writer.writerow([row.image, row.expected, row.actual, f"{row.similarity:.6f}", row.exact, row.normalized_match, row.error])
