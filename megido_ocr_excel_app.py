@@ -101,6 +101,8 @@ class ImageOcrExcelApp:
 
         self.side_body: ctk.CTkFrame | None = None
         self.canvas: Canvas
+        self.hbar: Scrollbar | None = None
+        self.vbar: Scrollbar | None = None
 
         self._build_ui()
         self._bind_shortcuts()
@@ -133,14 +135,15 @@ class ImageOcrExcelApp:
         canvas_frame = ctk.CTkFrame(canvas_area, corner_radius=0, fg_color=COLOR_CANVAS_PANEL)
         canvas_frame.pack(side=TOP, fill=BOTH, expand=True)
         self.canvas = Canvas(canvas_frame, bg=COLOR_CANVAS_BG, highlightthickness=0)
-        hbar = Scrollbar(canvas_frame, orient=HORIZONTAL, command=self.canvas.xview)
-        vbar = Scrollbar(canvas_frame, orient=VERTICAL, command=self.canvas.yview)
-        self.canvas.configure(xscrollcommand=hbar.set, yscrollcommand=vbar.set)
+        self.hbar = Scrollbar(canvas_frame, orient=HORIZONTAL, command=self.canvas.xview)
+        self.vbar = Scrollbar(canvas_frame, orient=VERTICAL, command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=self.hbar.set, yscrollcommand=self.vbar.set)
         self.canvas.grid(row=0, column=0, sticky="nsew")
-        vbar.grid(row=0, column=1, sticky="ns")
-        hbar.grid(row=1, column=0, sticky="ew")
+        self.vbar.grid(row=0, column=1, sticky="ns")
+        self.hbar.grid(row=1, column=0, sticky="ew")
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
+        self._set_canvas_scrollbars(False, False)
 
         self.canvas.bind("<ButtonPress-1>", self.on_mouse_down)
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
@@ -148,6 +151,7 @@ class ImageOcrExcelApp:
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Control-MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Button-3>", self.show_canvas_context_menu)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
 
         status_bar = ctk.CTkFrame(canvas_area, height=THEME.layout.status_bar_height, corner_radius=0, fg_color=COLOR_CANVAS_TOOLBAR)
         status_bar.pack(side=BOTTOM, fill="x")
@@ -233,7 +237,7 @@ class ImageOcrExcelApp:
     def _render_review_mode(self) -> None:
         side_body = self.side_body
         assert side_body is not None
-        body = ctk.CTkScrollableFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
+        body = ctk.CTkFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
         body.pack(fill=BOTH, expand=True)
         self._section_note(body, "2. 読み取り確認", "OCR結果と後処理の効き方を確認します。修正作業はExcel側で行います。")
 
@@ -370,7 +374,7 @@ class ImageOcrExcelApp:
         assert body is not None
         self._section_note(body, "3. Excel出力", "フォルダ内の画像を、1画像1行としてExcelへ書き出します。")
 
-        content = ctk.CTkScrollableFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
+        content = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
         content.pack(side=TOP, fill=BOTH, expand=True)
 
         panel = ctk.CTkFrame(content, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -982,13 +986,48 @@ class ImageOcrExcelApp:
         self.preview_image = ImageTk.PhotoImage(scaled)
         self.image_item = self.canvas.create_image(0, 0, anchor="nw", image=self.preview_image)
         self.canvas.configure(scrollregion=(0, 0, scaled.width, scaled.height))
+        self._sync_canvas_scrollbars()
         for idx, _field in enumerate(self.fields):
             self._draw_field(idx)
 
     def _draw_canvas_empty(self) -> None:
-        self.canvas.configure(scrollregion=(0, 0, 900, 600))
-        self.canvas.create_text(450, 280, text=THEME.copy.empty_canvas_title, fill=THEME.palette.empty_title, font=UI_FONT_TITLE)
-        self.canvas.create_text(450, 312, text=THEME.copy.empty_canvas_note, fill=THEME.palette.empty_note, font=UI_FONT_SMALL)
+        canvas_w = max(self.canvas.winfo_width(), 900)
+        canvas_h = max(self.canvas.winfo_height(), 600)
+        self.canvas.configure(scrollregion=(0, 0, canvas_w, canvas_h))
+        self._set_canvas_scrollbars(False, False)
+        self.canvas.xview_moveto(0)
+        self.canvas.yview_moveto(0)
+        self.canvas.create_text(canvas_w / 2, canvas_h / 2 - 20, text=THEME.copy.empty_canvas_title, fill=THEME.palette.empty_title, font=UI_FONT_TITLE)
+        self.canvas.create_text(canvas_w / 2, canvas_h / 2 + 12, text=THEME.copy.empty_canvas_note, fill=THEME.palette.empty_note, font=UI_FONT_SMALL)
+
+    def _set_canvas_scrollbars(self, horizontal: bool, vertical: bool) -> None:
+        if self.hbar is not None:
+            if horizontal:
+                self.hbar.grid(row=1, column=0, sticky="ew")
+            else:
+                self.hbar.grid_remove()
+        if self.vbar is not None:
+            if vertical:
+                self.vbar.grid(row=0, column=1, sticky="ns")
+            else:
+                self.vbar.grid_remove()
+
+    def _sync_canvas_scrollbars(self) -> None:
+        if not self.original_image:
+            self._set_canvas_scrollbars(False, False)
+            return
+        parts = [float(value) for value in str(self.canvas.cget("scrollregion")).split()]
+        if len(parts) != 4:
+            self._set_canvas_scrollbars(False, False)
+            return
+        region_w = parts[2] - parts[0]
+        region_h = parts[3] - parts[1]
+        visible_w = max(1, self.canvas.winfo_width())
+        visible_h = max(1, self.canvas.winfo_height())
+        self._set_canvas_scrollbars(region_w > visible_w + 1, region_h > visible_h + 1)
+
+    def on_canvas_configure(self, _event=None) -> None:
+        self._sync_canvas_scrollbars()
 
     def _draw_field(self, idx: int) -> None:
         field = scaled_field(self.fields[idx], self.original_image)
