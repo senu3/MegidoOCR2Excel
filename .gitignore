@@ -9,6 +9,6 @@ wheels/
 # Virtual environments
 .venv
 
-.sample/*
-!.sample/
-!.sample/*.json
+.samples/*
+!.samples/
+!.samples/*.json

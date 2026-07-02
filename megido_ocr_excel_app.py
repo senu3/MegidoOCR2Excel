@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import json
-import shutil
-from dataclasses import asdict, dataclass
 from pathlib import Path
 from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, BooleanVar, Canvas, Scrollbar, StringVar, filedialog, messagebox, simpledialog
 
 import customtkinter as ctk
-from openpyxl import Workbook
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageTk
+from PIL import Image, ImageTk
 
-from megido_app_config import APP_TITLE, DEFAULT_LANG, IMAGE_EXTENSIONS, TEMPLATE_VERSION
+from excel_exporter import ExcelExporter, ExportSettings
+from megido_app_config import APP_TITLE, DEFAULT_LANG, IMAGE_EXTENSIONS
 from megido_ui_theme import THEME
-
-try:
-    import pytesseract
-except ImportError:
-    pytesseract = None
+from ocr_engine import OcrEngine, detect_tesseract, fill_missing_field_source_size, scaled_field
+from ocr_models import TemplateField
+from template_store import build_template_data, fields_from_template, load_template, save_template
 
 
 UI_FONT_FAMILY = THEME.fonts.family
@@ -43,21 +38,6 @@ COLOR_CTA_HOVER = THEME.palette.cta_hover
 COLOR_CANVAS_BG = THEME.palette.canvas_bg
 COLOR_CANVAS_PANEL = THEME.palette.canvas_panel
 COLOR_CANVAS_TOOLBAR = THEME.palette.canvas_toolbar
-
-
-@dataclass
-class TemplateField:
-    name: str
-    x1: int
-    y1: int
-    x2: int
-    y2: int
-    enabled: bool = True
-
-    def normalized(self) -> "TemplateField":
-        x1, x2 = sorted((self.x1, self.x2))
-        y1, y2 = sorted((self.y1, self.y2))
-        return TemplateField(self.name, x1, y1, x2, y2, self.enabled)
 
 
 class ImageOcrExcelApp:
@@ -91,6 +71,8 @@ class ImageOcrExcelApp:
         self.drag_rect: int | None = None
         self.canvas_rects: dict[int, int] = {}
         self.canvas_labels: dict[int, int] = {}
+        self.ocr_engine = OcrEngine()
+        self.excel_exporter = ExcelExporter()
 
         self.mode_var = StringVar(value="テンプレート")
         self.image_var = StringVar(value="画像未選択")
@@ -103,7 +85,7 @@ class ImageOcrExcelApp:
         self.progress_var = StringVar(value="")
         self.lang_var = StringVar(value=DEFAULT_LANG)
         self.lang_display_var = StringVar(value=self._lang_display(DEFAULT_LANG))
-        self.tesseract_var = StringVar(value=self._detect_tesseract())
+        self.tesseract_var = StringVar(value=detect_tesseract())
 
         self.side_body: ctk.CTkFrame | None = None
         self.canvas: Canvas
@@ -371,6 +353,7 @@ class ImageOcrExcelApp:
         except Exception as exc:
             messagebox.showerror("画像エラー", f"画像を開けませんでした。\n{exc}")
             return
+        fill_missing_field_source_size(self.fields, self.original_image.size)
         self.zoom = self._initial_zoom()
         self.current_results = [""] * len(self.fields)
         self.image_var.set(self._image_status_text())
@@ -415,14 +398,20 @@ class ImageOcrExcelApp:
         if not file_name:
             return
         path = Path(file_name)
-        data = {
-            "version": TEMPLATE_VERSION,
-            "lang": self.lang_var.get(),
-            "tesseract_path": self.tesseract_var.get(),
-            "sample_image": str(self.image_path) if self.image_path else "",
-            "fields": [asdict(field.normalized()) for field in self.fields],
-        }
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        sample_size = None
+        if self.original_image:
+            sample_size = {"width": self.original_image.width, "height": self.original_image.height}
+            fill_missing_field_source_size(self.fields, self.original_image.size)
+        data = build_template_data(
+            fields=self.fields,
+            lang=self.lang_var.get(),
+            tesseract_path=self.tesseract_var.get(),
+            sample_image=str(self.image_path) if self.image_path else "",
+            output_settings={},
+            template_name=path.stem,
+            sample_image_size=sample_size,
+        )
+        save_template(path, data)
         self.template_path = path
         self.template_var.set(str(path))
         self.status_var.set(f"テンプレートを保存しました: {path}")
@@ -437,8 +426,8 @@ class ImageOcrExcelApp:
             return
         path = Path(file_name)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            fields = [self._field_from_data(item) for item in data.get("fields", [])]
+            data = load_template(path)
+            fields = fields_from_template(data)
         except Exception as exc:
             messagebox.showerror("テンプレートエラー", f"テンプレートを読み込めませんでした。\n{exc}")
             return
@@ -463,11 +452,6 @@ class ImageOcrExcelApp:
         self.status_var.set(f"テンプレートを読み込みました: {path}")
         self._render_side_body()
         self.redraw()
-
-    def _field_from_data(self, item: dict) -> TemplateField:
-        if "cell" in item:
-            return TemplateField(str(item.get("name") or item.get("cell") or "項目"), int(item["x1"]), int(item["y1"]), int(item["x2"]), int(item["y2"]), bool(item.get("enabled", True))).normalized()
-        return TemplateField(str(item["name"]), int(item["x1"]), int(item["y1"]), int(item["x2"]), int(item["y2"]), bool(item.get("enabled", True))).normalized()
 
     def open_settings_modal(self) -> None:
         self.lang_display_var.set(self._lang_display(self.lang_var.get()))
@@ -582,7 +566,7 @@ class ImageOcrExcelApp:
         self.canvas.create_text(450, 312, text=THEME.copy.empty_canvas_note, fill=THEME.palette.empty_note, font=UI_FONT_SMALL)
 
     def _draw_field(self, idx: int) -> None:
-        field = self.fields[idx].normalized()
+        field = scaled_field(self.fields[idx], self.original_image)
         x1, y1, x2, y2 = [value * self.zoom for value in (field.x1, field.y1, field.x2, field.y2)]
         selected = idx == self.selected_index
         color = COLOR_CTA if selected else (THEME.palette.enabled_region if field.enabled else THEME.palette.disabled_fill)
@@ -637,6 +621,7 @@ class ImageOcrExcelApp:
                 return
             field = self.fields[idx]
             field.x1, field.y1, field.x2, field.y2 = x1, y1, x2, y2
+            field.source_width, field.source_height = self.original_image.size
             if idx < len(self.current_results):
                 self.current_results[idx] = ""
             self.selected_index = idx
@@ -649,7 +634,8 @@ class ImageOcrExcelApp:
         if name is None:
             return
         name = self._unique_field_name(name.strip() or f"項目{len(self.fields) + 1}")
-        self.fields.append(TemplateField(name, x1, y1, x2, y2))
+        source_width, source_height = self.original_image.size
+        self.fields.append(TemplateField(name, x1, y1, x2, y2, True, source_width, source_height))
         self.current_results.append("")
         self.selected_index = len(self.fields) - 1
         self.mode_var.set("テンプレート")
@@ -693,23 +679,10 @@ class ImageOcrExcelApp:
         return True
 
     def _ocr_field(self, image: Image.Image, field: TemplateField, show_errors: bool) -> str | None:
-        ocr = self._load_tesseract(show_errors=show_errors)
-        if ocr is None:
-            return None
-        region = field.normalized()
-        crop = image.crop((region.x1, region.y1, region.x2, region.y2))
-        prepared = self._prepare_for_ocr(crop)
-        try:
-            text = ocr.image_to_string(prepared, lang=self.lang_var.get().strip() or DEFAULT_LANG, config="--oem 3 --psm 6")
-        except ocr.TesseractNotFoundError:
-            if show_errors:
-                messagebox.showerror("OCRエラー", "Tesseractが見つかりません。設定で実行ファイルのパスを指定してください。")
-            return None
-        except ocr.TesseractError as exc:
-            if show_errors:
-                messagebox.showerror("OCRエラー", str(exc))
-            return None
-        return self._clean_text(text)
+        text, error = self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip())
+        if error and show_errors:
+            messagebox.showerror("OCRエラー", error)
+        return text
 
     def export_to_excel(self, _event=None) -> None:
         fields = self._enabled_fields()
@@ -726,72 +699,31 @@ class ImageOcrExcelApp:
         if self.output_path.exists() and not messagebox.askyesno("上書き確認", f"既存ファイルを上書きします。\n{self.output_path}"):
             return
 
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "OCR"
-        sheet.append(["画像ファイル", *[field.name for field in fields]])
-
         total = len(self.image_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set("Excel出力を開始しました。")
         self.root.update_idletasks()
 
-        for row_index, image_path in enumerate(self.image_files, start=1):
-            try:
-                image = Image.open(image_path).convert("RGB")
-            except Exception as exc:
-                messagebox.showerror("画像エラー", f"{image_path.name} を開けませんでした。\n{exc}")
-                return
-            row = [image_path.name]
-            for field in fields:
-                text = self._ocr_field(image, field, show_errors=True)
-                if text is None:
-                    self.progress_var.set("")
-                    return
-                row.append(text)
-            sheet.append(row)
-            self.progress_var.set(f"{row_index} / {total}")
+        def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
+            self.progress_var.set(f"{row_index} / {total_count}")
             self.status_var.set(f"OCR中: {image_path.name}")
             self.root.update_idletasks()
 
-        for column_cells in sheet.columns:
-            max_length = max(len(str(cell.value or "")) for cell in column_cells)
-            sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 12), 42)
-
-        self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        workbook.save(self.output_path)
+        result = self.excel_exporter.export(
+            self.output_path,
+            self.image_files,
+            fields,
+            ExportSettings(),
+            lambda image, field: self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip()),
+            update_progress,
+        )
         self.progress_var.set("")
-        self.status_var.set(f"Excelへ出力しました: {self.output_path}")
-        messagebox.showinfo("完了", f"{total} 画像をExcelへ出力しました。\n{self.output_path}")
-
-    def _load_tesseract(self, show_errors: bool):
-        if pytesseract is None:
-            if show_errors:
-                messagebox.showerror("OCRライブラリ未導入", "pytesseractがインストールされていません。uv sync を実行してください。")
-            return None
-        path = self.tesseract_var.get().strip()
-        if path:
-            pytesseract.pytesseract.tesseract_cmd = path
-        return pytesseract
-
-    def _prepare_for_ocr(self, image: Image.Image) -> Image.Image:
-        scale = 3 if max(image.size) < 500 else 2
-        image = image.resize((image.width * scale, image.height * scale), Image.Resampling.LANCZOS)
-        image = ImageOps.grayscale(image)
-        image = ImageEnhance.Contrast(image).enhance(1.8)
-        image = image.filter(ImageFilter.SHARPEN)
-        return image
-
-    def _clean_text(self, text: str) -> str:
-        lines = [line.strip() for line in text.splitlines()]
-        return " ".join(line for line in lines if line).strip()
-
-    def _detect_tesseract(self) -> str:
-        found = shutil.which("tesseract")
-        if found:
-            return found
-        default = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
-        return str(default) if default.exists() else ""
+        if result.errors:
+            self.status_var.set(f"Excelへ出力しました（エラー {len(result.errors)} 件）: {self.output_path}")
+            messagebox.showwarning("完了（エラーあり）", f"{result.total_images} 画像の処理が完了しました。\nエラー {len(result.errors)} 件は Errors シートに出力しました。\n{self.output_path}")
+        else:
+            self.status_var.set(f"Excelへ出力しました: {self.output_path}")
+            messagebox.showinfo("完了", f"{result.total_images} 画像をExcelへ出力しました。\n{self.output_path}")
 
     def _initial_zoom(self) -> float:
         if not self.original_image:
@@ -825,7 +757,9 @@ class ImageOcrExcelApp:
 
     def _field_size_text(self, field: TemplateField) -> str:
         normalized = field.normalized()
-        return f"{normalized.x2 - normalized.x1} x {normalized.y2 - normalized.y1}px"
+        size_text = f"{normalized.x2 - normalized.x1} x {normalized.y2 - normalized.y1}px"
+        source_text = f" / 基準 {normalized.source_width}x{normalized.source_height}" if normalized.source_width and normalized.source_height else ""
+        return f"{size_text}{source_text}"
 
     def _unique_field_name(self, name: str, skip_index: int | None = None) -> str:
         used = {field.name for idx, field in enumerate(self.fields) if idx != skip_index}

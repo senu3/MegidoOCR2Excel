@@ -1,0 +1,86 @@
+{
+  "format": "image-ocr-to-excel-template",
+  "version": 3,
+  "template_name": "megido_novel_template",
+  "created_at": "2026-07-02T00:00:00+00:00",
+  "lang": "jpn+eng",
+  "tesseract_path": "",
+  "sample_image": "",
+  "sample_image_size": {
+    "width": 945,
+    "height": 2048
+  },
+  "output_settings": {},
+  "fields": [
+    {
+      "name": "話者",
+      "x1": 48,
+      "y1": 1360,
+      "x2": 610,
+      "y2": 1418,
+      "enabled": true,
+      "source_width": 945,
+      "source_height": 2048,
+      "postprocess": "そのまま",
+      "replace_from": "",
+      "replace_to": "",
+      "remove_text": ""
+    },
+    {
+      "name": "セリフ本文",
+      "x1": 44,
+      "y1": 1438,
+      "x2": 890,
+      "y2": 1594,
+      "enabled": true,
+      "source_width": 945,
+      "source_height": 2048,
+      "postprocess": "そのまま",
+      "replace_from": "",
+      "replace_to": "",
+      "remove_text": ""
+    },
+    {
+      "name": "選択肢1",
+      "x1": 96,
+      "y1": 980,
+      "x2": 850,
+      "y2": 1050,
+      "enabled": false,
+      "source_width": 945,
+      "source_height": 2048,
+      "postprocess": "そのまま",
+      "replace_from": "",
+      "replace_to": "",
+      "remove_text": ""
+    },
+    {
+      "name": "選択肢2",
+      "x1": 96,
+      "y1": 1070,
+      "x2": 850,
+      "y2": 1140,
+      "enabled": false,
+      "source_width": 945,
+      "source_height": 2048,
+      "postprocess": "そのまま",
+      "replace_from": "",
+      "replace_to": "",
+      "remove_text": ""
+    },
+    {
+      "name": "SKIP表示",
+      "x1": 780,
+      "y1": 226,
+      "x2": 922,
+      "y2": 280,
+      "enabled": false,
+      "source_width": 945,
+      "source_height": 2048,
+      "postprocess": "そのまま",
+      "replace_from": "",
+      "replace_to": "",
+      "remove_text": ""
+    }
+  ]
+}

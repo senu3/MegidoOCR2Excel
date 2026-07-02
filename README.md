@@ -45,7 +45,16 @@ uv run megido_ocr_excel_app.py
 
 ## 初期テンプレート
 
-`.sample/megido_novel_template.json` は実スクリーンショットに合わせて座標調整するための仮テンプレートです。ロゴ画像は方向性確認用で、OCR範囲の基準画像としては実際のノベル画面を使ってください。
+`.samples/megido_novel_template.json` は実スクリーンショットに合わせて座標調整するための仮テンプレートです。OCR範囲の基準画像としては実際のノベル画面を使ってください。
+
+## 構成
+
+- `megido_ocr_excel_app.py`: CustomTkinter UI
+- `megido_ui_theme.py`: 黒紫ダークテーマ、寸法、主要文言
+- `ocr_models.py`: テンプレート項目モデル
+- `ocr_engine.py`: OCR、画像前処理、後処理、範囲スケーリング
+- `excel_exporter.py`: Excel出力、エラーシート生成
+- `template_store.py`: テンプレートJSON保存・読み込み
 
 ## ショートカット
 

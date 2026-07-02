@@ -84,4 +84,4 @@ No decorative motion. State changes should be immediate. Future progress feedbac
 
 ## Sample Template
 
-`.sample/megido_novel_template.json` is a coordinate starter for actual novel screenshots. Treat it as a placeholder: users should load a real screenshot, drag exact regions, and save a corrected template.
+`.samples/megido_novel_template.json` is a coordinate starter for actual novel screenshots. Treat it as a placeholder: users should load a real screenshot, drag exact regions, and save a corrected template.
