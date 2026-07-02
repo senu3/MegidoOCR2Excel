@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 
 TEMPLATE_VERSION = 3
 POSTPROCESS_OPTIONS = ["そのまま", "数字のみ", "数値抽出", "英数字のみ"]
+OCR_BACKEND_OPTIONS = ["default", "tesseract", "paddle"]
 OCR_PREPROCESS_OPTIONS = ["default", "gray", "threshold", "invert-threshold", "outline-threshold", "white-glyph"]
 OCR_SCALE_OPTIONS = ["auto", "2", "3", "4"]
 OCR_LINE_SPLIT_OPTIONS = ["none", "detected"]
@@ -24,6 +25,7 @@ class TemplateField:
     replace_from: str = ""
     replace_to: str = ""
     remove_text: str = ""
+    ocr_backend: str = "default"
     ocr_preprocess: str = "default"
     ocr_scale: str = "auto"
     ocr_threshold: int = 180
@@ -51,6 +53,7 @@ class TemplateField:
             self.replace_from,
             self.replace_to,
             self.remove_text,
+            self.ocr_backend,
             self.ocr_preprocess,
             self.ocr_scale,
             self.ocr_threshold,
@@ -71,6 +74,9 @@ def field_from_dict(item: dict) -> TemplateField:
     postprocess = str(item.get("postprocess") or "そのまま")
     if postprocess not in POSTPROCESS_OPTIONS:
         postprocess = "そのまま"
+    ocr_backend = str(item.get("ocr_backend") or "default")
+    if ocr_backend not in OCR_BACKEND_OPTIONS:
+        ocr_backend = "default"
     ocr_preprocess = str(item.get("ocr_preprocess") or "default")
     if ocr_preprocess not in OCR_PREPROCESS_OPTIONS:
         ocr_preprocess = "default"
@@ -99,6 +105,7 @@ def field_from_dict(item: dict) -> TemplateField:
         str(item.get("replace_from") or ""),
         str(item.get("replace_to") or ""),
         str(item.get("remove_text") or ""),
+        ocr_backend,
         ocr_preprocess,
         ocr_scale,
         int(item.get("ocr_threshold") or 180),

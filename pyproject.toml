@@ -11,6 +11,12 @@ dependencies = [
     "pytesseract>=0.3.10",
 ]
 
+[project.optional-dependencies]
+paddle = [
+    "paddleocr>=3.7.0,<4",
+    "paddlepaddle>=3.3.1,<4",
+]
+
 [project.scripts]
 megido-ocr-to-excel = "megido_ocr_excel_app:main"
 

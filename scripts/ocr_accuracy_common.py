@@ -5,7 +5,7 @@ import csv
 import re
 import sys
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ocr_engine import DEFAULT_LANG, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
+from ocr_engine import DEFAULT_LANG, OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
 from ocr_models import OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, TemplateField
 from template_store import fields_from_template, load_template
 
@@ -50,6 +50,7 @@ def build_parser(
     parser.add_argument("--template", type=Path, default=ROOT / ".samples" / "megido_novel_template.json")
     parser.add_argument("--field", default=field_name)
     parser.add_argument("--lang", default=default_lang)
+    parser.add_argument("--backend", choices=["tesseract", "paddle"], default="tesseract")
     parser.add_argument("--tesseract", default="")
     parser.add_argument("--tessdata-dir", type=Path, default=None)
     parser.add_argument("--psm", type=int, default=default_psm)
@@ -91,7 +92,7 @@ def run_accuracy(
     ).parse_args()
     if default_match_space_normalized:
         args.match_space_normalized = True
-    if pytesseract is None:
+    if args.backend == "tesseract" and pytesseract is None:
         print("pytesseract がインストールされていません。", file=sys.stderr)
         return 2
 
@@ -104,7 +105,7 @@ def run_accuracy(
         return 2
 
     tesseract = args.tesseract or str(template.get("tesseract_path") or "") or detect_tesseract()
-    if tesseract:
+    if args.backend == "tesseract" and tesseract:
         pytesseract.pytesseract.tesseract_cmd = tesseract
 
     lang = args.lang or str(template.get("lang") or "") or DEFAULT_LANG
@@ -117,10 +118,11 @@ def run_accuracy(
     if args.save_crops:
         args.save_crops.mkdir(parents=True, exist_ok=True)
 
+    engine = OcrEngine()
     rows: list[AccuracyRow] = []
     for image_path, csv_path in pairs:
         expected = read_expected(csv_path, field.name)
-        actual, error = recognize(image_path, field, args, expected)
+        actual, error = recognize(image_path, field, args, engine, expected)
         similarity = score_text(expected, actual)
         exact = expected == actual
         rows.append(AccuracyRow(image_path.name, expected, actual, similarity, exact, is_match(expected, actual), error))
@@ -158,7 +160,7 @@ def read_expected(csv_path: Path, field_name: str) -> str:
     return data.get(field_name, "")
 
 
-def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, expected: str = "") -> tuple[str, str]:
+def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, engine: OcrEngine, expected: str = "") -> tuple[str, str]:
     try:
         image = Image.open(image_path).convert("RGB")
     except Exception as exc:
@@ -169,6 +171,9 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, 
         return "", "読み取り範囲が画像外、または小さすぎます。"
 
     crop = image.crop((region.x1, region.y1, region.x2, region.y2))
+    if args.backend == "paddle":
+        return recognize_with_engine(image, field, args, engine)
+
     if args.line_split != "none":
         return recognize_lines(crop, field, args, expected, image_path.stem)
 
@@ -184,6 +189,25 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, 
         return "", str(exc)
 
     return apply_postprocess(clean_text(raw_text), field), ""
+
+
+def recognize_with_engine(image: Image.Image, field: TemplateField, args: argparse.Namespace, engine: OcrEngine) -> tuple[str, str]:
+    adjusted = replace(
+        field,
+        ocr_backend="paddle",
+        ocr_preprocess=args.preprocess,
+        ocr_scale=args.scale,
+        ocr_threshold=args.threshold,
+        ocr_psm=args.psm,
+        ocr_lang=args.lang,
+        ocr_line_split=args.line_split if args.line_split in {"none", "detected"} else "none",
+        ocr_line_padding=args.line_padding,
+        ocr_line_detect_threshold=args.line_detect_threshold,
+        ocr_line_detect_min_ratio=args.line_detect_min_ratio,
+        ocr_line_detect_gap=args.line_detect_gap,
+    )
+    _raw, value, error = engine.recognize_field_detail(image, adjusted, args.lang, args.tesseract, args.backend)
+    return value or "", error or ""
 
 
 def recognize_lines(crop: Image.Image, field: TemplateField, args: argparse.Namespace, expected: str, image_stem: str) -> tuple[str, str]:
@@ -300,7 +324,7 @@ def print_report(field_name: str, args: argparse.Namespace, rows: list[AccuracyR
         line_split += f" line_padding={args.line_padding}"
     if args.line_split == "detected":
         line_split += f" line_detect_threshold={args.line_detect_threshold} line_detect_min_ratio={args.line_detect_min_ratio} line_detect_gap={args.line_detect_gap}"
-    print(f"settings: preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or DEFAULT_LANG}{tessdata}{line_split}")
+    print(f"settings: backend={args.backend} preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or DEFAULT_LANG}{tessdata}{line_split}")
     if args.match_space_normalized:
         print(f"samples: {len(rows)}  avg_similarity: {avg:.3f}  {match_label}: {matched}/{len(rows)}  exact_match: {exact}/{len(rows)}")
     else:

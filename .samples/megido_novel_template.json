@@ -5,6 +5,7 @@
   "created_at": "2026-07-02T07:52:40.331015+00:00",
   "lang": "jpn+eng",
   "tesseract_path": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
+  "ocr_backend": "tesseract",
   "sample_image": "C:\\Users\\ksitr\\Documents\\MegidoOCR2Excel\\.samples\\1.png",
   "sample_image_size": {
     "width": 1080,
@@ -31,6 +32,7 @@
       "replace_from": "",
       "replace_to": "",
       "remove_text": "",
+      "ocr_backend": "default",
       "ocr_preprocess": "white-glyph",
       "ocr_scale": "4",
       "ocr_threshold": 190,
@@ -55,6 +57,7 @@
       "replace_from": "",
       "replace_to": "",
       "remove_text": "",
+      "ocr_backend": "default",
       "ocr_preprocess": "threshold",
       "ocr_scale": "3",
       "ocr_threshold": 140,

@@ -11,7 +11,7 @@ from excel_exporter import ExcelExporter, ExportSettings, validate_export_settin
 from megido_app_config import APP_TITLE, DEFAULT_LANG, IMAGE_EXTENSIONS
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, detect_tesseract, fill_missing_field_source_size, scaled_field
-from ocr_models import POSTPROCESS_OPTIONS, TemplateField
+from ocr_models import OCR_BACKEND_OPTIONS, POSTPROCESS_OPTIONS, TemplateField
 from template_store import build_template_data, fields_from_template, load_template, save_template
 
 
@@ -92,6 +92,7 @@ class ImageOcrExcelApp:
         self.progress_var = StringVar(value="")
         self.lang_var = StringVar(value=DEFAULT_LANG)
         self.lang_display_var = StringVar(value=self._lang_display(DEFAULT_LANG))
+        self.backend_var = StringVar(value="tesseract")
         self.tesseract_var = StringVar(value=detect_tesseract())
         self.export_sheet_var = StringVar(value="OCR")
         self.export_write_mode_var = StringVar(value="上書き")
@@ -582,6 +583,7 @@ class ImageOcrExcelApp:
             fields=self.fields,
             lang=self.lang_var.get(),
             tesseract_path=self.tesseract_var.get(),
+            ocr_backend=self.backend_var.get(),
             sample_image=str(self.image_path) if self.image_path else "",
             output_settings=self._export_settings_dict(),
             template_name=path.stem,
@@ -619,6 +621,8 @@ class ImageOcrExcelApp:
         self.template_var.set(str(path))
         self.lang_var.set(data.get("lang") or DEFAULT_LANG)
         self.lang_display_var.set(self._lang_display(self.lang_var.get()))
+        backend = str(data.get("ocr_backend") or "tesseract")
+        self.backend_var.set(backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else "tesseract")
         self._apply_output_settings(data.get("output_settings") or {})
         if data.get("tesseract_path"):
             self.tesseract_var.set(data["tesseract_path"])
@@ -661,10 +665,12 @@ class ImageOcrExcelApp:
             button_hover_color=COLOR_PRIMARY_HOVER,
             text_color=COLOR_TEXT,
         ).grid(row=2, column=0, sticky="ew", padx=16)
-        ctk.CTkLabel(panel, text="Tesseractパス", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=3, column=0, sticky="ew", padx=16, pady=(14, 6))
-        ctk.CTkEntry(panel, textvariable=self.tesseract_var, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SURFACE_ALT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=4, column=0, sticky="ew", padx=16)
+        ctk.CTkLabel(panel, text="OCRバックエンド", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=3, column=0, sticky="ew", padx=16, pady=(14, 6))
+        ctk.CTkOptionMenu(panel, variable=self.backend_var, values=[value for value in OCR_BACKEND_OPTIONS if value != "default"], height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=4, column=0, sticky="ew", padx=16)
+        ctk.CTkLabel(panel, text="Tesseractパス", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=5, column=0, sticky="ew", padx=16, pady=(14, 6))
+        ctk.CTkEntry(panel, textvariable=self.tesseract_var, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SURFACE_ALT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=6, column=0, sticky="ew", padx=16)
         buttons = ctk.CTkFrame(panel, fg_color="transparent")
-        buttons.grid(row=5, column=0, sticky="ew", padx=16, pady=(20, 16))
+        buttons.grid(row=7, column=0, sticky="ew", padx=16, pady=(20, 16))
         buttons.grid_columnconfigure(0, weight=1)
         buttons.grid_columnconfigure(1, weight=1)
         ctk.CTkButton(buttons, text="キャンセル", command=window.destroy, height=THEME.layout.row_button_height, font=UI_FONT, fg_color=COLOR_SURFACE, hover_color=THEME.palette.modal_button_hover, border_width=1, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(0, 4))
@@ -672,6 +678,8 @@ class ImageOcrExcelApp:
 
     def _apply_settings(self, window: ctk.CTkToplevel) -> None:
         self._sync_lang_from_display()
+        if self.backend_var.get() not in OCR_BACKEND_OPTIONS or self.backend_var.get() == "default":
+            self.backend_var.set("tesseract")
         self.status_var.set("OCR設定を更新しました。")
         window.destroy()
 
@@ -1290,13 +1298,13 @@ class ImageOcrExcelApp:
         return True
 
     def _ocr_field_detail(self, image: Image.Image, field: TemplateField, show_errors: bool) -> tuple[str | None, str | None]:
-        raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, self.lang_var.get(), self.tesseract_var.get().strip())
+        raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get())
         if error and show_errors:
             messagebox.showerror("OCRエラー", error)
         return raw_text, text
 
     def _ocr_field(self, image: Image.Image, field: TemplateField, show_errors: bool) -> str | None:
-        text, error = self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip())
+        text, error = self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get())
         if error and show_errors:
             messagebox.showerror("OCRエラー", error)
         return text
@@ -1361,7 +1369,7 @@ class ImageOcrExcelApp:
             self.image_files,
             fields,
             settings,
-            lambda image, field: self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip()),
+            lambda image, field: self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get()),
             update_progress,
         )
         self.progress_var.set("")

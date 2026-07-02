@@ -21,6 +21,12 @@ Tesseractのパスが自動検出されない場合は、アプリ内の「設�
 C:\Program Files\Tesseract-OCR\tesseract.exe
 ```
 
+PaddleOCRを試す場合は追加依存を同期してください。
+
+```powershell
+uv sync --extra paddle
+```
+
 ## 起動
 
 ```powershell
@@ -114,5 +120,6 @@ uv run python scripts/measure_speaker_ocr.py --preprocess white-glyph --scale 4 
 uv run python scripts/measure_dialogue_ocr.py --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn --csv-out C:\tmp\dialogue-ocr.csv
 uv run python scripts/measure_dialogue_ocr.py --line-split detected --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn
 uv run python scripts/measure_dialogue_ocr.py --line-split none
+uv run python scripts/measure_dialogue_ocr.py --backend paddle --preprocess threshold --scale 3 --threshold 140 --lang jpn
 uv run python scripts/measure_dialogue_ocr.py --tessdata-dir C:\tessdata_best --oem 1
 ```

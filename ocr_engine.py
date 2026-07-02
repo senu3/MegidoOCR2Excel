@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
@@ -13,8 +16,19 @@ try:
 except ImportError:
     pytesseract = None
 
+if pytesseract is not None:
+    TesseractNotFoundError = pytesseract.TesseractNotFoundError
+    TesseractError = pytesseract.TesseractError
+else:
+    class TesseractNotFoundError(Exception):
+        pass
+
+    class TesseractError(Exception):
+        pass
+
 
 DEFAULT_LANG = "jpn+eng"
+DEFAULT_BACKEND = "tesseract"
 
 
 def detect_tesseract() -> str:
@@ -59,6 +73,7 @@ def scaled_field(field: TemplateField, image: Image.Image | None) -> TemplateFie
         region.replace_from,
         region.replace_to,
         region.remove_text,
+        region.ocr_backend,
         region.ocr_preprocess,
         region.ocr_scale,
         region.ocr_threshold,
@@ -214,18 +229,143 @@ def apply_postprocess(text: str, field: TemplateField) -> str:
     return value
 
 
+def resolve_backend(field: TemplateField, backend: str = DEFAULT_BACKEND) -> str:
+    field_backend = getattr(field, "ocr_backend", "default") or "default"
+    if field_backend != "default":
+        return field_backend
+    return backend if backend in {"tesseract", "paddle"} else DEFAULT_BACKEND
+
+
+def paddle_lang(lang: str) -> str:
+    value = (lang or "").lower()
+    if "jpn" in value or "japan" in value:
+        return "japan"
+    if "eng" in value or value == "en":
+        return "en"
+    return "japan"
+
+
+def extract_paddle_texts(result: Any) -> list[str]:
+    if result is None:
+        return []
+    if isinstance(result, str):
+        return [result] if result.strip() else []
+    if isinstance(result, dict):
+        texts: list[str] = []
+        found_text_key = False
+        for key in ("rec_text", "rec_texts", "text", "texts", "label"):
+            if key in result:
+                found_text_key = True
+                texts.extend(extract_paddle_texts(result[key]))
+        if found_text_key:
+            return texts
+        if not texts:
+            for value in result.values():
+                texts.extend(extract_paddle_texts(value))
+        return texts
+    if isinstance(result, (list, tuple)):
+        if len(result) == 2 and isinstance(result[0], str) and isinstance(result[1], (float, int)):
+            return [result[0]]
+        texts: list[str] = []
+        for value in result:
+            texts.extend(extract_paddle_texts(value))
+        return texts
+    for attr in ("to_dict", "json"):
+        method = getattr(result, attr, None)
+        if callable(method):
+            try:
+                return extract_paddle_texts(method())
+            except Exception:
+                pass
+    return []
+
+
+class PaddleBackend:
+    def __init__(self) -> None:
+        self.instances: dict[str, Any] = {}
+
+    def recognize(self, image: Image.Image, lang: str) -> str:
+        ocr = self._instance(lang)
+        result = self._run_ocr(ocr, image)
+        return " ".join(extract_paddle_texts(result)).strip()
+
+    def _instance(self, lang: str) -> Any:
+        paddle_language = paddle_lang(lang)
+        if paddle_language in self.instances:
+            return self.instances[paddle_language]
+        try:
+            os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
+            from paddleocr import PaddleOCR
+        except ImportError as exc:
+            raise RuntimeError("PaddleOCRがインストールされていません。`uv sync --extra paddle` で追加してください。") from exc
+
+        candidates = [
+            {
+                "lang": paddle_language,
+                "use_doc_orientation_classify": False,
+                "use_doc_unwarping": False,
+                "use_textline_orientation": False,
+            },
+            {"lang": paddle_language, "use_angle_cls": False, "show_log": False},
+            {"lang": paddle_language, "use_angle_cls": False},
+            {"lang": paddle_language},
+        ]
+        last_error: Exception | None = None
+        for kwargs in candidates:
+            try:
+                instance = PaddleOCR(**kwargs)
+                self.instances[paddle_language] = instance
+                return instance
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(f"PaddleOCRの初期化に失敗しました: {last_error}")
+
+    def _run_ocr(self, ocr: Any, image: Image.Image) -> Any:
+        image = image.convert("RGB")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "ocr_crop.png"
+            image.save(image_path)
+            predict_method = getattr(ocr, "predict", None)
+            if callable(predict_method):
+                try:
+                    return predict_method(
+                        str(image_path),
+                        use_doc_orientation_classify=False,
+                        use_doc_unwarping=False,
+                        use_textline_orientation=False,
+                    )
+                except TypeError:
+                    try:
+                        return predict_method(input=str(image_path))
+                    except TypeError:
+                        return predict_method(str(image_path))
+            ocr_method = getattr(ocr, "ocr", None)
+            if callable(ocr_method):
+                for kwargs in ({"det": False, "cls": False}, {"det": False}, {}):
+                    try:
+                        return ocr_method(str(image_path), **kwargs)
+                    except TypeError:
+                        continue
+        return None
+
+
 class OcrEngine:
+    def __init__(self) -> None:
+        self.paddle_backend: PaddleBackend | None = None
+
     def recognize_field_detail(
         self,
         image: Image.Image,
         field: TemplateField,
         lang: str = DEFAULT_LANG,
         tesseract_path: str = "",
+        backend: str = DEFAULT_BACKEND,
     ) -> tuple[str | None, str | None, str | None]:
-        if pytesseract is None:
+        backend_name = resolve_backend(field, backend)
+        if backend_name == "tesseract" and pytesseract is None:
             return None, None, "OCRライブラリ pytesseract がインストールされていません。"
 
-        if tesseract_path:
+        if backend_name == "tesseract" and tesseract_path:
             pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
         region = scaled_field(field, image)
@@ -238,19 +378,32 @@ class OcrEngine:
         config = f"--oem 3 --psm {psm}"
         try:
             if field.ocr_line_split == "detected":
-                raw_text = self.recognize_detected_lines(crop, field, ocr_lang, config)
+                raw_text = self.recognize_detected_lines(crop, field, ocr_lang, config, backend_name)
             else:
                 prepared = prepare_for_ocr(crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
-                raw_text = pytesseract.image_to_string(prepared, lang=ocr_lang, config=config)
-        except pytesseract.TesseractNotFoundError:
+                raw_text = self.recognize_prepared(prepared, ocr_lang, config, backend_name)
+        except TesseractNotFoundError:
             return None, None, "Tesseractが見つかりません。設定で実行ファイルのパスを指定してください。"
-        except pytesseract.TesseractError as exc:
+        except TesseractError as exc:
             return None, None, str(exc)
+        except RuntimeError as exc:
+            return None, None, str(exc)
+        except Exception as exc:
+            if backend_name == "paddle":
+                return None, None, f"PaddleOCRエラー: {exc}"
+            raise
 
         cleaned = clean_text(raw_text)
         return cleaned, apply_postprocess(cleaned, field), None
 
-    def recognize_detected_lines(self, crop: Image.Image, field: TemplateField, lang: str, config: str) -> str:
+    def recognize_prepared(self, image: Image.Image, lang: str, config: str, backend: str) -> str:
+        if backend == "paddle":
+            if self.paddle_backend is None:
+                self.paddle_backend = PaddleBackend()
+            return self.paddle_backend.recognize(image, lang)
+        return pytesseract.image_to_string(image, lang=lang, config=config)
+
+    def recognize_detected_lines(self, crop: Image.Image, field: TemplateField, lang: str, config: str, backend: str) -> str:
         parts: list[str] = []
         bands = detect_line_bands(
             crop,
@@ -262,7 +415,7 @@ class OcrEngine:
         for y1, y2 in bands:
             line_crop = crop.crop((0, y1, crop.width, y2))
             prepared = prepare_for_ocr(line_crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
-            text = pytesseract.image_to_string(prepared, lang=lang, config=config)
+            text = self.recognize_prepared(prepared, lang, config, backend)
             cleaned = clean_text(text)
             if cleaned:
                 parts.append(cleaned)
@@ -274,6 +427,7 @@ class OcrEngine:
         field: TemplateField,
         lang: str = DEFAULT_LANG,
         tesseract_path: str = "",
+        backend: str = DEFAULT_BACKEND,
     ) -> tuple[str | None, str | None]:
-        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path)
+        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path, backend)
         return value, error
