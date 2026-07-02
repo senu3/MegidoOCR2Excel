@@ -7,7 +7,7 @@ from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, Boolea
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
-from excel_exporter import ExcelExporter, ExportSettings
+from excel_exporter import ExcelExporter, ExportSettings, validate_export_settings
 from megido_app_config import APP_TITLE, DEFAULT_LANG, IMAGE_EXTENSIONS
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, detect_tesseract, fill_missing_field_source_size, scaled_field
@@ -93,6 +93,11 @@ class ImageOcrExcelApp:
         self.lang_var = StringVar(value=DEFAULT_LANG)
         self.lang_display_var = StringVar(value=self._lang_display(DEFAULT_LANG))
         self.tesseract_var = StringVar(value=detect_tesseract())
+        self.export_sheet_var = StringVar(value="OCR")
+        self.export_write_mode_var = StringVar(value="上書き")
+        self.export_start_cell_var = StringVar(value="A1")
+        self.export_include_filename_var = BooleanVar(value=True)
+        self.export_include_header_var = BooleanVar(value=True)
 
         self.side_body: ctk.CTkFrame | None = None
         self.canvas: Canvas
@@ -351,7 +356,10 @@ class ImageOcrExcelApp:
         assert body is not None
         self._section_note(body, "3. Excel出力", "フォルダ内の画像を、1画像1行としてExcelへ書き出します。")
 
-        panel = ctk.CTkFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        content = ctk.CTkScrollableFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
+        content.pack(side=TOP, fill=BOTH, expand=True)
+
+        panel = ctk.CTkFrame(content, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         panel.pack(fill="x", padx=16, pady=(0, 10))
         panel.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(panel, text="画像フォルダ", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 2))
@@ -361,14 +369,39 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(panel, textvariable=self.output_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=320).grid(row=4, column=0, sticky="ew", padx=12, pady=(0, 8))
         ctk.CTkButton(panel, text="出力先を選択", command=self.select_output_file, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=5, column=0, sticky="ew", padx=12, pady=(0, 12))
 
+        self._render_excel_output_settings(content)
+
         enabled_count = len(self._enabled_fields())
         image_count = len(self.image_files)
-        summary = ctk.CTkFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        summary = ctk.CTkFrame(content, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         summary.pack(fill="x", padx=16, pady=(0, 10))
         ctk.CTkLabel(summary, text=f"出力対象: {image_count} 画像 / {enabled_count} 項目", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).pack(fill="x", padx=12, pady=(12, 4))
-        ctk.CTkLabel(summary, text="列構成: 画像ファイル名 + 有効な項目", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).pack(fill="x", padx=12, pady=(0, 12))
+        ctk.CTkLabel(summary, text=self._export_column_summary(), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).pack(fill="x", padx=12, pady=(0, 12))
 
         ctk.CTkButton(body, text="Excelへ一括出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
+
+    def _render_excel_output_settings(self, parent) -> None:
+        panel = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        panel.pack(fill="x", padx=16, pady=(0, 10))
+        panel.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(panel, text="Excel出力設定", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
+        ctk.CTkLabel(panel, text="シート名", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkEntry(panel, textvariable=self.export_sheet_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=4)
+
+        ctk.CTkLabel(panel, text="書き込み", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkOptionMenu(panel, variable=self.export_write_mode_var, values=["上書き", "追記"], height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=4)
+
+        ctk.CTkLabel(panel, text="開始セル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkEntry(panel, textvariable=self.export_start_cell_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+
+        ctk.CTkCheckBox(panel, text="画像ファイル名を出力", variable=self.export_include_filename_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
+        ctk.CTkCheckBox(panel, text="ヘッダー行を出力", variable=self.export_include_header_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
+
+    def _export_column_summary(self) -> str:
+        columns = "画像ファイル名 + 有効な項目" if self.export_include_filename_var.get() else "有効な項目のみ"
+        header = "ヘッダーあり" if self.export_include_header_var.get() else "ヘッダーなし"
+        return f"列構成: {columns} / {header}"
 
     def _section_note(self, parent, title: str, note: str) -> None:
         ctk.CTkLabel(parent, text=title, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).pack(fill="x", padx=16, pady=(4, 2))
@@ -534,7 +567,7 @@ class ImageOcrExcelApp:
             lang=self.lang_var.get(),
             tesseract_path=self.tesseract_var.get(),
             sample_image=str(self.image_path) if self.image_path else "",
-            output_settings={},
+            output_settings=self._export_settings_dict(),
             template_name=path.stem,
             sample_image_size=sample_size,
         )
@@ -570,6 +603,7 @@ class ImageOcrExcelApp:
         self.template_var.set(str(path))
         self.lang_var.set(data.get("lang") or DEFAULT_LANG)
         self.lang_display_var.set(self._lang_display(self.lang_var.get()))
+        self._apply_output_settings(data.get("output_settings") or {})
         if data.get("tesseract_path"):
             self.tesseract_var.set(data["tesseract_path"])
         sample_raw = data.get("sample_image") or ""
@@ -1216,6 +1250,32 @@ class ImageOcrExcelApp:
             messagebox.showerror("OCRエラー", error)
         return text
 
+    def _export_settings_dict(self) -> dict:
+        return {
+            "sheet_name": self.export_sheet_var.get(),
+            "write_mode": self.export_write_mode_var.get(),
+            "start_cell": self.export_start_cell_var.get(),
+            "include_filename": self.export_include_filename_var.get(),
+            "include_header": self.export_include_header_var.get(),
+        }
+
+    def _apply_output_settings(self, settings: dict) -> None:
+        self.export_sheet_var.set(str(settings.get("sheet_name") or "OCR"))
+        write_mode = str(settings.get("write_mode") or "上書き")
+        self.export_write_mode_var.set(write_mode if write_mode in {"上書き", "追記"} else "上書き")
+        self.export_start_cell_var.set(str(settings.get("start_cell") or "A1"))
+        self.export_include_filename_var.set(bool(settings.get("include_filename", True)))
+        self.export_include_header_var.set(bool(settings.get("include_header", True)))
+
+    def _build_export_settings(self) -> tuple[ExportSettings | None, str | None]:
+        return validate_export_settings(
+            self.export_sheet_var.get(),
+            self.export_write_mode_var.get(),
+            self.export_start_cell_var.get(),
+            self.export_include_filename_var.get(),
+            self.export_include_header_var.get(),
+        )
+
     def export_to_excel(self, _event=None) -> None:
         fields = self._enabled_fields()
         if not fields:
@@ -1228,7 +1288,11 @@ class ImageOcrExcelApp:
             self.select_output_file()
             if not self.output_path:
                 return
-        if self.output_path.exists() and not messagebox.askyesno("上書き確認", f"既存ファイルを上書きします。\n{self.output_path}"):
+        settings, error = self._build_export_settings()
+        if error or settings is None:
+            messagebox.showerror("出力設定エラー", error or "Excel出力設定を確認してください。")
+            return
+        if settings.write_mode == "上書き" and self.output_path.exists() and not messagebox.askyesno("上書き確認", f"既存ファイルを上書きします。\n{self.output_path}"):
             return
 
         total = len(self.image_files)
@@ -1245,7 +1309,7 @@ class ImageOcrExcelApp:
             self.output_path,
             self.image_files,
             fields,
-            ExportSettings(),
+            settings,
             lambda image, field: self.ocr_engine.recognize_field(image, field, self.lang_var.get(), self.tesseract_var.get().strip()),
             update_progress,
         )
