@@ -159,6 +159,7 @@ class ImageOcrExcelApp:
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
         self.canvas.bind("<Control-MouseWheel>", self.on_mouse_wheel)
+        self.canvas.bind("<Motion>", self.on_canvas_motion)
         self.canvas.bind("<Button-3>", self.show_canvas_context_menu)
         self.canvas.bind("<Configure>", self.on_canvas_configure)
 
@@ -962,8 +963,11 @@ class ImageOcrExcelApp:
     def show_canvas_context_menu(self, event) -> str:
         if not self.original_image:
             return "break"
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         x, y = self._event_image_point(event)
-        hit_idx, _mode = self._hit_test_field(x, y)
+        hit_idx, _mode = (label_hit_idx, "move") if label_hit_idx is not None else self._hit_test_field(x, y)
         menu = Menu(self.root, tearoff=0)
         if hit_idx is not None:
             self.editing_name_index = None
@@ -1160,6 +1164,8 @@ class ImageOcrExcelApp:
         field = scaled_field(self.fields[idx], self.original_image)
         x1, y1, x2, y2 = [value * self.zoom for value in (field.x1, field.y1, field.x2, field.y2)]
         selected = idx == self.selected_index
+        editing_idx = int(self.canvas_edit_state["idx"]) if self.canvas_edit_state is not None else None
+        show_label = editing_idx is None or editing_idx == idx
         line_mode = field.ocr_line_split == "detected"
         if field.enabled:
             if line_mode:
@@ -1175,8 +1181,11 @@ class ImageOcrExcelApp:
         if line_mode and field.enabled:
             rect_kwargs["dash"] = (6, 3)
         rect = self.canvas.create_rectangle(x1, y1, x2, y2, **rect_kwargs)
-        if line_mode and field.enabled:
+        if line_mode and field.enabled and self.canvas_edit_state is None:
             self._draw_field_line_guides(field, selected)
+        self.canvas_rects[idx] = rect
+        if not show_label:
+            return
         label_text = f"{self._field_order_label(idx)} {field.name}"
         if line_mode:
             label_text = f"{label_text} | 行"
@@ -1186,7 +1195,6 @@ class ImageOcrExcelApp:
             bg = self.canvas.create_rectangle(label_box[0] - 5, label_box[1] - 3, label_box[2] + 5, label_box[3] + 3, fill=label_bg, outline=label_bg)
             self.canvas.tag_lower(bg, label)
             self.canvas_label_bgs[idx] = bg
-        self.canvas_rects[idx] = rect
         self.canvas_labels[idx] = label
 
     def _draw_field_line_guides(self, field: TemplateField, selected: bool) -> None:
@@ -1213,17 +1221,41 @@ class ImageOcrExcelApp:
     def _event_image_point(self, event) -> tuple[int, int]:
         return int(self.canvas.canvasx(event.x) / self.zoom), int(self.canvas.canvasy(event.y) / self.zoom)
 
+    def _hit_test_label(self, canvas_x: float, canvas_y: float) -> int | None:
+        for idx in range(len(self.fields) - 1, -1, -1):
+            item = self.canvas_label_bgs.get(idx) or self.canvas_labels.get(idx)
+            if item is None:
+                continue
+            bbox = self.canvas.bbox(item)
+            if not bbox:
+                continue
+            left, top, right, bottom = bbox
+            if left - 4 <= canvas_x <= right + 4 and top - 4 <= canvas_y <= bottom + 4:
+                return idx
+        return None
+
     def _hit_test_field(self, x: int, y: int) -> tuple[int | None, str | None]:
-        tolerance = max(10.0, 16.0 / max(self.zoom, 0.1))
+        tolerance = max(6.0, 10.0 / max(self.zoom, 0.1))
         for idx in range(len(self.fields) - 1, -1, -1):
             field = scaled_field(self.fields[idx], self.original_image).normalized()
             x1, y1, x2, y2 = field.x1, field.y1, field.x2, field.y2
-            near_left = abs(x - x1) <= tolerance
-            near_right = abs(x - x2) <= tolerance
-            near_top = abs(y - y1) <= tolerance
-            near_bottom = abs(y - y2) <= tolerance
+            width = max(1, x2 - x1)
+            height = max(1, y2 - y1)
+            resize_x = min(tolerance, max(4.0, width * 0.22))
+            resize_y = min(tolerance, max(4.0, height * 0.22))
             inside_x = x1 - tolerance <= x <= x2 + tolerance
             inside_y = y1 - tolerance <= y <= y2 + tolerance
+
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                center_x = x1 + resize_x < x < x2 - resize_x
+                center_y = y1 + resize_y < y < y2 - resize_y
+                if center_x and center_y:
+                    return idx, "move"
+
+            near_left = abs(x - x1) <= resize_x
+            near_right = abs(x - x2) <= resize_x
+            near_top = abs(y - y1) <= resize_y
+            near_bottom = abs(y - y2) <= resize_y
 
             if near_left and near_top:
                 return idx, "nw"
@@ -1244,6 +1276,37 @@ class ImageOcrExcelApp:
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return idx, "move"
         return None, None
+
+    def _cursor_for_edit_mode(self, mode: str | None) -> str:
+        if mode == "move":
+            return "fleur"
+        if mode in {"e", "w"}:
+            return "sb_h_double_arrow"
+        if mode in {"n", "s"}:
+            return "sb_v_double_arrow"
+        if mode:
+            return "crosshair"
+        return "arrow"
+
+    def on_canvas_motion(self, event) -> None:
+        if not self.original_image:
+            self.canvas.configure(cursor="arrow")
+            return
+        if self.canvas_edit_state is not None:
+            self.canvas.configure(cursor=self._cursor_for_edit_mode(str(self.canvas_edit_state.get("mode"))))
+            return
+        if self.drag_start is not None:
+            self.canvas.configure(cursor="crosshair")
+            return
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
+        if label_hit_idx is not None:
+            self.canvas.configure(cursor="fleur")
+            return
+        x, y = self._event_image_point(event)
+        _idx, mode = self._hit_test_field(x, y)
+        self.canvas.configure(cursor=self._cursor_for_edit_mode(mode))
 
     def _edited_rect_from_state(self, x: int, y: int) -> tuple[int, int, int, int]:
         assert self.canvas_edit_state is not None
@@ -1302,8 +1365,14 @@ class ImageOcrExcelApp:
         if not self.original_image:
             return
         self.editing_name_index = None
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         x, y = self._event_image_point(event)
-        hit_idx, mode = self._hit_test_field(x, y)
+        if label_hit_idx is not None:
+            hit_idx, mode = label_hit_idx, "move"
+        else:
+            hit_idx, mode = self._hit_test_field(x, y)
         if hit_idx is not None and mode is not None:
             field = scaled_field(self.fields[hit_idx], self.original_image).normalized()
             self.selected_index = hit_idx
@@ -1314,7 +1383,8 @@ class ImageOcrExcelApp:
                 "start_y": y,
                 "orig": (field.x1, field.y1, field.x2, field.y2),
             }
-            self.status_var.set(f"{self.fields[hit_idx].name} の範囲を調整中です。")
+            action_text = "移動中" if mode == "move" else "サイズ調整中"
+            self.status_var.set(f"{self.fields[hit_idx].name} の範囲を{action_text}です。")
             self._render_side_body()
             self.redraw()
             return
