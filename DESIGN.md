@@ -52,21 +52,23 @@ Do not use display fonts or fluid type in the application UI.
 Primary layout is two-pane:
 
 - Left: screenshot canvas, toolbar, scrollbars, and status bar.
-- Right: fixed-width workflow panel with segmented modes for template, review, and export.
+- Right: fixed-width workflow panel with segmented modes for range/column design, OCR review, and export.
 
 The three modes are the product structure:
 
-- Template: create and edit OCR regions.
-- Review: run OCR on the current image and correct results.
-- Export: choose source folder/output file and batch export.
+- 1. 範囲・列: create and edit OCR regions, name fields, order Excel columns, and load/save templates.
+- 2. OCR確認: run OCR on the current image, compare raw/postprocessed text, and tune field-level processing.
+- 3. Excel出力: choose source folder/output file, configure Excel writing, and batch export.
 
 ## Components
 
-- Toolbar buttons are compact filled controls.
+- Toolbar buttons are compact filled controls for global image navigation and OCR settings only.
 - Segmented mode switch is the main workflow navigation.
 - Field rows show enabled state, order, field name, and pixel size.
 - OCR review rows pair a field label with an editable text result.
 - Export panel keeps folder, output file, summary, and final action close together.
+- Template load/save lives with range and column design, not in the global toolbar.
+- OCR run actions live at the top of OCR確認 so they remain visible while field detail settings are edited.
 
 ## Implementation Notes
 
