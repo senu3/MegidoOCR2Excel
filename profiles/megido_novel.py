@@ -35,7 +35,7 @@ FIELD_OCR_PRESETS = {
         "ocr_scale": "auto",
         "ocr_threshold": 180,
         "ocr_lang": "jpn",
-        "ocr_line_split": "none",
+        "ocr_line_split": "detected",
     },
 }
 

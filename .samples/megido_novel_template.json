@@ -59,7 +59,7 @@
       "ocr_threshold": 180,
       "ocr_psm": 6,
       "ocr_lang": "jpn",
-      "ocr_line_split": "none",
+      "ocr_line_split": "detected",
       "ocr_line_padding": 12,
       "ocr_line_detect_threshold": 90,
       "ocr_line_detect_min_ratio": 0.015,

@@ -65,6 +65,7 @@ The three modes are the product structure:
 - Toolbar buttons are compact filled controls for global image navigation and OCR settings only.
 - Segmented mode switch is the main workflow navigation.
 - Field rows show enabled state, order, field name, and pixel size.
+- Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
 - OCR review rows pair a field label with an editable text result.
 - Export panel keeps folder, output file, summary, and final action close together.
 - Template load/save lives with range and column design, not in the global toolbar.

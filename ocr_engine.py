@@ -283,11 +283,19 @@ def extract_paddle_texts(result: Any) -> list[str]:
 class PaddleBackend:
     def __init__(self) -> None:
         self.instances: dict[str, Any] = {}
+        self.recognition_instances: dict[str, Any] = {}
 
     def recognize(self, image: Image.Image, lang: str) -> str:
         ocr = self._instance(lang)
         result = self._run_ocr(ocr, image)
         return " ".join(extract_paddle_texts(result)).strip()
+
+    def recognize_lines(self, images: list[Image.Image], lang: str) -> str:
+        if not images:
+            return ""
+        recognition = self._recognition_instance(lang)
+        result = self._run_text_recognition(recognition, images)
+        return " ".join(text.strip() for text in extract_paddle_texts(result) if text.strip()).strip()
 
     def _instance(self, lang: str) -> Any:
         paddle_language = paddle_lang(lang)
@@ -319,6 +327,30 @@ class PaddleBackend:
             except Exception as exc:
                 last_error = exc
         raise RuntimeError(f"PaddleOCRの初期化に失敗しました: {last_error}")
+
+    def _recognition_instance(self, lang: str) -> Any:
+        key = paddle_lang(lang)
+        if key in self.recognition_instances:
+            return self.recognition_instances[key]
+        try:
+            os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
+            from paddleocr import TextRecognition
+        except ImportError as exc:
+            raise RuntimeError("PaddleOCRがインストールされていません。`uv sync` で依存関係を同期してください。") from exc
+
+        candidates = [
+            {"model_name": "PP-OCRv6_medium_rec"},
+            {},
+        ]
+        last_error: Exception | None = None
+        for kwargs in candidates:
+            try:
+                instance = TextRecognition(**kwargs)
+                self.recognition_instances[key] = instance
+                return instance
+            except Exception as exc:
+                last_error = exc
+        raise RuntimeError(f"PaddleOCRの認識モデル初期化に失敗しました: {last_error}")
 
     def _run_ocr(self, ocr: Any, image: Image.Image) -> Any:
         image = image.convert("RGB")
@@ -360,6 +392,18 @@ class PaddleBackend:
                     except TypeError:
                         continue
         return None
+
+    def _run_text_recognition(self, recognition: Any, images: list[Image.Image]) -> Any:
+        import numpy as np
+
+        inputs = [np.array(image.convert("RGB")) for image in images]
+        predict_method = getattr(recognition, "predict", None)
+        if not callable(predict_method):
+            raise RuntimeError("PaddleOCRの認識モデルを実行できません。")
+        try:
+            return predict_method(input=inputs, batch_size=max(1, len(inputs)))
+        except TypeError:
+            return predict_method(inputs, batch_size=max(1, len(inputs)))
 
 
 class OcrEngine:
@@ -417,7 +461,6 @@ class OcrEngine:
         return pytesseract.image_to_string(image, lang=lang, config=config)
 
     def recognize_detected_lines(self, crop: Image.Image, field: TemplateField, lang: str, config: str, backend: str) -> str:
-        parts: list[str] = []
         bands = detect_line_bands(
             crop,
             field.ocr_line_detect_threshold,
@@ -425,9 +468,19 @@ class OcrEngine:
             field.ocr_line_detect_gap,
             field.ocr_line_padding,
         )
+        prepared_lines: list[Image.Image] = []
         for y1, y2 in bands:
             line_crop = crop.crop((0, y1, crop.width, y2))
             prepared = prepare_for_ocr(line_crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
+            prepared_lines.append(prepared)
+
+        if backend == "paddle":
+            if self.paddle_backend is None:
+                self.paddle_backend = PaddleBackend()
+            return self.paddle_backend.recognize_lines(prepared_lines, lang)
+
+        parts: list[str] = []
+        for prepared in prepared_lines:
             text = self.recognize_prepared(prepared, lang, config, backend)
             cleaned = clean_text(text)
             if cleaned:

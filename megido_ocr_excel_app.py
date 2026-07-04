@@ -11,7 +11,7 @@ from PIL import Image, ImageTk
 from excel_exporter import ExcelExporter, ExportSettings, validate_export_settings
 from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID
 from megido_ui_theme import THEME
-from ocr_engine import OcrEngine, detect_tesseract, fill_missing_field_source_size, scaled_field
+from ocr_engine import OcrEngine, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
 from ocr_models import OCR_BACKEND_OPTIONS, POSTPROCESS_OPTIONS, TemplateField
 from profiles.megido_novel import field_ocr_preset, has_field_ocr_preset
 from template_store import build_template_data, fields_from_template, load_template, save_template
@@ -42,6 +42,7 @@ COLOR_CANVAS_BG = THEME.palette.canvas_bg
 COLOR_CANVAS_PANEL = THEME.palette.canvas_panel
 COLOR_CANVAS_TOOLBAR = THEME.palette.canvas_toolbar
 
+OCR_MODE_OPTIONS = ["範囲全体", "行切り出し"]
 MODE_TEMPLATE = "1. 範囲・列"
 MODE_REVIEW = "2. OCR確認"
 MODE_EXPORT = "3. Excel出力"
@@ -392,13 +393,18 @@ class ImageOcrExcelApp:
 
         self._result_preview(panel, idx)
 
+        line_split_var = StringVar(value=self._line_split_display(field.ocr_line_split))
+        self.result_vars.append(line_split_var)
+        ctk.CTkLabel(panel, text="OCR方式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=2)
+        ctk.CTkOptionMenu(panel, variable=line_split_var, values=OCR_MODE_OPTIONS, command=lambda value, i=idx: self.set_field_line_split(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=2)
+
         mode_var = StringVar(value=field.postprocess if field.postprocess in POSTPROCESS_OPTIONS else POSTPROCESS_OPTIONS[0])
         self.result_vars.append(mode_var)
-        ctk.CTkLabel(panel, text="抽出", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=2)
-        ctk.CTkOptionMenu(panel, variable=mode_var, values=POSTPROCESS_OPTIONS, command=lambda value, i=idx: self.set_field_postprocess(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=2)
+        ctk.CTkLabel(panel, text="抽出", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=2)
+        ctk.CTkOptionMenu(panel, variable=mode_var, values=POSTPROCESS_OPTIONS, command=lambda value, i=idx: self.set_field_postprocess(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=2)
 
-        self._postprocess_pair_entries(panel, 3, field, idx)
-        self._postprocess_entry(panel, 4, "削除文字", field.remove_text, lambda value, i=idx: self.set_field_text_attr(i, "remove_text", value), placeholder="カンマ区切り")
+        self._postprocess_pair_entries(panel, 4, field, idx)
+        self._postprocess_entry(panel, 5, "削除文字", field.remove_text, lambda value, i=idx: self.set_field_text_attr(i, "remove_text", value), placeholder="カンマ区切り")
 
     def _result_preview(self, parent, idx: int) -> None:
         raw_text = self._compact_preview_text(self.current_raw_results[idx] or "未OCR")
@@ -438,12 +444,18 @@ class ImageOcrExcelApp:
         entry.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=2)
 
     def _postprocess_summary(self, field: TemplateField) -> str:
-        parts = [field.postprocess or "そのまま"]
+        parts = [self._line_split_display(field.ocr_line_split), field.postprocess or "そのまま"]
         if field.replace_from:
             parts.append("置換あり")
         if field.remove_text:
             parts.append("削除あり")
         return " / ".join(parts)
+
+    def _line_split_display(self, value: str) -> str:
+        return "行切り出し" if value == "detected" else "範囲全体"
+
+    def _line_split_value(self, display: str) -> str:
+        return "detected" if display == "行切り出し" else "none"
 
     def select_review_field(self, idx: int) -> str:
         if not (0 <= idx < len(self.fields)):
@@ -459,6 +471,19 @@ class ImageOcrExcelApp:
         self.fields[idx].postprocess = value if value in POSTPROCESS_OPTIONS else POSTPROCESS_OPTIONS[0]
         self.status_var.set(f"{self.fields[idx].name} の後処理を更新しました。OCRで確認できます。")
         self._render_side_body()
+
+    def set_field_line_split(self, idx: int, value: str) -> None:
+        if not (0 <= idx < len(self.fields)):
+            return
+        field = self.fields[idx]
+        field.ocr_line_split = self._line_split_value(value)
+        if idx < len(self.current_results):
+            self.current_results[idx] = ""
+        if idx < len(self.current_raw_results):
+            self.current_raw_results[idx] = ""
+        self.status_var.set(f"{field.name} のOCR方式を {self._line_split_display(field.ocr_line_split)} に変更しました。")
+        self._render_side_body()
+        self.redraw()
 
     def set_field_text_attr(self, idx: int, attr: str, value: str) -> None:
         if not (0 <= idx < len(self.fields)) or attr not in {"replace_from", "replace_to", "remove_text"}:
@@ -539,10 +564,12 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if field.enabled else THEME.palette.disabled_fill, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=1, sticky="w", padx=(4, 6), pady=(8, 2))
         name_widget = self._field_name_widget(row, idx)
         name_widget.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=(8, 2))
+        badge_color = THEME.palette.line_badge if field.ocr_line_split == "detected" and field.enabled else COLOR_SECONDARY
+        ctk.CTkLabel(row, text=self._line_split_display(field.ocr_line_split), width=78, height=22, font=UI_FONT_SMALL, fg_color=badge_color, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=3, sticky="e", padx=(0, 6), pady=(8, 2))
         detail_label = ctk.CTkLabel(row, text=self._field_size_text(field), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED)
-        detail_label.grid(row=1, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=(0, 8))
+        detail_label.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(4, 8), pady=(0, 8))
         drag_handle = ctk.CTkLabel(row, text="☰", width=30, font=UI_FONT_BOLD, text_color=COLOR_MUTED)
-        drag_handle.grid(row=0, column=3, rowspan=2, sticky="e", padx=(0, 8), pady=8)
+        drag_handle.grid(row=0, column=4, rowspan=2, sticky="e", padx=(0, 8), pady=8)
         drag_handle.bind("<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i))
         drag_handle.bind("<B1-Motion>", lambda event, i=idx: self.update_field_drag(event, i))
         drag_handle.bind("<ButtonRelease-1>", lambda event, i=idx: self.finish_field_drag(event, i))
@@ -1133,14 +1160,26 @@ class ImageOcrExcelApp:
         field = scaled_field(self.fields[idx], self.original_image)
         x1, y1, x2, y2 = [value * self.zoom for value in (field.x1, field.y1, field.x2, field.y2)]
         selected = idx == self.selected_index
+        line_mode = field.ocr_line_split == "detected"
         if field.enabled:
-            color = COLOR_CTA if selected else THEME.palette.enabled_region
-            label_bg = COLOR_CTA_HOVER if selected else COLOR_PRIMARY
+            if line_mode:
+                color = THEME.palette.line_region_selected if selected else THEME.palette.line_region
+                label_bg = THEME.palette.line_badge
+            else:
+                color = COLOR_CTA if selected else THEME.palette.enabled_region
+                label_bg = COLOR_CTA_HOVER if selected else COLOR_PRIMARY
         else:
             color = THEME.palette.disabled_fill
             label_bg = COLOR_MUTED
-        rect = self.canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=3 if selected else 2)
+        rect_kwargs = {"outline": color, "width": 3 if selected else 2}
+        if line_mode and field.enabled:
+            rect_kwargs["dash"] = (6, 3)
+        rect = self.canvas.create_rectangle(x1, y1, x2, y2, **rect_kwargs)
+        if line_mode and field.enabled:
+            self._draw_field_line_guides(field, selected)
         label_text = f"{self._field_order_label(idx)} {field.name}"
+        if line_mode:
+            label_text = f"{label_text} | 行"
         label = self.canvas.create_text(x1 + 10, max(6, y1 - 22), anchor="nw", text=label_text, fill=THEME.palette.on_color, font=UI_FONT_CANVAS)
         label_box = self.canvas.bbox(label)
         if label_box:
@@ -1149,6 +1188,27 @@ class ImageOcrExcelApp:
             self.canvas_label_bgs[idx] = bg
         self.canvas_rects[idx] = rect
         self.canvas_labels[idx] = label
+
+    def _draw_field_line_guides(self, field: TemplateField, selected: bool) -> None:
+        if self.original_image is None:
+            return
+        normalized = field.normalized()
+        crop = self.original_image.crop((normalized.x1, normalized.y1, normalized.x2, normalized.y2))
+        bands = detect_line_bands(
+            crop,
+            normalized.ocr_line_detect_threshold,
+            normalized.ocr_line_detect_min_ratio,
+            normalized.ocr_line_detect_gap,
+            normalized.ocr_line_padding,
+        )
+        color = THEME.palette.line_region_selected if selected else THEME.palette.line_guide
+        left = normalized.x1 * self.zoom
+        right = normalized.x2 * self.zoom
+        for band_y1, band_y2 in bands:
+            top = (normalized.y1 + band_y1) * self.zoom
+            bottom = (normalized.y1 + band_y2) * self.zoom
+            self.canvas.create_line(left, top, right, top, fill=color, width=1, dash=(2, 4))
+            self.canvas.create_line(left, bottom, right, bottom, fill=color, width=1, dash=(2, 4))
 
     def _event_image_point(self, event) -> tuple[int, int]:
         return int(self.canvas.canvasx(event.x) / self.zoom), int(self.canvas.canvasy(event.y) / self.zoom)
