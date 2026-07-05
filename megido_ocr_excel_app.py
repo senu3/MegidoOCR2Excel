@@ -1123,10 +1123,23 @@ class ImageOcrExcelApp:
 
     def _canvas_draw_order(self) -> list[int]:
         indexes = list(range(len(self.fields)))
-        selected = self.selected_index
+        selected = self._active_canvas_selection()
         if selected is None or not (0 <= selected < len(self.fields)):
             return indexes
         return [idx for idx in indexes if idx != selected] + [selected]
+
+    def _active_canvas_selection(self) -> int | None:
+        selected = self.selected_index
+        if selected is not None and 0 <= selected < len(self.fields):
+            return selected
+        return None
+
+    def _should_show_canvas_label(self, idx: int) -> bool:
+        editing_idx = int(self.canvas_edit_state["idx"]) if self.canvas_edit_state is not None else None
+        if editing_idx is not None:
+            return editing_idx == idx
+        selected = self._active_canvas_selection()
+        return selected is None or selected == idx
 
     def _draw_canvas_empty(self) -> None:
         canvas_w = max(self.canvas.winfo_width(), 900)
@@ -1171,24 +1184,24 @@ class ImageOcrExcelApp:
         field = scaled_field(self.fields[idx], self.original_image)
         x1, y1, x2, y2 = [value * self.zoom for value in (field.x1, field.y1, field.x2, field.y2)]
         selected = idx == self.selected_index
-        editing_idx = int(self.canvas_edit_state["idx"]) if self.canvas_edit_state is not None else None
-        show_label = editing_idx is None or editing_idx == idx
+        selection_active = self._active_canvas_selection() is not None
+        show_label = self._should_show_canvas_label(idx)
         line_mode = field.ocr_line_split == "detected"
         if field.enabled:
             if line_mode:
-                color = THEME.palette.line_region_selected if selected else THEME.palette.line_region
+                color = THEME.palette.line_region_selected if selected else THEME.palette.inactive_line_region if selection_active else THEME.palette.line_region
                 label_bg = THEME.palette.line_badge
             else:
-                color = COLOR_CTA if selected else THEME.palette.enabled_region
+                color = COLOR_CTA if selected else THEME.palette.inactive_region if selection_active else THEME.palette.enabled_region
                 label_bg = COLOR_CTA_HOVER if selected else COLOR_PRIMARY
         else:
             color = THEME.palette.disabled_fill
             label_bg = COLOR_MUTED
-        rect_kwargs = {"outline": color, "width": 3 if selected else 2}
+        rect_kwargs = {"outline": color, "width": 3 if selected else 1 if selection_active else 2}
         if line_mode and field.enabled:
             rect_kwargs["dash"] = (6, 3)
         rect = self.canvas.create_rectangle(x1, y1, x2, y2, **rect_kwargs)
-        if line_mode and field.enabled and self.canvas_edit_state is None:
+        if line_mode and field.enabled and self.canvas_edit_state is None and (selected or not selection_active):
             self._draw_field_line_guides(field, selected)
         self.canvas_rects[idx] = rect
         if not show_label:
@@ -1307,12 +1320,15 @@ class ImageOcrExcelApp:
             return
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
+        x, y = self._event_image_point(event)
+        _idx, mode = self._hit_test_field(x, y)
+        if mode and mode != "move":
+            self.canvas.configure(cursor=self._cursor_for_edit_mode(mode))
+            return
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         if label_hit_idx is not None:
             self.canvas.configure(cursor="fleur")
             return
-        x, y = self._event_image_point(event)
-        _idx, mode = self._hit_test_field(x, y)
         self.canvas.configure(cursor=self._cursor_for_edit_mode(mode))
 
     def _edited_rect_from_state(self, x: int, y: int) -> tuple[int, int, int, int]:
@@ -1374,12 +1390,15 @@ class ImageOcrExcelApp:
         self.editing_name_index = None
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
-        label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         x, y = self._event_image_point(event)
-        if label_hit_idx is not None:
+        field_hit_idx, field_mode = self._hit_test_field(x, y)
+        label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
+        if field_hit_idx is not None and field_mode and field_mode != "move":
+            hit_idx, mode = field_hit_idx, field_mode
+        elif label_hit_idx is not None:
             hit_idx, mode = label_hit_idx, "move"
         else:
-            hit_idx, mode = self._hit_test_field(x, y)
+            hit_idx, mode = field_hit_idx, field_mode
         if hit_idx is not None and mode is not None:
             field = scaled_field(self.fields[hit_idx], self.original_image).normalized()
             self.selected_index = hit_idx
