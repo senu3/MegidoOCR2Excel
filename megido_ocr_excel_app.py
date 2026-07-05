@@ -11,10 +11,10 @@ from PIL import Image, ImageTk
 from excel_exporter import ExcelExporter, ExportSettings, validate_export_settings
 from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID
 from megido_ui_theme import THEME
-from ocr_engine import OcrEngine, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
-from ocr_models import OCR_BACKEND_OPTIONS, TemplateField
+from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
+from ocr_models import CORRECTION_ALL_TARGET, OCR_BACKEND_OPTIONS, CorrectionRule, TemplateField
 from profiles.megido_novel import field_ocr_preset, has_field_ocr_preset
-from template_store import build_template_data, fields_from_template, load_template, save_template
+from template_store import build_template_data, correction_rules_from_template, fields_from_template, load_template, save_template
 
 
 UI_FONT_FAMILY = THEME.fonts.family
@@ -72,6 +72,7 @@ class ImageOcrExcelApp:
         self.fields: list[TemplateField] = []
         self.current_results: list[str] = []
         self.current_raw_results: list[str] = []
+        self.correction_rules: list[CorrectionRule] = []
         self.result_vars: list[StringVar] = []
         self.field_check_vars: list[BooleanVar] = []
         self.field_row_widgets: list[ctk.CTkFrame] = []
@@ -118,6 +119,7 @@ class ImageOcrExcelApp:
 
         self.side_body: ctk.CTkFrame | None = None
         self.review_detail_host: ctk.CTkFrame | None = None
+        self.correction_rules_host: ctk.CTkFrame | None = None
         self.canvas: Canvas
         self.hbar: Scrollbar | None = None
         self.vbar: Scrollbar | None = None
@@ -312,6 +314,7 @@ class ImageOcrExcelApp:
         self.review_order_label_by_index = {}
         self.review_summary_label_by_index = {}
         self.review_detail_host = None
+        self.correction_rules_host = None
         self._sync_counts()
         mode = self.mode_var.get()
         if mode == MODE_TEMPLATE:
@@ -381,6 +384,10 @@ class ImageOcrExcelApp:
         self.review_detail_host.pack(fill="x")
         self._render_postprocess_panel(self.review_detail_host)
 
+        self.correction_rules_host = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
+        self.correction_rules_host.pack(fill=BOTH, expand=True)
+        self._render_correction_rules_panel()
+
     def _review_result_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
         selected = idx == self.selected_index
@@ -427,6 +434,106 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(preview, text="補正後", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="nw", padx=(8, 8), pady=(0, 5))
         ctk.CTkLabel(preview, textvariable=self.review_processed_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 5))
 
+    def _render_correction_rules_panel(self) -> None:
+        host = self.correction_rules_host
+        if host is None or not host.winfo_exists():
+            return
+        for child in host.winfo_children():
+            child.destroy()
+
+        panel = ctk.CTkFrame(host, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        panel.pack(fill=BOTH, expand=True, padx=16, pady=(0, 12))
+        header = ctk.CTkFrame(panel, fg_color="transparent")
+        header.pack(fill="x", padx=12, pady=(10, 6))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(header, text="補正ルール", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(header, text="追加", command=self.add_correction_rule, width=58, height=28, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="e")
+
+        if not self.correction_rules:
+            note = ctk.CTkFrame(panel, fg_color=COLOR_SURFACE, corner_radius=THEME.layout.panel_radius)
+            note.pack(fill="x", padx=12, pady=(0, 12))
+            ctk.CTkLabel(note, text="OCRの誤認を置換で補正します。例: ョンで → ヨン", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=310).pack(fill="x", padx=10, pady=10)
+            return
+
+        scroller = ctk.CTkScrollableFrame(panel, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
+        scroller.pack(fill=BOTH, expand=True, padx=12, pady=(0, 12))
+        for idx, rule in enumerate(self.correction_rules):
+            self._correction_rule_row(scroller, idx, rule)
+
+    def _correction_rule_row(self, parent, idx: int, rule: CorrectionRule) -> None:
+        row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        row.pack(fill="x", padx=6, pady=5)
+        row.grid_columnconfigure(1, weight=1)
+        row.grid_columnconfigure(2, weight=1)
+
+        enabled_var = BooleanVar(value=rule.enabled)
+        ctk.CTkCheckBox(row, text="", variable=enabled_var, width=26, command=lambda i=idx, v=enabled_var: self.set_correction_rule_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, sticky="nw", padx=(8, 0), pady=9)
+
+        target_var = StringVar(value=rule.target if rule.target in self._correction_target_options() else CORRECTION_ALL_TARGET)
+        ctk.CTkOptionMenu(row, variable=target_var, values=self._correction_target_options(), command=lambda value, i=idx: self.set_correction_rule_target(i, value), height=28, width=104, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(8, 4), pady=(8, 3))
+        ctk.CTkButton(row, text="削除", command=lambda i=idx: self.delete_correction_rule(i), width=52, height=28, font=UI_FONT_SMALL, fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER).grid(row=0, column=2, sticky="e", padx=(4, 8), pady=(8, 3))
+
+        pattern_var = StringVar(value=rule.pattern)
+        replacement_var = StringVar(value=rule.replacement)
+        pattern_var.trace_add("write", lambda *_args, i=idx, v=pattern_var: self.set_correction_rule_text(i, "pattern", v.get()))
+        replacement_var.trace_add("write", lambda *_args, i=idx, v=replacement_var: self.set_correction_rule_text(i, "replacement", v.get()))
+        self.result_vars.extend([target_var, pattern_var, replacement_var])
+        ctk.CTkEntry(row, textvariable=pattern_var, placeholder_text="置換前", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(8, 4), pady=(3, 8))
+        ctk.CTkEntry(row, textvariable=replacement_var, placeholder_text="置換後", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=2, sticky="ew", padx=(4, 8), pady=(3, 8))
+
+    def _correction_target_options(self) -> list[str]:
+        options = [CORRECTION_ALL_TARGET]
+        for field in self.fields:
+            if field.name not in options:
+                options.append(field.name)
+        return options
+
+    def add_correction_rule(self) -> None:
+        target = self.fields[self.selected_index].name if self.selected_index is not None and 0 <= self.selected_index < len(self.fields) else CORRECTION_ALL_TARGET
+        self.correction_rules.append(CorrectionRule("", "", target, True))
+        self.status_var.set("補正ルールを追加しました。")
+        self._render_correction_rules_panel()
+
+    def delete_correction_rule(self, idx: int) -> None:
+        if not (0 <= idx < len(self.correction_rules)):
+            return
+        del self.correction_rules[idx]
+        self._apply_correction_rules_to_current_results()
+        self.status_var.set("補正ルールを削除しました。")
+        self._render_correction_rules_panel()
+
+    def set_correction_rule_enabled(self, idx: int, enabled: bool) -> None:
+        if not (0 <= idx < len(self.correction_rules)):
+            return
+        self.correction_rules[idx].enabled = enabled
+        self._on_correction_rules_changed()
+
+    def set_correction_rule_target(self, idx: int, target: str) -> None:
+        if not (0 <= idx < len(self.correction_rules)):
+            return
+        self.correction_rules[idx].target = target if target in self._correction_target_options() else CORRECTION_ALL_TARGET
+        self._on_correction_rules_changed()
+
+    def set_correction_rule_text(self, idx: int, attr: str, value: str) -> None:
+        if not (0 <= idx < len(self.correction_rules)) or attr not in {"pattern", "replacement"}:
+            return
+        setattr(self.correction_rules[idx], attr, value)
+        self._on_correction_rules_changed()
+
+    def _on_correction_rules_changed(self) -> None:
+        self._apply_correction_rules_to_current_results()
+        self.status_var.set("補正ルールを更新しました。OCR結果に反映されます。")
+
+    def _apply_correction_rules_to_current_results(self) -> None:
+        self._ensure_result_buffers()
+        for idx, field in enumerate(self.fields):
+            raw_text = self.current_raw_results[idx] if idx < len(self.current_raw_results) else ""
+            if raw_text:
+                corrected = apply_correction_rules(raw_text, field, self.correction_rules)
+                self.current_results[idx] = apply_postprocess(corrected, field)
+            self._refresh_review_row(idx)
+        self._update_review_detail_values()
+
     def _compact_preview_text(self, value: str, limit: int = 34) -> str:
         value = " ".join(value.split())
         return value if len(value) <= limit else f"{value[:limit - 3]}..."
@@ -442,6 +549,13 @@ class ImageOcrExcelApp:
             field.replace_from
             or field.remove_text
             or (field.postprocess and field.postprocess != "そのまま")
+            or self._has_correction_rule_for_field(field)
+        )
+
+    def _has_correction_rule_for_field(self, field: TemplateField) -> bool:
+        return any(
+            rule.enabled and rule.pattern and rule.target in {CORRECTION_ALL_TARGET, field.name}
+            for rule in self.correction_rules
         )
 
     def _line_split_display(self, value: str) -> str:
@@ -684,6 +798,7 @@ class ImageOcrExcelApp:
             tesseract_path=self.tesseract_var.get(),
             ocr_backend=self.backend_var.get(),
             output_settings=self._export_settings_dict(),
+            correction_rules=self.correction_rules,
             template_name=path.stem,
             profile_id=PROFILE_ID,
         )
@@ -711,6 +826,7 @@ class ImageOcrExcelApp:
             messagebox.showerror("テンプレートエラー", "読み取り項目がありません。")
             return
         self.fields = fields
+        self.correction_rules = correction_rules_from_template(data)
         self.current_results = [""] * len(self.fields)
         self.current_raw_results = [""] * len(self.fields)
         self.selected_index = 0
@@ -958,6 +1074,7 @@ class ImageOcrExcelApp:
         name = value.strip() or self.fields[idx].name
         name = self._unique_field_name(name.strip() or self.fields[idx].name, skip_index=idx)
         self.fields[idx].name = name
+        self._rename_correction_rule_targets(previous_name, name)
         if self._apply_profile_preset_after_rename(idx, previous_name):
             if idx < len(self.current_results):
                 self.current_results[idx] = ""
@@ -966,6 +1083,13 @@ class ImageOcrExcelApp:
         self._render_side_body()
         self.redraw()
         return "break"
+
+    def _rename_correction_rule_targets(self, previous_name: str, name: str) -> None:
+        if previous_name == name:
+            return
+        for rule in self.correction_rules:
+            if rule.target == previous_name:
+                rule.target = name
 
     def _apply_profile_preset_after_rename(self, idx: int, previous_name: str) -> bool:
         field = self.fields[idx]
@@ -1559,6 +1683,7 @@ class ImageOcrExcelApp:
         lang = self.lang_var.get()
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
+        correction_rules = [replace(rule) for rule in self.correction_rules]
 
         def work() -> tuple[list[str], list[str]]:
             raw_results = [""] * len(fields)
@@ -1566,7 +1691,7 @@ class ImageOcrExcelApp:
             for idx, field in fields:
                 if not field.enabled:
                     continue
-                raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend)
+                raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules)
                 if error or text is None:
                     raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
                 raw_results[idx] = raw_text or ""
@@ -1595,9 +1720,10 @@ class ImageOcrExcelApp:
         lang = self.lang_var.get()
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
+        correction_rules = [replace(rule) for rule in self.correction_rules]
 
         def work() -> tuple[int, str, str]:
-            raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend)
+            raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules)
             if error or text is None:
                 raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
             return idx, raw_text or "", text
@@ -1634,7 +1760,7 @@ class ImageOcrExcelApp:
         return True
 
     def _ocr_field_detail(self, image: Image.Image, field: TemplateField, show_errors: bool) -> tuple[str | None, str | None]:
-        raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get())
+        raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get(), self.correction_rules)
         if error and show_errors:
             messagebox.showerror("OCRエラー", error)
         return raw_text, text
@@ -1693,6 +1819,7 @@ class ImageOcrExcelApp:
         lang = self.lang_var.get()
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
+        correction_rules = [replace(rule) for rule in self.correction_rules]
 
         def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
             def apply_update() -> None:
@@ -1708,7 +1835,7 @@ class ImageOcrExcelApp:
                 image_files,
                 export_fields,
                 settings,
-                lambda image, field: self.ocr_engine.recognize_field(image, field, lang, tesseract_path, backend),
+                lambda image, field: self.ocr_engine.recognize_field(image, field, lang, tesseract_path, backend, correction_rules),
                 update_progress,
             )
 

@@ -3,12 +3,33 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 
-TEMPLATE_VERSION = 3
+TEMPLATE_VERSION = 4
 POSTPROCESS_OPTIONS = ["そのまま", "数字のみ", "数値抽出", "英数字のみ"]
 OCR_BACKEND_OPTIONS = ["default", "tesseract", "paddle"]
 OCR_PREPROCESS_OPTIONS = ["default", "gray", "threshold", "invert-threshold", "outline-threshold", "white-glyph"]
 OCR_SCALE_OPTIONS = ["auto", "2", "3", "4"]
 OCR_LINE_SPLIT_OPTIONS = ["none", "detected"]
+CORRECTION_ALL_TARGET = "すべて"
+
+
+@dataclass
+class CorrectionRule:
+    pattern: str
+    replacement: str = ""
+    target: str = CORRECTION_ALL_TARGET
+    enabled: bool = True
+
+    def normalized(self) -> "CorrectionRule":
+        target = (self.target or CORRECTION_ALL_TARGET).strip() or CORRECTION_ALL_TARGET
+        return CorrectionRule(
+            self.pattern,
+            self.replacement,
+            target,
+            self.enabled,
+        )
+
+    def to_dict(self) -> dict:
+        return asdict(self.normalized())
 
 
 @dataclass
@@ -116,4 +137,13 @@ def field_from_dict(item: dict) -> TemplateField:
         int(item.get("ocr_line_detect_threshold") or 90),
         float(item.get("ocr_line_detect_min_ratio") or 0.015),
         int(item.get("ocr_line_detect_gap") or 10),
+    ).normalized()
+
+
+def correction_rule_from_dict(item: dict) -> CorrectionRule:
+    return CorrectionRule(
+        str(item.get("pattern") or item.get("from") or ""),
+        str(item.get("replacement") or item.get("to") or ""),
+        str(item.get("target") or CORRECTION_ALL_TARGET),
+        bool(item.get("enabled", True)),
     ).normalized()

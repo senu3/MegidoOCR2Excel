@@ -9,7 +9,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
-from ocr_models import TemplateField
+from ocr_models import CORRECTION_ALL_TARGET, CorrectionRule, TemplateField
 
 try:
     import pytesseract
@@ -229,6 +229,18 @@ def apply_postprocess(text: str, field: TemplateField) -> str:
     return value
 
 
+def apply_correction_rules(text: str, field: TemplateField, correction_rules: list[CorrectionRule] | None = None) -> str:
+    value = text
+    for rule in correction_rules or []:
+        pattern = rule.pattern
+        if not rule.enabled or not pattern:
+            continue
+        if rule.target not in {CORRECTION_ALL_TARGET, field.name}:
+            continue
+        value = value.replace(pattern, rule.replacement)
+    return value
+
+
 def resolve_backend(field: TemplateField, backend: str = DEFAULT_BACKEND) -> str:
     field_backend = getattr(field, "ocr_backend", "default") or "default"
     if field_backend != "default":
@@ -417,6 +429,7 @@ class OcrEngine:
         lang: str = DEFAULT_LANG,
         tesseract_path: str = "",
         backend: str = DEFAULT_BACKEND,
+        correction_rules: list[CorrectionRule] | None = None,
     ) -> tuple[str | None, str | None, str | None]:
         backend_name = resolve_backend(field, backend)
         if backend_name == "tesseract" and pytesseract is None:
@@ -451,7 +464,8 @@ class OcrEngine:
             raise
 
         cleaned = clean_text(raw_text)
-        return cleaned, apply_postprocess(cleaned, field), None
+        corrected = apply_correction_rules(cleaned, field, correction_rules)
+        return cleaned, apply_postprocess(corrected, field), None
 
     def recognize_prepared(self, image: Image.Image, lang: str, config: str, backend: str) -> str:
         if backend == "paddle":
@@ -494,6 +508,7 @@ class OcrEngine:
         lang: str = DEFAULT_LANG,
         tesseract_path: str = "",
         backend: str = DEFAULT_BACKEND,
+        correction_rules: list[CorrectionRule] | None = None,
     ) -> tuple[str | None, str | None]:
-        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path, backend)
+        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules)
         return value, error

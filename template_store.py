@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ocr_models import TEMPLATE_VERSION, TemplateField, field_from_dict
+from ocr_models import TEMPLATE_VERSION, CorrectionRule, TemplateField, correction_rule_from_dict, field_from_dict
 
 
 def build_template_data(
@@ -13,6 +13,7 @@ def build_template_data(
     tesseract_path: str,
     ocr_backend: str,
     output_settings: dict,
+    correction_rules: list[CorrectionRule] | None = None,
     template_name: str = "ocr-template",
     profile_id: str = "",
 ) -> dict:
@@ -26,6 +27,7 @@ def build_template_data(
         "tesseract_path": tesseract_path,
         "ocr_backend": ocr_backend,
         "output_settings": output_settings,
+        "correction_rules": [rule.to_dict() for rule in correction_rules or [] if rule.pattern.strip()],
         "fields": [field.to_dict() for field in fields],
     }
 
@@ -40,3 +42,7 @@ def load_template(path: Path) -> dict:
 
 def fields_from_template(data: dict) -> list[TemplateField]:
     return [field_from_dict(item) for item in data.get("fields", [])]
+
+
+def correction_rules_from_template(data: dict) -> list[CorrectionRule]:
+    return [correction_rule_from_dict(item) for item in data.get("correction_rules", [])]
