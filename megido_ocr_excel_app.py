@@ -1118,8 +1118,15 @@ class ImageOcrExcelApp:
         self.image_item = self.canvas.create_image(0, 0, anchor="nw", image=self.preview_image)
         self.canvas.configure(scrollregion=(0, 0, scaled.width, scaled.height))
         self._sync_canvas_scrollbars()
-        for idx, _field in enumerate(self.fields):
+        for idx in self._canvas_draw_order():
             self._draw_field(idx)
+
+    def _canvas_draw_order(self) -> list[int]:
+        indexes = list(range(len(self.fields)))
+        selected = self.selected_index
+        if selected is None or not (0 <= selected < len(self.fields)):
+            return indexes
+        return [idx for idx in indexes if idx != selected] + [selected]
 
     def _draw_canvas_empty(self) -> None:
         canvas_w = max(self.canvas.winfo_width(), 900)
@@ -1222,7 +1229,7 @@ class ImageOcrExcelApp:
         return int(self.canvas.canvasx(event.x) / self.zoom), int(self.canvas.canvasy(event.y) / self.zoom)
 
     def _hit_test_label(self, canvas_x: float, canvas_y: float) -> int | None:
-        for idx in range(len(self.fields) - 1, -1, -1):
+        for idx in reversed(self._canvas_draw_order()):
             item = self.canvas_label_bgs.get(idx) or self.canvas_labels.get(idx)
             if item is None:
                 continue
@@ -1236,7 +1243,7 @@ class ImageOcrExcelApp:
 
     def _hit_test_field(self, x: int, y: int) -> tuple[int | None, str | None]:
         tolerance = max(6.0, 10.0 / max(self.zoom, 0.1))
-        for idx in range(len(self.fields) - 1, -1, -1):
+        for idx in reversed(self._canvas_draw_order()):
             field = scaled_field(self.fields[idx], self.original_image).normalized()
             x1, y1, x2, y2 = field.x1, field.y1, field.x2, field.y2
             width = max(1, x2 - x1)

@@ -66,7 +66,7 @@ The three modes are the product structure:
 - Segmented mode switch is the main workflow navigation.
 - Field rows show enabled state, order, field name, and pixel size.
 - Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
-- Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label always moves its field; during a region edit, other field labels are hidden to keep the target area readable.
+- Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label always moves its field; the selected field is drawn and hit-tested in front of other fields, and during a region edit, other field labels are hidden to keep the target area readable.
 - OCR review rows pair a field label with an editable text result.
 - Export panel keeps folder, output file, summary, and final action close together.
 - Template load/save lives with range and column design, not in the global toolbar.
