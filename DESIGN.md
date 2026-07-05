@@ -57,7 +57,7 @@ Primary layout is two-pane:
 The three modes are the product structure:
 
 - 1. 範囲・列: create and edit OCR regions, name fields, order Excel columns, and load/save templates.
-- 2. OCR確認: run OCR on the current image, compare raw/postprocessed text, and tune field-level processing.
+- 2. OCR確認: run OCR on the current image, compare raw/corrected text, and tune only the OCR mode that affects recognition.
 - 3. Excel出力: choose source folder/output file, configure Excel writing, and batch export.
 
 ## Components
@@ -68,7 +68,7 @@ The three modes are the product structure:
 - Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
 - Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label moves its field unless the pointer is on a resize edge/corner. The selected field is drawn and hit-tested in front of other fields; non-selected fields are visually muted, and their labels are hidden while a field is selected.
 - Selecting a field should update existing row chrome and the active detail panel only. Avoid rebuilding the whole side panel or resizing the preview image for selection-only changes.
-- OCR review rows pair a field label with an editable text result.
+- OCR review rows are selection controls. The detail panel shows raw OCR, corrected output, and OCR mode; replacement/delete text controls should live in a future correction-rule panel, not in the default review surface.
 - Export panel keeps folder, output file, summary, and final action close together.
 - Template load/save lives with range and column design, not in the global toolbar.
 - OCR run actions live at the top of OCR確認 so they remain visible while field detail settings are edited.

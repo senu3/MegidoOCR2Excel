@@ -12,7 +12,7 @@ from excel_exporter import ExcelExporter, ExportSettings, validate_export_settin
 from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
-from ocr_models import OCR_BACKEND_OPTIONS, POSTPROCESS_OPTIONS, TemplateField
+from ocr_models import OCR_BACKEND_OPTIONS, TemplateField
 from profiles.megido_novel import field_ocr_preset, has_field_ocr_preset
 from template_store import build_template_data, fields_from_template, load_template, save_template
 
@@ -76,6 +76,8 @@ class ImageOcrExcelApp:
         self.field_check_vars: list[BooleanVar] = []
         self.field_row_widgets: list[ctk.CTkFrame] = []
         self.field_row_by_index: dict[int, ctk.CTkFrame] = {}
+        self.review_order_label_by_index: dict[int, ctk.CTkLabel] = {}
+        self.review_summary_label_by_index: dict[int, ctk.CTkLabel] = {}
         self.selected_index: int | None = None
         self.editing_name_index: int | None = None
         self.dragging_field_index: int | None = None
@@ -109,6 +111,10 @@ class ImageOcrExcelApp:
         self.export_start_cell_var = StringVar(value="A1")
         self.export_include_filename_var = BooleanVar(value=True)
         self.export_include_header_var = BooleanVar(value=True)
+        self.review_detail_title_var = StringVar(value="")
+        self.review_raw_preview_var = StringVar(value="未OCR")
+        self.review_processed_preview_var = StringVar(value="未OCR")
+        self.review_line_split_var = StringVar(value=OCR_MODE_OPTIONS[0])
 
         self.side_body: ctk.CTkFrame | None = None
         self.review_detail_host: ctk.CTkFrame | None = None
@@ -303,6 +309,8 @@ class ImageOcrExcelApp:
         for child in self.side_body.winfo_children():
             child.destroy()
         self.field_row_by_index = {}
+        self.review_order_label_by_index = {}
+        self.review_summary_label_by_index = {}
         self.review_detail_host = None
         self._sync_counts()
         mode = self.mode_var.get()
@@ -341,7 +349,7 @@ class ImageOcrExcelApp:
         assert side_body is not None
         body = ctk.CTkFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
         body.pack(fill=BOTH, expand=True)
-        self._section_note(body, "2. OCR確認", "現在の画像でOCR結果と後処理の効き方を確認します。")
+        self._section_note(body, "2. OCR確認", "現在の画像で生OCRと補正後の出力を確認します。")
 
         action_row = ctk.CTkFrame(body, fg_color="transparent")
         action_row.pack(fill="x", padx=16, pady=(0, 8))
@@ -381,9 +389,13 @@ class ImageOcrExcelApp:
         self.field_row_by_index[idx] = row
         row.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if selected else COLOR_SECONDARY, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=0, sticky="w", padx=(8, 8), pady=8)
+        order_label = ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if selected else COLOR_SECONDARY, text_color=THEME.palette.on_color, corner_radius=4)
+        order_label.grid(row=0, column=0, sticky="w", padx=(8, 8), pady=8)
+        self.review_order_label_by_index[idx] = order_label
         ctk.CTkLabel(row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
-        ctk.CTkLabel(row, text=self._postprocess_summary(field), anchor="e", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=2, sticky="e", padx=(0, 8), pady=8)
+        summary_label = ctk.CTkLabel(row, text=self._postprocess_summary(field), anchor="e", font=UI_FONT_SMALL, text_color=COLOR_MUTED)
+        summary_label.grid(row=0, column=2, sticky="e", padx=(0, 8), pady=8)
+        self.review_summary_label_by_index[idx] = summary_label
 
         for widget in [row, *row.winfo_children()]:
             widget.bind("<Button-1>", lambda _event, i=idx: self.select_review_field(i))
@@ -391,75 +403,46 @@ class ImageOcrExcelApp:
     def _render_postprocess_panel(self, parent) -> None:
         idx = self.selected_index
         if idx is None or not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
-            self._empty_state(parent, "後処理対象がありません", "有効な項目を選択")
+            self._empty_state(parent, "確認対象がありません", "有効な項目を選択")
             return
 
-        field = self.fields[idx]
         panel = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         panel.pack(fill="x", padx=16, pady=(0, 12))
         panel.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(panel, text=f"後処理: {field.name}", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, columnspan=2, sticky="ew", padx=(12, 8), pady=(10, 6))
+        self._update_review_detail_values()
+        ctk.CTkLabel(panel, textvariable=self.review_detail_title_var, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, columnspan=2, sticky="ew", padx=(12, 8), pady=(10, 6))
 
-        self._result_preview(panel, idx)
+        self._result_preview(panel)
 
-        line_split_var = StringVar(value=self._line_split_display(field.ocr_line_split))
-        self.result_vars.append(line_split_var)
         ctk.CTkLabel(panel, text="OCR方式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=2)
-        ctk.CTkOptionMenu(panel, variable=line_split_var, values=OCR_MODE_OPTIONS, command=lambda value, i=idx: self.set_field_line_split(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=2)
+        ctk.CTkOptionMenu(panel, variable=self.review_line_split_var, values=OCR_MODE_OPTIONS, command=self.set_selected_field_line_split, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=(2, 10))
 
-        mode_var = StringVar(value=field.postprocess if field.postprocess in POSTPROCESS_OPTIONS else POSTPROCESS_OPTIONS[0])
-        self.result_vars.append(mode_var)
-        ctk.CTkLabel(panel, text="抽出", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=2)
-        ctk.CTkOptionMenu(panel, variable=mode_var, values=POSTPROCESS_OPTIONS, command=lambda value, i=idx: self.set_field_postprocess(i, value), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=2)
-
-        self._postprocess_pair_entries(panel, 4, field, idx)
-        self._postprocess_entry(panel, 5, "削除文字", field.remove_text, lambda value, i=idx: self.set_field_text_attr(i, "remove_text", value), placeholder="カンマ区切り")
-
-    def _result_preview(self, parent, idx: int) -> None:
-        raw_text = self._compact_preview_text(self.current_raw_results[idx] or "未OCR")
-        result_text = self._compact_preview_text(self.current_results[idx] or "未OCR")
+    def _result_preview(self, parent) -> None:
         preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
         preview.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 6))
         preview.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(8, 8), pady=(5, 0))
-        ctk.CTkLabel(preview, text=raw_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(5, 0))
-        ctk.CTkLabel(preview, text="後処理後", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="nw", padx=(8, 8), pady=(0, 5))
-        ctk.CTkLabel(preview, text=result_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 5))
+        ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(5, 0))
+        ctk.CTkLabel(preview, text="補正後", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="nw", padx=(8, 8), pady=(0, 5))
+        ctk.CTkLabel(preview, textvariable=self.review_processed_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 5))
 
     def _compact_preview_text(self, value: str, limit: int = 34) -> str:
         value = " ".join(value.split())
         return value if len(value) <= limit else f"{value[:limit - 3]}..."
 
-    def _postprocess_pair_entries(self, parent, row: int, field: TemplateField, idx: int) -> None:
-        ctk.CTkLabel(parent, text="置換", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=row, column=0, sticky="w", padx=(12, 8), pady=2)
-        group = ctk.CTkFrame(parent, fg_color="transparent")
-        group.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=2)
-        group.grid_columnconfigure(0, weight=1)
-        group.grid_columnconfigure(1, weight=1)
-        from_var = StringVar(value=field.replace_from)
-        to_var = StringVar(value=field.replace_to)
-        self.result_vars.extend([from_var, to_var])
-        from_var.trace_add("write", lambda *_args, i=idx, v=from_var: self.set_field_text_attr(i, "replace_from", v.get()))
-        to_var.trace_add("write", lambda *_args, i=idx, v=to_var: self.set_field_text_attr(i, "replace_to", v.get()))
-        ctk.CTkEntry(group, textvariable=from_var, placeholder_text="前", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkEntry(group, textvariable=to_var, placeholder_text="後", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(4, 0))
-
-    def _postprocess_entry(self, parent, row: int, label: str, value: str, command, placeholder: str = "") -> None:
-        var = StringVar(value=value)
-        self.result_vars.append(var)
-        var.trace_add("write", lambda *_args, v=var, c=command: c(v.get()))
-        ctk.CTkLabel(parent, text=label, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=row, column=0, sticky="w", padx=(12, 8), pady=2)
-        entry = ctk.CTkEntry(parent, textvariable=var, placeholder_text=placeholder, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT)
-        entry.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=2)
-
     def _postprocess_summary(self, field: TemplateField) -> str:
-        parts = [self._line_split_display(field.ocr_line_split), field.postprocess or "そのまま"]
-        if field.replace_from:
-            parts.append("置換あり")
-        if field.remove_text:
-            parts.append("削除あり")
+        parts = [self._line_split_display(field.ocr_line_split)]
+        if self._has_legacy_postprocess(field):
+            parts.append("補正あり")
         return " / ".join(parts)
+
+    def _has_legacy_postprocess(self, field: TemplateField) -> bool:
+        return bool(
+            field.replace_from
+            or field.remove_text
+            or (field.postprocess and field.postprocess != "そのまま")
+        )
 
     def _line_split_display(self, value: str) -> str:
         return "行切り出し" if value == "detected" else "範囲全体"
@@ -473,12 +456,10 @@ class ImageOcrExcelApp:
         self._select_field_index(idx, update_review_detail=True)
         return "break"
 
-    def set_field_postprocess(self, idx: int, value: str) -> None:
-        if not (0 <= idx < len(self.fields)):
+    def set_selected_field_line_split(self, value: str) -> None:
+        if self.selected_index is None:
             return
-        self.fields[idx].postprocess = value if value in POSTPROCESS_OPTIONS else POSTPROCESS_OPTIONS[0]
-        self.status_var.set(f"{self.fields[idx].name} の後処理を更新しました。OCRで確認できます。")
-        self._render_side_body()
+        self.set_field_line_split(self.selected_index, value)
 
     def set_field_line_split(self, idx: int, value: str) -> None:
         if not (0 <= idx < len(self.fields)):
@@ -490,14 +471,9 @@ class ImageOcrExcelApp:
         if idx < len(self.current_raw_results):
             self.current_raw_results[idx] = ""
         self.status_var.set(f"{field.name} のOCR方式を {self._line_split_display(field.ocr_line_split)} に変更しました。")
-        self._render_side_body()
+        self._update_review_detail_values()
+        self._refresh_review_row(idx)
         self.redraw()
-
-    def set_field_text_attr(self, idx: int, attr: str, value: str) -> None:
-        if not (0 <= idx < len(self.fields)) or attr not in {"replace_from", "replace_to", "remove_text"}:
-            return
-        setattr(self.fields[idx], attr, value)
-        self.status_var.set(f"{self.fields[idx].name} の後処理を更新しました。OCRで確認できます。")
 
     def _render_export_mode(self) -> None:
         body = self.side_body
@@ -831,21 +807,44 @@ class ImageOcrExcelApp:
             try:
                 if not row.winfo_exists():
                     continue
-                selected = idx == self.selected_index
-                row.configure(
-                    fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE,
-                    border_color=COLOR_PRIMARY if selected else COLOR_BORDER,
-                )
+                self._refresh_review_row(idx)
             except Exception:
                 continue
+
+    def _refresh_review_row(self, idx: int) -> None:
+        row = self.field_row_by_index.get(idx)
+        if row is not None and row.winfo_exists():
+            selected = idx == self.selected_index
+            row.configure(
+                fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE,
+                border_color=COLOR_PRIMARY if selected else COLOR_BORDER,
+            )
+        order_label = self.review_order_label_by_index.get(idx)
+        if order_label is not None and order_label.winfo_exists():
+            order_label.configure(fg_color=COLOR_PRIMARY if idx == self.selected_index else COLOR_SECONDARY)
+        summary = self.review_summary_label_by_index.get(idx)
+        if summary is not None and summary.winfo_exists() and 0 <= idx < len(self.fields):
+            summary.configure(text=self._postprocess_summary(self.fields[idx]))
 
     def _refresh_review_detail_panel(self) -> None:
         if self.review_detail_host is None or not self.review_detail_host.winfo_exists():
             return
-        for child in self.review_detail_host.winfo_children():
-            child.destroy()
-        self.result_vars = []
-        self._render_postprocess_panel(self.review_detail_host)
+        self._update_review_detail_values()
+
+    def _update_review_detail_values(self) -> None:
+        idx = self.selected_index
+        if idx is None or not (0 <= idx < len(self.fields)):
+            self.review_detail_title_var.set("OCR結果")
+            self.review_raw_preview_var.set("未OCR")
+            self.review_processed_preview_var.set("未OCR")
+            self.review_line_split_var.set(OCR_MODE_OPTIONS[0])
+            return
+        field = self.fields[idx]
+        self._ensure_result_buffers()
+        self.review_detail_title_var.set(f"OCR結果: {field.name}")
+        self.review_raw_preview_var.set(self._compact_preview_text(self.current_raw_results[idx] or "未OCR"))
+        self.review_processed_preview_var.set(self._compact_preview_text(self.current_results[idx] or "未OCR"))
+        self.review_line_split_var.set(self._line_split_display(field.ocr_line_split))
 
     def set_field_enabled(self, idx: int, enabled: bool) -> None:
         if 0 <= idx < len(self.fields):
