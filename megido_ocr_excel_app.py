@@ -65,6 +65,7 @@ class ImageOcrExcelApp:
 
         self.original_image: Image.Image | None = None
         self.preview_image: ImageTk.PhotoImage | None = None
+        self.preview_cache_key: tuple[int, float] | None = None
         self.image_item: int | None = None
         self.zoom = 1.0
 
@@ -74,6 +75,7 @@ class ImageOcrExcelApp:
         self.result_vars: list[StringVar] = []
         self.field_check_vars: list[BooleanVar] = []
         self.field_row_widgets: list[ctk.CTkFrame] = []
+        self.field_row_by_index: dict[int, ctk.CTkFrame] = {}
         self.selected_index: int | None = None
         self.editing_name_index: int | None = None
         self.dragging_field_index: int | None = None
@@ -109,6 +111,7 @@ class ImageOcrExcelApp:
         self.export_include_header_var = BooleanVar(value=True)
 
         self.side_body: ctk.CTkFrame | None = None
+        self.review_detail_host: ctk.CTkFrame | None = None
         self.canvas: Canvas
         self.hbar: Scrollbar | None = None
         self.vbar: Scrollbar | None = None
@@ -299,6 +302,8 @@ class ImageOcrExcelApp:
             return
         for child in self.side_body.winfo_children():
             child.destroy()
+        self.field_row_by_index = {}
+        self.review_detail_host = None
         self._sync_counts()
         mode = self.mode_var.get()
         if mode == MODE_TEMPLATE:
@@ -313,6 +318,7 @@ class ImageOcrExcelApp:
         assert body is not None
         self.field_check_vars = []
         self.field_row_widgets = []
+        self.field_row_by_index = {}
         self._section_note(body, "1. 範囲・列設計", "画像上で読み取り範囲を作成し、項目名とExcel列順を整えます。")
         action_row = ctk.CTkFrame(body, fg_color="transparent")
         action_row.pack(fill="x", padx=16, pady=(0, 8))
@@ -363,13 +369,16 @@ class ImageOcrExcelApp:
                 continue
             self._review_result_row(scroller, idx)
 
-        self._render_postprocess_panel(body)
+        self.review_detail_host = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
+        self.review_detail_host.pack(fill="x")
+        self._render_postprocess_panel(self.review_detail_host)
 
     def _review_result_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
         selected = idx == self.selected_index
         row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE, border_width=1, border_color=COLOR_PRIMARY if selected else COLOR_BORDER)
         row.pack(fill="x", padx=8, pady=4)
+        self.field_row_by_index[idx] = row
         row.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if selected else COLOR_SECONDARY, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=0, sticky="w", padx=(8, 8), pady=8)
@@ -461,9 +470,7 @@ class ImageOcrExcelApp:
     def select_review_field(self, idx: int) -> str:
         if not (0 <= idx < len(self.fields)):
             return "break"
-        self.selected_index = idx
-        self._render_side_body()
-        self.redraw()
+        self._select_field_index(idx, update_review_detail=True)
         return "break"
 
     def set_field_postprocess(self, idx: int, value: str) -> None:
@@ -558,6 +565,7 @@ class ImageOcrExcelApp:
         row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE, border_width=1, border_color=COLOR_PRIMARY if selected else COLOR_BORDER)
         row.pack(fill="x", padx=8, pady=5)
         self.field_row_widgets.append(row)
+        self.field_row_by_index[idx] = row
         row.grid_columnconfigure(2, weight=1)
         var = BooleanVar(value=field.enabled)
         self.field_check_vars.append(var)
@@ -581,6 +589,7 @@ class ImageOcrExcelApp:
             widget.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
         name_widget.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
         if self.editing_name_index != idx:
+            name_widget.bind("<Button-1>", lambda _event, i=idx: self.select_field(i))
             name_widget.bind("<Double-Button-1>", lambda _event, i=idx: self.begin_inline_name_edit(i))
 
     def _field_name_widget(self, parent, idx: int):
@@ -803,9 +812,40 @@ class ImageOcrExcelApp:
     def select_field(self, idx: int) -> None:
         if not (0 <= idx < len(self.fields)):
             return
+        self._select_field_index(idx, update_review_detail=False)
+
+    def _select_field_index(self, idx: int, update_review_detail: bool, redraw_canvas: bool = True) -> None:
+        if not (0 <= idx < len(self.fields)):
+            return
+        if self.selected_index == idx:
+            return
         self.selected_index = idx
-        self._render_side_body()
-        self.redraw()
+        self._refresh_selection_rows()
+        if update_review_detail and self.mode_var.get() == MODE_REVIEW:
+            self._refresh_review_detail_panel()
+        if redraw_canvas:
+            self.redraw()
+
+    def _refresh_selection_rows(self) -> None:
+        for idx, row in list(self.field_row_by_index.items()):
+            try:
+                if not row.winfo_exists():
+                    continue
+                selected = idx == self.selected_index
+                row.configure(
+                    fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE,
+                    border_color=COLOR_PRIMARY if selected else COLOR_BORDER,
+                )
+            except Exception:
+                continue
+
+    def _refresh_review_detail_panel(self) -> None:
+        if self.review_detail_host is None or not self.review_detail_host.winfo_exists():
+            return
+        for child in self.review_detail_host.winfo_children():
+            child.destroy()
+        self.result_vars = []
+        self._render_postprocess_panel(self.review_detail_host)
 
     def set_field_enabled(self, idx: int, enabled: bool) -> None:
         if 0 <= idx < len(self.fields):
@@ -971,9 +1011,7 @@ class ImageOcrExcelApp:
         menu = Menu(self.root, tearoff=0)
         if hit_idx is not None:
             self.editing_name_index = None
-            self.selected_index = hit_idx
-            self._render_side_body()
-            self.redraw()
+            self._select_field_index(hit_idx, update_review_detail=True)
             menu.add_command(label="項目名を編集", command=lambda i=hit_idx: self.rename_field_at(i))
             menu.add_command(label="削除", command=lambda i=hit_idx: self.delete_field_at(i, confirm=False))
             menu.add_separator()
@@ -1113,10 +1151,15 @@ class ImageOcrExcelApp:
             self._draw_canvas_empty()
             return
         w, h = self.original_image.size
-        scaled = self.original_image.resize((max(1, int(w * self.zoom)), max(1, int(h * self.zoom))), Image.Resampling.LANCZOS)
-        self.preview_image = ImageTk.PhotoImage(scaled)
+        scaled_width = max(1, int(w * self.zoom))
+        scaled_height = max(1, int(h * self.zoom))
+        cache_key = (id(self.original_image), self.zoom)
+        if self.preview_image is None or self.preview_cache_key != cache_key:
+            scaled = self.original_image.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+            self.preview_image = ImageTk.PhotoImage(scaled)
+            self.preview_cache_key = cache_key
         self.image_item = self.canvas.create_image(0, 0, anchor="nw", image=self.preview_image)
-        self.canvas.configure(scrollregion=(0, 0, scaled.width, scaled.height))
+        self.canvas.configure(scrollregion=(0, 0, scaled_width, scaled_height))
         self._sync_canvas_scrollbars()
         for idx in self._canvas_draw_order():
             self._draw_field(idx)
@@ -1401,7 +1444,7 @@ class ImageOcrExcelApp:
             hit_idx, mode = field_hit_idx, field_mode
         if hit_idx is not None and mode is not None:
             field = scaled_field(self.fields[hit_idx], self.original_image).normalized()
-            self.selected_index = hit_idx
+            self._select_field_index(hit_idx, update_review_detail=True, redraw_canvas=False)
             self.canvas_edit_state = {
                 "idx": hit_idx,
                 "mode": mode,
@@ -1411,7 +1454,6 @@ class ImageOcrExcelApp:
             }
             action_text = "移動中" if mode == "move" else "サイズ調整中"
             self.status_var.set(f"{self.fields[hit_idx].name} の範囲を{action_text}です。")
-            self._render_side_body()
             self.redraw()
             return
 
