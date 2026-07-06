@@ -46,6 +46,14 @@ OCR_MODE_OPTIONS = ["範囲全体", "行切り出し"]
 MODE_TEMPLATE = "1. 範囲・列"
 MODE_REVIEW = "2. OCR確認"
 MODE_EXPORT = "3. Excel出力"
+ICON_OPEN = "📂"
+ICON_SAVE = "💾"
+ICON_SETTINGS = "⚙"
+ICON_PREV = "‹"
+ICON_NEXT = "›"
+ICON_RUN = "▶"
+ICON_REFRESH = "⟳"
+ICON_EXCEL = "▦"
 
 
 class ImageOcrExcelApp:
@@ -99,9 +107,9 @@ class ImageOcrExcelApp:
 
         self.mode_var = StringVar(value=MODE_TEMPLATE)
         self.image_var = StringVar(value="画像未選択")
-        self.folder_var = StringVar(value="フォルダ未選択")
-        self.output_var = StringVar(value="出力先未選択")
-        self.template_var = StringVar(value="テンプレート未保存")
+        self.folder_var = StringVar(value="未選択")
+        self.output_var = StringVar(value="未選択")
+        self.template_var = StringVar(value="未保存")
         self.image_count_var = StringVar(value="0 / 0")
         self.field_count_var = StringVar(value="0 項目")
         self.status_var = StringVar(value=THEME.copy.initial_status)
@@ -148,13 +156,13 @@ class ImageOcrExcelApp:
         toolbar = ctk.CTkFrame(canvas_area, height=THEME.layout.toolbar_height, corner_radius=0, fg_color=COLOR_CANVAS_TOOLBAR)
         toolbar.pack(side=TOP, fill="x")
         toolbar.pack_propagate(False)
-        self._toolbar_button(toolbar, "画像フォルダ", self.open_image_folder, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, 104).pack(side=LEFT, padx=(12, 4), pady=10)
+        self._toolbar_button(toolbar, f"{ICON_OPEN} 画像", self.open_image_folder, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, 94).pack(side=LEFT, padx=(12, 4), pady=10)
         ctk.CTkFrame(toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider).pack(side=LEFT, padx=8, pady=14)
-        self._toolbar_button(toolbar, "設定", self.open_settings_modal, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 62).pack(side=LEFT, padx=4, pady=10)
+        self._toolbar_button(toolbar, ICON_SETTINGS, self.open_settings_modal, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 38).pack(side=LEFT, padx=4, pady=10)
         ctk.CTkLabel(toolbar, textvariable=self.image_var, font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_text, anchor="w").pack(side=LEFT, fill="x", expand=True, padx=(12, 12))
-        self._toolbar_button(toolbar, ">", self.next_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=(4, 12), pady=10)
+        self._toolbar_button(toolbar, ICON_NEXT, self.next_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=(4, 12), pady=10)
         ctk.CTkLabel(toolbar, textvariable=self.image_count_var, width=72, anchor="center", font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_muted).pack(side=RIGHT)
-        self._toolbar_button(toolbar, "<", self.previous_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=4, pady=10)
+        self._toolbar_button(toolbar, ICON_PREV, self.previous_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=4, pady=10)
 
         canvas_frame = ctk.CTkFrame(canvas_area, corner_radius=0, fg_color=COLOR_CANVAS_PANEL)
         canvas_frame.pack(side=TOP, fill=BOTH, expand=True)
@@ -334,13 +342,12 @@ class ImageOcrExcelApp:
         self.field_check_vars = []
         self.field_row_widgets = []
         self.field_row_by_index = {}
-        self._section_note(body, "1. 範囲・列設計", "画像上で読み取り範囲を作成し、項目名とExcel列順を整えます。")
         action_row = ctk.CTkFrame(body, fg_color="transparent")
-        action_row.pack(fill="x", padx=16, pady=(0, 8))
+        action_row.pack(fill="x", padx=16, pady=(2, 8))
         action_row.grid_columnconfigure(0, weight=1)
         action_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(action_row, text="テンプレート読込", command=self.load_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(action_row, text="テンプレート保存", command=self.save_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ctk.CTkButton(action_row, text=f"{ICON_OPEN} 読込", command=self.load_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(action_row, text=f"{ICON_SAVE} 保存", command=self.save_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         ctk.CTkLabel(body, textvariable=self.template_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
 
         scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -356,16 +363,13 @@ class ImageOcrExcelApp:
         assert side_body is not None
         body = ctk.CTkFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
         body.pack(fill=BOTH, expand=True)
-        self._section_note(body, "2. OCR確認", "現在の画像で生OCRと補正後の出力を確認します。")
 
         action_row = ctk.CTkFrame(body, fg_color="transparent")
-        action_row.pack(fill="x", padx=16, pady=(0, 8))
+        action_row.pack(fill="x", padx=16, pady=(2, 8))
         action_row.grid_columnconfigure(0, weight=1)
         action_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(action_row, text="選択項目をOCR", command=self.ocr_selected_field, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(action_row, text="全項目をOCR", command=self.ocr_current_image, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
-
-        ctk.CTkLabel(body, textvariable=self.folder_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
+        ctk.CTkButton(action_row, text=f"{ICON_RUN} 選択", command=self.ocr_selected_field, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(action_row, text=f"{ICON_REFRESH} 全項目", command=self.ocr_current_image, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
         scroller = ctk.CTkFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         scroller.pack(side=TOP, fill="x", padx=16, pady=(0, 10))
@@ -616,7 +620,6 @@ class ImageOcrExcelApp:
     def _render_export_mode(self) -> None:
         body = self.side_body
         assert body is not None
-        self._section_note(body, "3. Excel出力", "フォルダ内の画像を、1画像1行としてExcelへ書き出します。")
 
         content = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
         content.pack(side=TOP, fill=BOTH, expand=True)
@@ -626,46 +629,41 @@ class ImageOcrExcelApp:
         panel.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(panel, text="画像フォルダ", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(12, 8), pady=(12, 2))
         ctk.CTkLabel(panel, textvariable=self.folder_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=210).grid(row=1, column=0, sticky="ew", padx=(12, 8), pady=(0, 8))
-        ctk.CTkButton(panel, text="フォルダ変更", command=self.open_image_folder, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(12, 8))
+        ctk.CTkButton(panel, text=f"{ICON_OPEN} 変更", command=self.open_image_folder, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(12, 8))
         ctk.CTkLabel(panel, text="出力ファイル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=2, column=0, sticky="ew", padx=(12, 8), pady=(2, 2))
         ctk.CTkLabel(panel, textvariable=self.output_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=210).grid(row=3, column=0, sticky="ew", padx=(12, 8), pady=(0, 12))
-        ctk.CTkButton(panel, text="出力先選択", command=self.select_output_file, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
+        ctk.CTkButton(panel, text=f"{ICON_SAVE} 選択", command=self.select_output_file, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
 
         self._render_excel_output_settings(content)
 
         enabled_count = len(self._enabled_fields())
         image_count = len(self.image_files)
-        summary_text = f"出力対象: {image_count} 画像 / {enabled_count} 項目  |  {self._export_column_summary()}"
+        summary_text = f"{image_count}画像 / {enabled_count}項目 / {self._export_column_summary()}"
         ctk.CTkLabel(content, text=summary_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=330).pack(fill="x", padx=18, pady=(0, 12))
 
-        ctk.CTkButton(body, text="Excelへ一括出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
+        ctk.CTkButton(body, text=f"{ICON_EXCEL} Excel出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
 
     def _render_excel_output_settings(self, parent) -> None:
         panel = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         panel.pack(fill="x", padx=16, pady=(0, 10))
         panel.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(panel, text="Excel出力設定", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 8))
-        ctk.CTkLabel(panel, text="シート名", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=4)
-        ctk.CTkEntry(panel, textvariable=self.export_sheet_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=4)
+        ctk.CTkLabel(panel, text="シート名", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="w", padx=(12, 8), pady=(12, 4))
+        ctk.CTkEntry(panel, textvariable=self.export_sheet_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 4))
 
-        ctk.CTkLabel(panel, text="書き込み", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=4)
-        ctk.CTkOptionMenu(panel, variable=self.export_write_mode_var, values=["上書き", "追記"], height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=4)
+        ctk.CTkLabel(panel, text="書き込み", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkOptionMenu(panel, variable=self.export_write_mode_var, values=["上書き", "追記"], height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=4)
 
-        ctk.CTkLabel(panel, text="開始セル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
-        ctk.CTkEntry(panel, textvariable=self.export_start_cell_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+        ctk.CTkLabel(panel, text="開始セル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkEntry(panel, textvariable=self.export_start_cell_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=4)
 
-        ctk.CTkCheckBox(panel, text="画像ファイル名を出力", variable=self.export_include_filename_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
-        ctk.CTkCheckBox(panel, text="ヘッダー行を出力", variable=self.export_include_header_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
+        ctk.CTkCheckBox(panel, text="ファイル名列", variable=self.export_include_filename_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=3, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
+        ctk.CTkCheckBox(panel, text="ヘッダー行", variable=self.export_include_header_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
 
     def _export_column_summary(self) -> str:
-        columns = "画像ファイル名 + 有効な項目" if self.export_include_filename_var.get() else "有効な項目のみ"
+        columns = "ファイル名列あり" if self.export_include_filename_var.get() else "項目のみ"
         header = "ヘッダーあり" if self.export_include_header_var.get() else "ヘッダーなし"
-        return f"列構成: {columns} / {header}"
-
-    def _section_note(self, parent, title: str, note: str) -> None:
-        ctk.CTkLabel(parent, text=title, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).pack(fill="x", padx=16, pady=(4, 2))
-        ctk.CTkLabel(parent, text=note, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 12))
+        return f"{columns} / {header}"
 
     def _empty_state(self, parent, title: str, note: str) -> None:
         box = ctk.CTkFrame(parent, fg_color=COLOR_SURFACE_ALT, corner_radius=THEME.layout.panel_radius)
@@ -729,8 +727,8 @@ class ImageOcrExcelApp:
             messagebox.showinfo("画像なし", "選択したフォルダ内に対応画像がありません。")
             return
         self.source_folder = folder
-        self.folder_var.set(str(folder))
         self.image_files = files
+        self.folder_var.set(self._folder_status_text())
         self.current_image_index = 0
         self._load_current_image(auto_ocr=False)
         if self.fields and self.mode_var.get() == MODE_TEMPLATE:
@@ -784,9 +782,12 @@ class ImageOcrExcelApp:
     def _image_status_text(self) -> str:
         if not self.image_path:
             return "画像未選択"
-        if len(self.image_files) > 1:
-            return f"{self.current_image_index + 1}/{len(self.image_files)}: {self.image_path.name}"
-        return str(self.image_path)
+        return self.image_path.name
+
+    def _folder_status_text(self) -> str:
+        if not self.source_folder:
+            return "未選択"
+        return f"{self.source_folder.name} / {len(self.image_files)}画像"
 
     def select_output_file(self) -> None:
         file_name = filedialog.asksaveasfilename(
@@ -797,7 +798,7 @@ class ImageOcrExcelApp:
         if not file_name:
             return
         self.output_path = Path(file_name)
-        self.output_var.set(str(self.output_path))
+        self.output_var.set(self.output_path.name)
         self._render_side_body()
 
     def save_template(self, _event=None) -> None:
@@ -828,8 +829,8 @@ class ImageOcrExcelApp:
         )
         save_template(path, data)
         self.template_path = path
-        self.template_var.set(str(path))
-        self.status_var.set(f"テンプレートを保存しました: {path}")
+        self.template_var.set(path.name)
+        self.status_var.set(f"テンプレートを保存しました: {path.name}")
         self._render_side_body()
 
     def load_template(self, _event=None) -> None:
@@ -856,7 +857,7 @@ class ImageOcrExcelApp:
         self.selected_index = 0
         self.undo_action = None
         self.template_path = path
-        self.template_var.set(str(path))
+        self.template_var.set(path.name)
         self.lang_var.set(data.get("lang") or DEFAULT_LANG)
         self.lang_display_var.set(self._lang_display(self.lang_var.get()))
         backend = str(data.get("ocr_backend") or DEFAULT_BACKEND)
@@ -864,7 +865,7 @@ class ImageOcrExcelApp:
         self._apply_output_settings(data.get("output_settings") or {})
         if data.get("tesseract_path"):
             self.tesseract_var.set(data["tesseract_path"])
-        self.status_var.set(f"テンプレートを読み込みました: {path}")
+        self.status_var.set(f"テンプレートを読み込みました: {path.name}")
         self._render_side_body()
         self.redraw()
 
@@ -981,7 +982,7 @@ class ImageOcrExcelApp:
             return
         field = self.fields[idx]
         self._ensure_result_buffers()
-        self.review_detail_title_var.set(f"OCR結果: {field.name}")
+        self.review_detail_title_var.set(field.name)
         self.review_raw_preview_var.set(self._compact_preview_text(self.current_raw_results[idx] or "未OCR"))
         self.review_processed_preview_var.set(self._compact_preview_text(self.current_results[idx] or "未OCR"))
         self.review_line_split_var.set(self._line_split_display(field.ocr_line_split))

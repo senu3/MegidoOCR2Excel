@@ -64,12 +64,15 @@ The three modes are the product structure:
 
 - Toolbar buttons are compact filled controls for global image navigation and OCR settings only.
 - Segmented mode switch is the main workflow navigation.
+- Tabs carry the section label; do not repeat tab headings or explanatory text inside the tab body.
+- Persistent path displays should use compact names, not full filesystem paths. Keep full paths for dialogs and transient status messages only.
+- Use icon-plus-short-label buttons for frequent actions, and icon-only buttons for compact global controls when the icon is familiar.
 - Field rows show enabled state, order, field name, and pixel size.
 - Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
 - Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label moves its field unless the pointer is on a resize edge/corner. The selected field is drawn and hit-tested in front of other fields; non-selected fields are visually muted, and their labels are hidden while a field is selected.
 - Selecting a field should update existing row chrome and the active detail panel only. Avoid rebuilding the whole side panel or resizing the preview image for selection-only changes.
 - OCR review rows are selection controls. The detail panel shows raw OCR and OCR mode.
-- Correction rules live in their own review panel. It always shows the corrected output for the selected field, while the replacement-rule editor stays collapsed by default behind a compact chevron control. Rule addition belongs at the bottom of the expanded editor.
+- Correction-rule UI is currently hidden because the first editing surface was not useful enough. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation until the correction workflow is redesigned.
 - Export panel keeps folder, output file, summary, and final action close together.
 - Template load/save lives with range and column design, not in the global toolbar.
 - OCR run actions live at the top of OCR確認 so they remain visible while field detail settings are edited.
