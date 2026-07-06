@@ -110,7 +110,6 @@ class ImageOcrExcelApp:
         self.output_var = StringVar(value="未選択")
         self.template_var = StringVar(value="未保存")
         self.image_count_var = StringVar(value="0 / 0")
-        self.field_count_var = StringVar(value="0 項目")
         self.status_var = StringVar(value=THEME.copy.initial_status)
         self.progress_var = StringVar(value="")
         self.loading_var = StringVar(value="")
@@ -156,7 +155,7 @@ class ImageOcrExcelApp:
         toolbar.pack_propagate(False)
         self._toolbar_button(toolbar, f"{ICON_OPEN} 画像", self.open_image_folder, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, 94).pack(side=LEFT, padx=(12, 4), pady=10)
         ctk.CTkFrame(toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider).pack(side=LEFT, padx=8, pady=14)
-        self._toolbar_button(toolbar, ICON_SETTINGS, self.open_settings_modal, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 38).pack(side=LEFT, padx=4, pady=10)
+        self._toolbar_button(toolbar, f"{ICON_SETTINGS} 設定", self.open_settings_modal, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 72).pack(side=LEFT, padx=4, pady=10)
         ctk.CTkLabel(toolbar, textvariable=self.image_var, font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_text, anchor="w").pack(side=LEFT, fill="x", expand=True, padx=(12, 12))
         self._toolbar_button(toolbar, ICON_NEXT, self.next_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=(4, 12), pady=10)
         ctk.CTkLabel(toolbar, textvariable=self.image_count_var, width=72, anchor="center", font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_muted).pack(side=RIGHT)
@@ -194,23 +193,19 @@ class ImageOcrExcelApp:
         side.pack(side=RIGHT, fill="y", padx=(12, 12), pady=12)
         side.pack_propagate(False)
 
-        header = ctk.CTkFrame(side, corner_radius=0, fg_color=COLOR_SURFACE)
-        header.pack(side=TOP, fill="x", padx=16, pady=(16, 8))
-        ctk.CTkLabel(header, text=THEME.copy.header, font=UI_FONT_TITLE, text_color=COLOR_TEXT, anchor="w").pack(side=LEFT, fill="x", expand=True)
-        ctk.CTkLabel(header, textvariable=self.field_count_var, font=UI_FONT_SMALL, text_color=COLOR_MUTED, anchor="e").pack(side=RIGHT)
-
         ctk.CTkSegmentedButton(
             side,
             values=[MODE_TEMPLATE, MODE_REVIEW, MODE_EXPORT],
             variable=self.mode_var,
             command=self._on_mode_change,
+            height=THEME.layout.primary_button_height,
             font=UI_FONT_SMALL,
             selected_color=COLOR_PRIMARY,
             selected_hover_color=COLOR_PRIMARY_HOVER,
             unselected_color=THEME.palette.segmented_bg,
             unselected_hover_color=THEME.palette.segmented_hover,
             text_color=COLOR_TEXT,
-        ).pack(side=TOP, fill="x", padx=16, pady=(0, 10))
+        ).pack(side=TOP, fill="x", padx=16, pady=(16, 12))
 
         self.side_body = ctk.CTkFrame(side, corner_radius=0, fg_color=COLOR_SURFACE)
         self.side_body.pack(side=TOP, fill=BOTH, expand=True)
@@ -325,7 +320,6 @@ class ImageOcrExcelApp:
         self.review_summary_label_by_index = {}
         self.review_detail_host = None
         self.correction_rules_host = None
-        self._sync_counts()
         mode = self.mode_var.get()
         if mode == MODE_TEMPLATE:
             self._render_template_mode()
@@ -422,9 +416,8 @@ class ImageOcrExcelApp:
     def _result_preview(self, parent) -> None:
         preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
         preview.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 6))
-        preview.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(8, 8), pady=(5, 0))
-        ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=5)
+        preview.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=320).grid(row=0, column=0, sticky="ew", padx=8, pady=5)
 
     # Future correction-rule editor scaffold.
     # Intentionally not rendered from _render_review_mode while the UX is being redesigned.
@@ -978,7 +971,6 @@ class ImageOcrExcelApp:
     def set_field_enabled(self, idx: int, enabled: bool) -> None:
         if 0 <= idx < len(self.fields):
             self.fields[idx].enabled = enabled
-            self._sync_counts()
             self.redraw()
 
     def move_selected_field_up(self, _event=None) -> None:
@@ -1901,11 +1893,6 @@ class ImageOcrExcelApp:
                 self.selected_index = idx
                 return
         self.selected_index = None
-
-    def _sync_counts(self) -> None:
-        enabled = len(self._enabled_fields())
-        total = len(self.fields)
-        self.field_count_var.set(f"{enabled} / {total} 項目")
 
     def _field_order_label(self, idx: int) -> str:
         return f"#{idx + 1}"
