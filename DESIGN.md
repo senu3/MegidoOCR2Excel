@@ -75,7 +75,7 @@ The three modes are the product structure:
 - Correction-rule UI is currently hidden because the first editing surface was not useful enough. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation until the correction workflow is redesigned.
 - Export panel keeps folder, output file, summary, and final action close together.
 - Template load/save lives with range and column design, not in the global toolbar.
-- OCR run actions live at the top of OCR確認 so they remain visible while field detail settings are edited.
+- OCR run actions live at the bottom of the selected field detail panel, close to the raw OCR preview and OCR mode.
 
 ## Implementation Notes
 

@@ -52,7 +52,6 @@ ICON_SETTINGS = "⚙"
 ICON_PREV = "‹"
 ICON_NEXT = "›"
 ICON_RUN = "▶"
-ICON_REFRESH = "⟳"
 ICON_EXCEL = "▦"
 
 
@@ -124,7 +123,6 @@ class ImageOcrExcelApp:
         self.export_start_cell_var = StringVar(value="A1")
         self.export_include_filename_var = BooleanVar(value=True)
         self.export_include_header_var = BooleanVar(value=True)
-        self.review_detail_title_var = StringVar(value="")
         self.review_raw_preview_var = StringVar(value="未OCR")
         self.review_processed_preview_var = StringVar(value="未OCR")
         self.review_line_split_var = StringVar(value=OCR_MODE_OPTIONS[0])
@@ -364,15 +362,8 @@ class ImageOcrExcelApp:
         body = ctk.CTkFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
         body.pack(fill=BOTH, expand=True)
 
-        action_row = ctk.CTkFrame(body, fg_color="transparent")
-        action_row.pack(fill="x", padx=16, pady=(2, 8))
-        action_row.grid_columnconfigure(0, weight=1)
-        action_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(action_row, text=f"{ICON_RUN} 選択", command=self.ocr_selected_field, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(action_row, text=f"{ICON_REFRESH} 全項目", command=self.ocr_current_image, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
-
         scroller = ctk.CTkFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
-        scroller.pack(side=TOP, fill="x", padx=16, pady=(0, 10))
+        scroller.pack(side=TOP, fill="x", padx=16, pady=(2, 10))
         if not self.fields:
             self._empty_state(scroller, "テンプレートがありません", "先に読み取り項目を作成")
             return
@@ -422,16 +413,15 @@ class ImageOcrExcelApp:
         panel.grid_columnconfigure(1, weight=1)
 
         self._update_review_detail_values()
-        ctk.CTkLabel(panel, textvariable=self.review_detail_title_var, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, columnspan=2, sticky="ew", padx=(12, 8), pady=(10, 6))
-
         self._result_preview(panel)
 
-        ctk.CTkLabel(panel, text="OCR方式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=2)
-        ctk.CTkOptionMenu(panel, variable=self.review_line_split_var, values=OCR_MODE_OPTIONS, command=self.set_selected_field_line_split, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=(2, 10))
+        ctk.CTkLabel(panel, text="OCR方式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=2)
+        ctk.CTkOptionMenu(panel, variable=self.review_line_split_var, values=OCR_MODE_OPTIONS, command=self.set_selected_field_line_split, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=2)
+        ctk.CTkButton(panel, text=f"{ICON_RUN} OCR実行", command=self.ocr_selected_field, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
 
     def _result_preview(self, parent) -> None:
         preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
-        preview.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 6))
+        preview.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 6))
         preview.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(8, 8), pady=(5, 0))
         ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=5)
@@ -975,14 +965,12 @@ class ImageOcrExcelApp:
     def _update_review_detail_values(self) -> None:
         idx = self.selected_index
         if idx is None or not (0 <= idx < len(self.fields)):
-            self.review_detail_title_var.set("OCR結果")
             self.review_raw_preview_var.set("未OCR")
             self.review_processed_preview_var.set("未OCR")
             self.review_line_split_var.set(OCR_MODE_OPTIONS[0])
             return
         field = self.fields[idx]
         self._ensure_result_buffers()
-        self.review_detail_title_var.set(field.name)
         self.review_raw_preview_var.set(self._compact_preview_text(self.current_raw_results[idx] or "未OCR"))
         self.review_processed_preview_var.set(self._compact_preview_text(self.current_results[idx] or "未OCR"))
         self.review_line_split_var.set(self._line_split_display(field.ocr_line_split))
