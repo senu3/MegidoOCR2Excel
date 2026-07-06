@@ -72,6 +72,9 @@ class ImageOcrExcelApp:
         self.fields: list[TemplateField] = []
         self.current_results: list[str] = []
         self.current_raw_results: list[str] = []
+        # Future correction-rule foundation.
+        # Keep this data path even while the editor UI is hidden; template loading/saving
+        # and OCR application already support it and will be reused when rules are redesigned.
         self.correction_rules: list[CorrectionRule] = []
         self.correction_rules_expanded = False
         self.result_vars: list[StringVar] = []
@@ -385,10 +388,6 @@ class ImageOcrExcelApp:
         self.review_detail_host.pack(fill="x")
         self._render_postprocess_panel(self.review_detail_host)
 
-        self.correction_rules_host = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
-        self.correction_rules_host.pack(fill="x")
-        self._render_correction_rules_panel()
-
     def _review_result_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
         selected = idx == self.selected_index
@@ -433,6 +432,9 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(8, 8), pady=(5, 0))
         ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=5)
 
+    # Future correction-rule editor scaffold.
+    # Intentionally not rendered from _render_review_mode while the UX is being redesigned.
+    # Do not remove without also removing CorrectionRule serialization and OCR plumbing.
     def _render_correction_rules_panel(self) -> None:
         host = self.correction_rules_host
         if host is None or not host.winfo_exists():
