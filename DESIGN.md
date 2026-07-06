@@ -68,8 +68,8 @@ The three modes are the product structure:
 - Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
 - Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label moves its field unless the pointer is on a resize edge/corner. The selected field is drawn and hit-tested in front of other fields; non-selected fields are visually muted, and their labels are hidden while a field is selected.
 - Selecting a field should update existing row chrome and the active detail panel only. Avoid rebuilding the whole side panel or resizing the preview image for selection-only changes.
-- OCR review rows are selection controls. The detail panel shows raw OCR, corrected output, and OCR mode.
-- Correction rules live in their own review panel. They are ordered replacement rules applied immediately after OCR and before field-level legacy postprocessing, with targets set to all fields or a specific field.
+- OCR review rows are selection controls. The detail panel shows raw OCR and OCR mode.
+- Correction rules live in their own review panel. It always shows the corrected output for the selected field, while the replacement-rule editor stays collapsed by default behind a compact chevron control. Rule addition belongs at the bottom of the expanded editor.
 - Export panel keeps folder, output file, summary, and final action close together.
 - Template load/save lives with range and column design, not in the global toolbar.
 - OCR run actions live at the top of OCR確認 so they remain visible while field detail settings are edited.

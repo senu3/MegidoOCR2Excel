@@ -73,6 +73,7 @@ class ImageOcrExcelApp:
         self.current_results: list[str] = []
         self.current_raw_results: list[str] = []
         self.correction_rules: list[CorrectionRule] = []
+        self.correction_rules_expanded = False
         self.result_vars: list[StringVar] = []
         self.field_check_vars: list[BooleanVar] = []
         self.field_row_widgets: list[ctk.CTkFrame] = []
@@ -385,7 +386,7 @@ class ImageOcrExcelApp:
         self._render_postprocess_panel(self.review_detail_host)
 
         self.correction_rules_host = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
-        self.correction_rules_host.pack(fill=BOTH, expand=True)
+        self.correction_rules_host.pack(fill="x")
         self._render_correction_rules_panel()
 
     def _review_result_row(self, parent, idx: int) -> None:
@@ -430,9 +431,7 @@ class ImageOcrExcelApp:
         preview.grid(row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 6))
         preview.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(8, 8), pady=(5, 0))
-        ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(5, 0))
-        ctk.CTkLabel(preview, text="補正後", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="nw", padx=(8, 8), pady=(0, 5))
-        ctk.CTkLabel(preview, textvariable=self.review_processed_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 5))
+        ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=5)
 
     def _render_correction_rules_panel(self) -> None:
         host = self.correction_rules_host
@@ -442,23 +441,45 @@ class ImageOcrExcelApp:
             child.destroy()
 
         panel = ctk.CTkFrame(host, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
-        panel.pack(fill=BOTH, expand=True, padx=16, pady=(0, 12))
+        panel.pack(fill="x", padx=16, pady=(0, 12))
         header = ctk.CTkFrame(panel, fg_color="transparent")
         header.pack(fill="x", padx=12, pady=(10, 6))
         header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(header, text="補正ルール", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(header, text="追加", command=self.add_correction_rule, width=58, height=28, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(header, text=self._accordion_icon(), command=self.toggle_correction_rules_panel, width=30, height=28, font=UI_FONT_BOLD, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="e")
 
+        self._correction_result_preview(panel)
+        if not self.correction_rules_expanded:
+            return
         if not self.correction_rules:
             note = ctk.CTkFrame(panel, fg_color=COLOR_SURFACE, corner_radius=THEME.layout.panel_radius)
-            note.pack(fill="x", padx=12, pady=(0, 12))
+            note.pack(fill="x", padx=12, pady=(0, 8))
             ctk.CTkLabel(note, text="OCRの誤認を置換で補正します。例: ョンで → ヨン", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=310).pack(fill="x", padx=10, pady=10)
+            self._correction_add_button(panel)
             return
 
-        scroller = ctk.CTkScrollableFrame(panel, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
-        scroller.pack(fill=BOTH, expand=True, padx=12, pady=(0, 12))
+        scroller = ctk.CTkScrollableFrame(panel, height=190, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
+        scroller.pack(fill=BOTH, expand=True, padx=12, pady=(0, 8))
         for idx, rule in enumerate(self.correction_rules):
             self._correction_rule_row(scroller, idx, rule)
+        self._correction_add_button(panel)
+
+    def _accordion_icon(self) -> str:
+        return "v" if self.correction_rules_expanded else ">"
+
+    def _correction_result_preview(self, parent) -> None:
+        preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
+        preview.pack(fill="x", padx=12, pady=(0, 8))
+        preview.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(preview, text="補正後", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="nw", padx=(8, 8), pady=7)
+        ctk.CTkLabel(preview, textvariable=self.review_processed_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=270).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=7)
+
+    def toggle_correction_rules_panel(self) -> None:
+        self.correction_rules_expanded = not self.correction_rules_expanded
+        self._render_correction_rules_panel()
+
+    def _correction_add_button(self, parent) -> None:
+        ctk.CTkButton(parent, text="+ ルールを追加", command=self.add_correction_rule, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).pack(fill="x", padx=12, pady=(0, 12))
 
     def _correction_rule_row(self, parent, idx: int, rule: CorrectionRule) -> None:
         row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -491,6 +512,7 @@ class ImageOcrExcelApp:
     def add_correction_rule(self) -> None:
         target = self.fields[self.selected_index].name if self.selected_index is not None and 0 <= self.selected_index < len(self.fields) else CORRECTION_ALL_TARGET
         self.correction_rules.append(CorrectionRule("", "", target, True))
+        self.correction_rules_expanded = True
         self.status_var.set("補正ルールを追加しました。")
         self._render_correction_rules_panel()
 
