@@ -10,6 +10,9 @@ OCR_PREPROCESS_OPTIONS = ["default", "gray", "threshold", "invert-threshold", "o
 OCR_SCALE_OPTIONS = ["auto", "2", "3", "4"]
 OCR_LINE_SPLIT_OPTIONS = ["none", "detected"]
 CORRECTION_ALL_TARGET = "すべて"
+EXPORT_LAYOUT_IMAGE_ROW = "画像ごとに1行"
+EXPORT_LAYOUT_DIALOGUE_PAIR = "会話ペアごとに1行"
+EXPORT_LAYOUT_OPTIONS = [EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_DIALOGUE_PAIR]
 
 
 @dataclass

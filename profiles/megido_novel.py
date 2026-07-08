@@ -40,9 +40,17 @@ FIELD_OCR_PRESETS = {
 }
 
 
+def field_family(field_name: str) -> str:
+    if field_name.startswith("話者"):
+        return "話者"
+    if field_name.startswith("セリフ本文") or field_name.startswith("セリフ"):
+        return "セリフ本文"
+    return field_name
+
+
 def field_ocr_preset(field_name: str) -> dict:
-    return FIELD_OCR_PRESETS.get(field_name, DEFAULT_FIELD_OCR).copy()
+    return FIELD_OCR_PRESETS.get(field_family(field_name), DEFAULT_FIELD_OCR).copy()
 
 
 def has_field_ocr_preset(field_name: str) -> bool:
-    return field_name in FIELD_OCR_PRESETS
+    return field_family(field_name) in FIELD_OCR_PRESETS

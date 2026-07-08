@@ -12,7 +12,15 @@ from excel_exporter import ExcelExporter, ExportSettings, validate_export_settin
 from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
-from ocr_models import CORRECTION_ALL_TARGET, OCR_BACKEND_OPTIONS, CorrectionRule, TemplateField
+from ocr_models import (
+    CORRECTION_ALL_TARGET,
+    EXPORT_LAYOUT_DIALOGUE_PAIR,
+    EXPORT_LAYOUT_IMAGE_ROW,
+    EXPORT_LAYOUT_OPTIONS,
+    OCR_BACKEND_OPTIONS,
+    CorrectionRule,
+    TemplateField,
+)
 from profiles.megido_novel import field_ocr_preset, has_field_ocr_preset
 from template_store import build_template_data, correction_rules_from_template, fields_from_template, load_template, save_template
 
@@ -122,6 +130,7 @@ class ImageOcrExcelApp:
         self.export_start_cell_var = StringVar(value="A1")
         self.export_include_filename_var = BooleanVar(value=True)
         self.export_include_header_var = BooleanVar(value=True)
+        self.export_layout_var = StringVar(value=EXPORT_LAYOUT_IMAGE_ROW)
         self.review_raw_preview_var = StringVar(value="未OCR")
         self.review_processed_preview_var = StringVar(value="未OCR")
         self.review_line_split_var = StringVar(value=OCR_MODE_OPTIONS[0])
@@ -341,6 +350,13 @@ class ImageOcrExcelApp:
         ctk.CTkButton(action_row, text=f"{ICON_OPEN} 読込", command=self.load_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
         ctk.CTkButton(action_row, text=f"{ICON_SAVE} 保存", command=self.save_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         ctk.CTkLabel(body, textvariable=self.template_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
+        layout_row = ctk.CTkFrame(body, fg_color="transparent")
+        layout_row.pack(fill="x", padx=16, pady=(0, 8))
+        layout_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(layout_row, text="出力形式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ctk.CTkOptionMenu(layout_row, variable=self.export_layout_var, values=EXPORT_LAYOUT_OPTIONS, command=lambda _value: self._render_side_body(), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew")
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            ctk.CTkLabel(body, text="会話ペア出力: 項目順の 1つ目=話者、2つ目=セリフ として2項目ずつ縦行にします。", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=350).pack(fill="x", padx=16, pady=(0, 8))
 
         scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
@@ -621,7 +637,7 @@ class ImageOcrExcelApp:
 
         enabled_count = len(self._enabled_fields())
         image_count = len(self.image_files)
-        summary_text = f"{image_count}画像 / {enabled_count}項目 / {self._export_column_summary()}"
+        summary_text = f"{image_count}画像 / {self._export_unit_summary(enabled_count)} / {self._export_column_summary()}"
         ctk.CTkLabel(content, text=summary_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=330).pack(fill="x", padx=18, pady=(0, 12))
 
         ctk.CTkButton(body, text=f"{ICON_EXCEL} Excel出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
@@ -640,13 +656,24 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(panel, text="開始セル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=4)
         ctk.CTkEntry(panel, textvariable=self.export_start_cell_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=4)
 
-        ctk.CTkCheckBox(panel, text="ファイル名列", variable=self.export_include_filename_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=3, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
-        ctk.CTkCheckBox(panel, text="ヘッダー行", variable=self.export_include_header_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
+        ctk.CTkLabel(panel, text="出力形式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
+        ctk.CTkOptionMenu(panel, variable=self.export_layout_var, values=EXPORT_LAYOUT_OPTIONS, command=lambda _value: self._render_side_body(), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+
+        ctk.CTkCheckBox(panel, text="ファイル名列", variable=self.export_include_filename_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
+        ctk.CTkCheckBox(panel, text="ヘッダー行", variable=self.export_include_header_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
 
     def _export_column_summary(self) -> str:
-        columns = "ファイル名列あり" if self.export_include_filename_var.get() else "項目のみ"
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            columns = "画像名+ログ順+話者+セリフ" if self.export_include_filename_var.get() else "ログ順+話者+セリフ"
+        else:
+            columns = "ファイル名列あり" if self.export_include_filename_var.get() else "項目のみ"
         header = "ヘッダーあり" if self.export_include_header_var.get() else "ヘッダーなし"
         return f"{columns} / {header}"
+
+    def _export_unit_summary(self, enabled_count: int) -> str:
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            return f"{enabled_count // 2}会話ペア"
+        return f"{enabled_count}項目"
 
     def _empty_state(self, parent, title: str, note: str) -> None:
         box = ctk.CTkFrame(parent, fg_color=COLOR_SURFACE_ALT, corner_radius=THEME.layout.panel_radius)
@@ -1777,6 +1804,7 @@ class ImageOcrExcelApp:
             "start_cell": self.export_start_cell_var.get(),
             "include_filename": self.export_include_filename_var.get(),
             "include_header": self.export_include_header_var.get(),
+            "output_layout": self.export_layout_var.get(),
         }
 
     def _apply_output_settings(self, settings: dict) -> None:
@@ -1786,6 +1814,8 @@ class ImageOcrExcelApp:
         self.export_start_cell_var.set(str(settings.get("start_cell") or "A1"))
         self.export_include_filename_var.set(bool(settings.get("include_filename", True)))
         self.export_include_header_var.set(bool(settings.get("include_header", True)))
+        output_layout = str(settings.get("output_layout") or EXPORT_LAYOUT_IMAGE_ROW)
+        self.export_layout_var.set(output_layout if output_layout in EXPORT_LAYOUT_OPTIONS else EXPORT_LAYOUT_IMAGE_ROW)
 
     def _build_export_settings(self) -> tuple[ExportSettings | None, str | None]:
         return validate_export_settings(
@@ -1794,12 +1824,17 @@ class ImageOcrExcelApp:
             self.export_start_cell_var.get(),
             self.export_include_filename_var.get(),
             self.export_include_header_var.get(),
+            self.export_layout_var.get(),
         )
 
     def export_to_excel(self, _event=None) -> None:
         fields = self._enabled_fields()
         if not fields:
             messagebox.showerror("項目なし", "有効な読み取り項目がありません。")
+            return
+        pair_error = self._validate_dialogue_pair_export(fields)
+        if pair_error:
+            messagebox.showerror("会話ペア設定エラー", pair_error)
             return
         if not self.image_files:
             messagebox.showerror("画像なし", "画像フォルダを選択してください。")
@@ -1861,6 +1896,15 @@ class ImageOcrExcelApp:
 
         self._run_background(f"Excel出力中です。0 / {total}", work, on_success, on_error, on_finally)
 
+    def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
+        if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
+            return None
+        if len(fields) < 2:
+            return "会話ペア出力には、話者とセリフの2項目以上が必要です。"
+        if len(fields) % 2 != 0:
+            return "会話ペア出力では、有効項目を「話者、セリフ」の順で偶数個にしてください。"
+        return None
+
     def _initial_zoom(self) -> float:
         if not self.original_image:
             return 1.0
@@ -1895,6 +1939,13 @@ class ImageOcrExcelApp:
         self.selected_index = None
 
     def _field_order_label(self, idx: int) -> str:
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR and 0 <= idx < len(self.fields) and self.fields[idx].enabled:
+            enabled_indexes = [field_idx for field_idx, field in enumerate(self.fields) if field.enabled]
+            if idx in enabled_indexes:
+                enabled_position = enabled_indexes.index(idx)
+                pair_index = enabled_position // 2 + 1
+                role = "話" if enabled_position % 2 == 0 else "文"
+                return f"{pair_index}{role}"
         return f"#{idx + 1}"
 
     def _field_size_text(self, field: TemplateField) -> str:

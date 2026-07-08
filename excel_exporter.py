@@ -8,7 +8,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image
 
-from ocr_models import TemplateField
+from ocr_models import EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, TemplateField
 
 
 @dataclass
@@ -19,6 +19,7 @@ class ExportSettings:
     start_col: int = 1
     include_filename: bool = True
     include_header: bool = True
+    output_layout: str = EXPORT_LAYOUT_IMAGE_ROW
 
 
 @dataclass
@@ -43,6 +44,7 @@ def validate_export_settings(
     start_cell: str,
     include_filename: bool,
     include_header: bool,
+    output_layout: str = EXPORT_LAYOUT_IMAGE_ROW,
 ) -> tuple[ExportSettings | None, str | None]:
     sheet_name = sheet_name.strip() or "OCR"
     if len(sheet_name) > 31 or any(char in sheet_name for char in "[]:*?/\\"):
@@ -56,6 +58,8 @@ def validate_export_settings(
 
     if write_mode not in {"上書き", "追記"}:
         write_mode = "上書き"
+    if output_layout not in EXPORT_LAYOUT_OPTIONS:
+        output_layout = EXPORT_LAYOUT_IMAGE_ROW
 
     return (
         ExportSettings(
@@ -65,6 +69,7 @@ def validate_export_settings(
             start_col=start_col,
             include_filename=include_filename,
             include_header=include_header,
+            output_layout=output_layout,
         ),
         None,
     )
@@ -80,6 +85,9 @@ class ExcelExporter:
         ocr_callback: OcrCallback,
         progress_callback: Callable[[int, int, Path], None] | None = None,
     ) -> ExportResult:
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            return self._export_dialogue_pairs(output_path, image_files, fields, settings, ocr_callback, progress_callback)
+
         workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
         headers = self._export_headers(fields, settings.include_filename)
         if settings.include_header and row_cursor == settings.start_row:
@@ -119,6 +127,60 @@ class ExcelExporter:
         workbook.save(output_path)
         return ExportResult(total, errors)
 
+    def _export_dialogue_pairs(
+        self,
+        output_path: Path,
+        image_files: list[Path],
+        fields: list[TemplateField],
+        settings: ExportSettings,
+        ocr_callback: OcrCallback,
+        progress_callback: Callable[[int, int, Path], None] | None = None,
+    ) -> ExportResult:
+        workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
+        headers = self._dialogue_pair_headers(settings.include_filename)
+        if settings.include_header and row_cursor == settings.start_row:
+            self._write_excel_row(sheet, row_cursor, settings.start_col, headers)
+            row_cursor += 1
+
+        errors: list[ExportError] = []
+        total = len(image_files)
+        pairs = [(fields[idx], fields[idx + 1]) for idx in range(0, len(fields) - 1, 2)]
+
+        for row_index, image_path in enumerate(image_files, start=1):
+            try:
+                image = Image.open(image_path).convert("RGB")
+            except Exception as exc:
+                errors.append(ExportError(image_path.name, "", f"画像を開けませんでした: {exc}"))
+                if progress_callback:
+                    progress_callback(row_index, total, image_path)
+                continue
+
+            for pair_index, (speaker_field, dialogue_field) in enumerate(pairs, start=1):
+                speaker_text, speaker_error = ocr_callback(image, speaker_field)
+                dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
+                if speaker_text is None:
+                    errors.append(ExportError(image_path.name, speaker_field.name, speaker_error or "OCRに失敗しました。"))
+                    speaker_text = ""
+                if dialogue_text is None:
+                    errors.append(ExportError(image_path.name, dialogue_field.name, dialogue_error or "OCRに失敗しました。"))
+                    dialogue_text = ""
+
+                row = [str(pair_index), speaker_text, dialogue_text]
+                if settings.include_filename:
+                    row.insert(0, image_path.name)
+                self._write_excel_row(sheet, row_cursor, settings.start_col, row)
+                row_cursor += 1
+
+            if progress_callback:
+                progress_callback(row_index, total, image_path)
+
+        self._fit_output_columns(sheet)
+        self._write_error_sheet(workbook, errors)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        workbook.save(output_path)
+        return ExportResult(total, errors)
+
     def _prepare_output_sheet(self, output_path: Path, settings: ExportSettings):
         if settings.write_mode == "追記" and output_path.exists():
             workbook = load_workbook(output_path)
@@ -140,6 +202,12 @@ class ExcelExporter:
 
     def _export_headers(self, fields: list[TemplateField], include_filename: bool) -> list[str]:
         headers = [field.name for field in fields]
+        if include_filename:
+            return ["画像名", *headers]
+        return headers
+
+    def _dialogue_pair_headers(self, include_filename: bool) -> list[str]:
+        headers = ["ログ順", "話者", "セリフ"]
         if include_filename:
             return ["画像名", *headers]
         return headers
