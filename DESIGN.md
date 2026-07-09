@@ -69,6 +69,7 @@ The three modes are the product structure:
 - Use icon-plus-short-label buttons for frequent actions, and icon-only buttons for compact global controls when the icon is familiar.
 - Field rows show enabled state, order, field name, and pixel size.
 - Dialogue-pair export is a template/output mode, not a separate canvas tool. In this mode, enabled field order is interpreted as `speaker, dialogue, speaker, dialogue...`; Excel output folds each pair into `ログ順 / 話者 / セリフ` rows instead of expanding columns.
+- In dialogue-pair mode, Canvas shows an amber pair outline and a compact `#n` handle for each complete enabled pair. Inner field rectangles stay hidden by default to avoid double outlines; selecting an individual field shows only that field's rectangle for precise move/resize. Dragging the pair handle moves both regions together.
 - Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
 - Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label moves its field unless the pointer is on a resize edge/corner. The selected field is drawn and hit-tested in front of other fields; non-selected fields are visually muted, and their labels are hidden while a field is selected.
 - Selecting a field should update existing row chrome and the active detail panel only. Avoid rebuilding the whole side panel or resizing the preview image for selection-only changes.

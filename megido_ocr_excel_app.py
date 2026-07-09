@@ -109,6 +109,7 @@ class ImageOcrExcelApp:
         self.canvas_rects: dict[int, int] = {}
         self.canvas_labels: dict[int, int] = {}
         self.canvas_label_bgs: dict[int, int] = {}
+        self.canvas_pair_handles: dict[int, dict] = {}
         self.ocr_engine = OcrEngine()
         self.excel_exporter = ExcelExporter()
 
@@ -1236,6 +1237,8 @@ class ImageOcrExcelApp:
             self._undo_deleted_field(action)
         elif action_type == "update_rect":
             self._undo_updated_rect(action)
+        elif action_type == "update_pair_rects":
+            self._undo_updated_pair_rects(action)
         else:
             self.status_var.set("取り消せる直前操作がありません。")
             self.undo_action = None
@@ -1297,11 +1300,43 @@ class ImageOcrExcelApp:
         self.selected_index = idx
         self.status_var.set(f"{current.name} の範囲変更を取り消しました。")
 
+    def _undo_updated_pair_rects(self, action: dict) -> None:
+        fields: dict[int, TemplateField] = action.get("fields") or {}
+        if not fields:
+            self.status_var.set("更新前の会話ペアが見つからないため、取り消せませんでした。")
+            return
+        restored_indexes: list[int] = []
+        for idx, field in fields.items():
+            if not (0 <= idx < len(self.fields)):
+                continue
+            current = self.fields[idx]
+            current.x1, current.y1, current.x2, current.y2 = field.x1, field.y1, field.x2, field.y2
+            current.source_width, current.source_height = field.source_width, field.source_height
+            restored_indexes.append(idx)
+        if not restored_indexes:
+            self.status_var.set("更新前の会話ペアが見つからないため、取り消せませんでした。")
+            return
+        self._ensure_current_results()
+        for idx, value in (action.get("results") or {}).items():
+            if 0 <= idx < len(self.current_results):
+                self.current_results[idx] = str(value or "")
+        for idx, value in (action.get("raw_results") or {}).items():
+            if 0 <= idx < len(self.current_raw_results):
+                self.current_raw_results[idx] = str(value or "")
+        selected = action.get("selected")
+        if selected is None:
+            self.selected_index = None
+        else:
+            selected_idx = int(selected)
+            self.selected_index = selected_idx if 0 <= selected_idx < len(self.fields) else restored_indexes[0]
+        self.status_var.set("会話ペアの移動を取り消しました。")
+
     def redraw(self) -> None:
         self.canvas.delete("all")
         self.canvas_rects.clear()
         self.canvas_labels.clear()
         self.canvas_label_bgs.clear()
+        self.canvas_pair_handles.clear()
         if not self.original_image:
             self._draw_canvas_empty()
             return
@@ -1318,6 +1353,7 @@ class ImageOcrExcelApp:
         self._sync_canvas_scrollbars()
         for idx in self._canvas_draw_order():
             self._draw_field(idx)
+        self._draw_pair_handles()
 
     def _canvas_draw_order(self) -> list[int]:
         indexes = list(range(len(self.fields)))
@@ -1332,10 +1368,41 @@ class ImageOcrExcelApp:
             return selected
         return None
 
-    def _should_show_canvas_label(self, idx: int) -> bool:
-        editing_idx = int(self.canvas_edit_state["idx"]) if self.canvas_edit_state is not None else None
+    def _dialogue_pair_field_indexes(self) -> list[tuple[int, int]]:
+        if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
+            return []
+        enabled_indexes = [idx for idx, field in enumerate(self.fields) if field.enabled]
+        return [(enabled_indexes[idx], enabled_indexes[idx + 1]) for idx in range(0, len(enabled_indexes) - 1, 2)]
+
+    def _dialogue_pair_for_field(self, idx: int) -> tuple[int, int] | None:
+        for pair in self._dialogue_pair_field_indexes():
+            if idx in pair:
+                return pair
+        return None
+
+    def _canvas_editing_index(self) -> int | None:
+        if self.canvas_edit_state is None:
+            return None
+        idx = self.canvas_edit_state.get("idx")
+        return int(idx) if idx is not None else None
+
+    def _should_draw_field_rect(self, idx: int) -> bool:
+        pair = self._dialogue_pair_for_field(idx)
+        if pair is None:
+            return True
+        editing_idx = self._canvas_editing_index()
         if editing_idx is not None:
             return editing_idx == idx
+        if self.canvas_edit_state is not None and self.canvas_edit_state.get("mode") == "pair_move":
+            return False
+        return self.selected_index == idx
+
+    def _should_show_canvas_label(self, idx: int) -> bool:
+        editing_idx = self._canvas_editing_index()
+        if editing_idx is not None:
+            return editing_idx == idx
+        if not self._should_draw_field_rect(idx):
+            return False
         selected = self._active_canvas_selection()
         return selected is None or selected == idx
 
@@ -1383,6 +1450,8 @@ class ImageOcrExcelApp:
         x1, y1, x2, y2 = [value * self.zoom for value in (field.x1, field.y1, field.x2, field.y2)]
         selected = idx == self.selected_index
         selection_active = self._active_canvas_selection() is not None
+        if not self._should_draw_field_rect(idx):
+            return
         show_label = self._should_show_canvas_label(idx)
         line_mode = field.ocr_line_split == "detected"
         if field.enabled:
@@ -1414,6 +1483,102 @@ class ImageOcrExcelApp:
             self.canvas.tag_lower(bg, label)
             self.canvas_label_bgs[idx] = bg
         self.canvas_labels[idx] = label
+
+    def _draw_pair_handles(self) -> None:
+        if self.original_image is None:
+            return
+        for pair_position, indexes in enumerate(self._dialogue_pair_field_indexes(), start=1):
+            rects = {}
+            for idx in indexes:
+                field = scaled_field(self.fields[idx], self.original_image).normalized()
+                rects[idx] = (field.x1, field.y1, field.x2, field.y2)
+            self._draw_pair_handle(pair_position, indexes, rects)
+
+    def _draw_pair_handle(self, pair_position: int, indexes: tuple[int, int], rects: dict[int, tuple[int, int, int, int]]) -> None:
+        x1, y1, x2, y2 = self._pair_canvas_rect(rects)
+        selected = self.selected_index in indexes
+        outline = self.canvas.create_rectangle(
+            x1,
+            y1,
+            x2,
+            y2,
+            outline=THEME.palette.pair_outline,
+            width=2 if selected else 1,
+            dash=(5, 4),
+        )
+        handle_w, handle_h = 34, 22
+        handle_x1 = max(2, x1 + 4)
+        handle_y1 = max(2, y1 + 4)
+        handle_x2 = handle_x1 + handle_w
+        handle_y2 = handle_y1 + handle_h
+        handle = self.canvas.create_rectangle(
+            handle_x1,
+            handle_y1,
+            handle_x2,
+            handle_y2,
+            fill=THEME.palette.pair_handle,
+            outline=THEME.palette.pair_outline,
+            width=1,
+        )
+        label = self.canvas.create_text(
+            (handle_x1 + handle_x2) / 2,
+            (handle_y1 + handle_y2) / 2,
+            text=f"#{pair_position}",
+            fill=THEME.palette.on_color,
+            font=UI_FONT_CANVAS,
+        )
+        self.canvas_pair_handles[pair_position] = {
+            "fields": indexes,
+            "outline": outline,
+            "handle": handle,
+            "label": label,
+        }
+
+    def _pair_union(self, rects: dict[int, tuple[int, int, int, int]]) -> tuple[int, int, int, int]:
+        return (
+            min(rect[0] for rect in rects.values()),
+            min(rect[1] for rect in rects.values()),
+            max(rect[2] for rect in rects.values()),
+            max(rect[3] for rect in rects.values()),
+        )
+
+    def _pair_canvas_rect(self, rects: dict[int, tuple[int, int, int, int]]) -> tuple[float, float, float, float]:
+        padding = 7
+        x1, y1, x2, y2 = [value * self.zoom for value in self._pair_union(rects)]
+        return max(0, x1 - padding), max(0, y1 - padding), x2 + padding, y2 + padding
+
+    def _hit_test_pair_handle(self, canvas_x: float, canvas_y: float) -> int | None:
+        for pair_position in reversed(list(self.canvas_pair_handles.keys())):
+            item = self.canvas_pair_handles[pair_position].get("handle")
+            if item is None:
+                continue
+            bbox = self.canvas.bbox(item)
+            if not bbox:
+                continue
+            left, top, right, bottom = bbox
+            if left - 4 <= canvas_x <= right + 4 and top - 4 <= canvas_y <= bottom + 4:
+                return pair_position
+        return None
+
+    def _set_pair_handle_preview(self, pair_position: int, rects: dict[int, tuple[int, int, int, int]]) -> None:
+        handle_state = self.canvas_pair_handles.get(pair_position)
+        if not handle_state:
+            return
+        x1, y1, x2, y2 = self._pair_canvas_rect(rects)
+        outline = handle_state.get("outline")
+        if outline is not None:
+            self.canvas.coords(outline, x1, y1, x2, y2)
+        handle = handle_state.get("handle")
+        label = handle_state.get("label")
+        if handle is None or label is None:
+            return
+        handle_w, handle_h = 34, 22
+        handle_x1 = max(2, x1 + 4)
+        handle_y1 = max(2, y1 + 4)
+        handle_x2 = handle_x1 + handle_w
+        handle_y2 = handle_y1 + handle_h
+        self.canvas.coords(handle, handle_x1, handle_y1, handle_x2, handle_y2)
+        self.canvas.coords(label, (handle_x1 + handle_x2) / 2, (handle_y1 + handle_y2) / 2)
 
     def _draw_field_line_guides(self, field: TemplateField, selected: bool) -> None:
         if self.original_image is None:
@@ -1496,7 +1661,7 @@ class ImageOcrExcelApp:
         return None, None
 
     def _cursor_for_edit_mode(self, mode: str | None) -> str:
-        if mode == "move":
+        if mode in {"move", "pair_move"}:
             return "fleur"
         if mode in {"e", "w"}:
             return "sb_h_double_arrow"
@@ -1518,6 +1683,10 @@ class ImageOcrExcelApp:
             return
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
+        pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
+        if pair_hit is not None:
+            self.canvas.configure(cursor="fleur")
+            return
         x, y = self._event_image_point(event)
         _idx, mode = self._hit_test_field(x, y)
         if mode and mode != "move":
@@ -1565,6 +1734,26 @@ class ImageOcrExcelApp:
         y1, y2 = sorted((max(0, min(h, y1)), max(0, min(h, y2))))
         return x1, y1, x2, y2
 
+    def _pair_move_rects_from_state(self, x: int, y: int) -> dict[int, tuple[int, int, int, int]]:
+        assert self.canvas_edit_state is not None
+        assert self.original_image is not None
+        start_x = int(self.canvas_edit_state["start_x"])
+        start_y = int(self.canvas_edit_state["start_y"])
+        origs: dict[int, tuple[int, int, int, int]] = self.canvas_edit_state["origs"]
+        dx = x - start_x
+        dy = y - start_y
+        image_w, image_h = self.original_image.size
+        min_left = min(rect[0] for rect in origs.values())
+        min_top = min(rect[1] for rect in origs.values())
+        max_right = max(rect[2] for rect in origs.values())
+        max_bottom = max(rect[3] for rect in origs.values())
+        dx = max(-min_left, min(image_w - max_right, dx))
+        dy = max(-min_top, min(image_h - max_bottom, dy))
+        return {
+            idx: (int(x1 + dx), int(y1 + dy), int(x2 + dx), int(y2 + dy))
+            for idx, (x1, y1, x2, y2) in origs.items()
+        }
+
     def _set_canvas_edit_preview(self, idx: int, rect: tuple[int, int, int, int]) -> None:
         item = self.canvas_rects.get(idx)
         if item is None:
@@ -1591,6 +1780,27 @@ class ImageOcrExcelApp:
         x, y = self._event_image_point(event)
         field_hit_idx, field_mode = self._hit_test_field(x, y)
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
+        pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
+        if pair_hit is not None:
+            handle_state = self.canvas_pair_handles.get(pair_hit) or {}
+            indexes = tuple(handle_state.get("fields") or ())
+            if len(indexes) == 2:
+                origs = {}
+                for idx in indexes:
+                    field = scaled_field(self.fields[idx], self.original_image).normalized()
+                    origs[idx] = (field.x1, field.y1, field.x2, field.y2)
+                self.canvas_edit_state = {
+                    "pair_position": pair_hit,
+                    "indexes": indexes,
+                    "mode": "pair_move",
+                    "start_x": x,
+                    "start_y": y,
+                    "origs": origs,
+                    "selected": self.selected_index,
+                }
+                self.status_var.set(f"会話ペア #{pair_hit} を移動中です。")
+                self.redraw()
+                return
         if field_hit_idx is not None and field_mode and field_mode != "move":
             hit_idx, mode = field_hit_idx, field_mode
         elif label_hit_idx is not None:
@@ -1612,6 +1822,11 @@ class ImageOcrExcelApp:
             self.redraw()
             return
 
+        if self.selected_index is not None:
+            self.selected_index = None
+            self._render_side_body()
+            self.redraw()
+
         self.drag_start = (x, y)
         x = self.drag_start[0] * self.zoom
         y = self.drag_start[1] * self.zoom
@@ -1619,6 +1834,13 @@ class ImageOcrExcelApp:
 
     def on_mouse_drag(self, event) -> None:
         if self.canvas_edit_state is not None:
+            if self.canvas_edit_state.get("mode") == "pair_move":
+                x, y = self._event_image_point(event)
+                rects = self._pair_move_rects_from_state(x, y)
+                for idx, rect in rects.items():
+                    self._set_canvas_edit_preview(idx, rect)
+                self._set_pair_handle_preview(int(self.canvas_edit_state["pair_position"]), rects)
+                return
             idx = int(self.canvas_edit_state["idx"])
             x, y = self._event_image_point(event)
             rect = self._clamp_rect_to_image(self._edited_rect_from_state(x, y))
@@ -1632,6 +1854,36 @@ class ImageOcrExcelApp:
 
     def on_mouse_up(self, event) -> None:
         if self.canvas_edit_state is not None:
+            if self.canvas_edit_state.get("mode") == "pair_move":
+                x, y = self._event_image_point(event)
+                rects = self._pair_move_rects_from_state(x, y)
+                indexes = tuple(self.canvas_edit_state["indexes"])
+                pair_position = int(self.canvas_edit_state["pair_position"])
+                origs: dict[int, tuple[int, int, int, int]] = self.canvas_edit_state["origs"]
+                previous_selected = self.canvas_edit_state.get("selected")
+                self.canvas_edit_state = None
+                if not any(rects.get(idx) != origs.get(idx) for idx in indexes):
+                    self.redraw()
+                    return
+                before_fields = {idx: replace(self.fields[idx]) for idx in indexes if 0 <= idx < len(self.fields)}
+                before_results = {idx: self.current_results[idx] if idx < len(self.current_results) else "" for idx in indexes}
+                before_raw_results = {idx: self.current_raw_results[idx] if idx < len(self.current_raw_results) else "" for idx in indexes}
+                for idx, rect in rects.items():
+                    if not (0 <= idx < len(self.fields)):
+                        continue
+                    field = self.fields[idx]
+                    field.x1, field.y1, field.x2, field.y2 = rect
+                    field.source_width, field.source_height = self.original_image.size
+                    if idx < len(self.current_results):
+                        self.current_results[idx] = ""
+                    if idx < len(self.current_raw_results):
+                        self.current_raw_results[idx] = ""
+                self.selected_index = previous_selected
+                self._set_undo("update_pair_rects", fields=before_fields, results=before_results, raw_results=before_raw_results, selected=self.selected_index)
+                self.status_var.set(f"会話ペア #{pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。")
+                self._render_side_body()
+                self.redraw()
+                return
             idx = int(self.canvas_edit_state["idx"])
             x, y = self._event_image_point(event)
             x1, y1, x2, y2 = self._clamp_rect_to_image(self._edited_rect_from_state(x, y))
