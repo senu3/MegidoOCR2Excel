@@ -9,7 +9,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from excel_exporter import ExcelExporter, ExportSettings, validate_export_settings
-from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID
+from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID, natural_image_sort_key
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
 from ocr_models import (
@@ -52,7 +52,7 @@ COLOR_CANVAS_TOOLBAR = THEME.palette.canvas_toolbar
 
 OCR_MODE_OPTIONS = ["範囲全体", "行切り出し"]
 MODE_TEMPLATE = "1. 範囲・列"
-MODE_REVIEW = "2. OCR確認"
+MODE_REVIEW = "2. 認識テスト"
 MODE_EXPORT = "3. Excel出力"
 ICON_OPEN = "📂"
 ICON_SAVE = "💾"
@@ -135,6 +135,7 @@ class ImageOcrExcelApp:
         self.review_raw_preview_var = StringVar(value="未OCR")
         self.review_processed_preview_var = StringVar(value="未OCR")
         self.review_line_split_var = StringVar(value=OCR_MODE_OPTIONS[0])
+        self.review_crop_preview: ctk.CTkImage | None = None
 
         self.side_body: ctk.CTkFrame | None = None
         self.review_detail_host: ctk.CTkFrame | None = None
@@ -382,6 +383,26 @@ class ImageOcrExcelApp:
             self._empty_state(scroller, "画像がありません", "画像フォルダを選択")
             return
 
+        ctk.CTkLabel(
+            body,
+            text="現在の画像で認識精度を試します。上部の ‹ › で代表画像を切り替えてください。\nExcel出力時は、対象画像を改めて一括OCRします。",
+            anchor="w",
+            justify="left",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+            wraplength=350,
+        ).pack(fill="x", padx=18, pady=(0, 8), before=scroller)
+
+        ctk.CTkButton(
+            body,
+            text=f"{ICON_RUN} 現在の画像を全項目テスト",
+            command=self.ocr_current_image,
+            height=THEME.layout.primary_button_height,
+            font=UI_FONT_BOLD,
+            fg_color=COLOR_PRIMARY,
+            hover_color=COLOR_PRIMARY_HOVER,
+        ).pack(fill="x", padx=16, pady=(0, 10), before=scroller)
+
         self._ensure_result_buffers()
         self._ensure_review_selection()
         self.result_vars = []
@@ -428,13 +449,56 @@ class ImageOcrExcelApp:
 
         ctk.CTkLabel(panel, text="OCR方式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=2)
         ctk.CTkOptionMenu(panel, variable=self.review_line_split_var, values=OCR_MODE_OPTIONS, command=self.set_selected_field_line_split, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=2)
-        ctk.CTkButton(panel, text=f"{ICON_RUN} OCR実行", command=self.ocr_selected_field, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
+        ctk.CTkButton(panel, text=f"{ICON_RUN} 選択項目を再テスト", command=self.ocr_selected_field, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
 
     def _result_preview(self, parent) -> None:
         preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
         preview.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 6))
         preview.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(preview, textvariable=self.review_raw_preview_var, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_TEXT, wraplength=320).grid(row=0, column=0, sticky="ew", padx=8, pady=5)
+        crop_image = self._selected_field_crop_preview()
+        if crop_image is not None:
+            ctk.CTkLabel(preview, text="", image=crop_image, fg_color=COLOR_CANVAS_BG, corner_radius=4).grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 6))
+        else:
+            ctk.CTkLabel(preview, text="範囲プレビューを表示できません", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="ew", padx=8, pady=(12, 8))
+
+        ctk.CTkLabel(preview, text="認識結果", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 2))
+        result_text = self.current_results[self.selected_index] if self.selected_index is not None and self.selected_index < len(self.current_results) else ""
+        self._readonly_textbox(preview, result_text or "未テスト", row=2, height=72)
+
+        raw_text = self.current_raw_results[self.selected_index] if self.selected_index is not None and self.selected_index < len(self.current_raw_results) else ""
+        if raw_text and raw_text != result_text:
+            ctk.CTkLabel(preview, text="生OCR", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="ew", padx=8, pady=(6, 2))
+            self._readonly_textbox(preview, raw_text, row=4, height=56)
+
+    def _selected_field_crop_preview(self) -> ctk.CTkImage | None:
+        if self.original_image is None or self.selected_index is None or not (0 <= self.selected_index < len(self.fields)):
+            self.review_crop_preview = None
+            return None
+        region = scaled_field(self.fields[self.selected_index], self.original_image).normalized()
+        if region.x2 <= region.x1 or region.y2 <= region.y1:
+            self.review_crop_preview = None
+            return None
+        crop = self.original_image.crop((region.x1, region.y1, region.x2, region.y2))
+        max_width, max_height = 320, 112
+        scale = min(max_width / crop.width, max_height / crop.height, 1.0)
+        display_size = (max(1, round(crop.width * scale)), max(1, round(crop.height * scale)))
+        self.review_crop_preview = ctk.CTkImage(light_image=crop, dark_image=crop, size=display_size)
+        return self.review_crop_preview
+
+    def _readonly_textbox(self, parent, value: str, row: int, height: int) -> None:
+        textbox = ctk.CTkTextbox(
+            parent,
+            height=height,
+            wrap="word",
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SURFACE_ALT,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        )
+        textbox.grid(row=row, column=0, sticky="ew", padx=8, pady=(0, 8))
+        textbox.insert("1.0", value)
+        textbox.configure(state="disabled")
 
     # Future correction-rule editor scaffold.
     # Intentionally not rendered from _render_review_mode while the UX is being redesigned.
@@ -638,7 +702,7 @@ class ImageOcrExcelApp:
 
         enabled_count = len(self._enabled_fields())
         image_count = len(self.image_files)
-        summary_text = f"{image_count}画像 / {self._export_unit_summary(enabled_count)} / {self._export_column_summary()}"
+        summary_text = f"{image_count}画像（自然順） / {self._export_unit_summary(enabled_count)} / {self._export_column_summary()}"
         ctk.CTkLabel(content, text=summary_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=330).pack(fill="x", padx=18, pady=(0, 12))
 
         ctk.CTkButton(body, text=f"{ICON_EXCEL} Excel出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
@@ -733,7 +797,10 @@ class ImageOcrExcelApp:
         if not folder_name:
             return
         folder = Path(folder_name)
-        files = sorted(path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS)
+        files = sorted(
+            (path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS),
+            key=natural_image_sort_key,
+        )
         if not files:
             messagebox.showinfo("画像なし", "選択したフォルダ内に対応画像がありません。")
             return
@@ -786,9 +853,9 @@ class ImageOcrExcelApp:
             finally:
                 self._hide_loading()
         if auto_ocr:
-            self.status_var.set("画像を読み込みました。読み取り結果を確認できます。")
+            self.status_var.set("画像を読み込みました。認識テストの結果を確認できます。")
         else:
-            self.status_var.set("画像を読み込みました。OCR確認タブでOCRを実行できます。")
+            self.status_var.set("画像を読み込みました。認識テストで代表画像を試せます。")
 
     def _image_status_text(self) -> str:
         if not self.image_path:
@@ -1984,14 +2051,14 @@ class ImageOcrExcelApp:
 
         def on_success(result: tuple[list[str], list[str]]) -> None:
             self.current_raw_results, self.current_results = result
-            self.status_var.set("現在の画像をOCRしました。")
+            self.status_var.set("現在の画像を全項目テストしました。")
             self._render_side_body()
 
         def on_error(error: Exception) -> None:
             self.status_var.set("OCRに失敗しました。")
             messagebox.showerror("OCRエラー", str(error))
 
-        self._run_background("OCR中です。初回はPaddleOCRの準備に時間がかかります。", work, on_success, on_error)
+        self._run_background("認識テスト中です。初回はPaddleOCRの準備に時間がかかります。", work, on_success, on_error)
 
     def ocr_field_at(self, idx: int) -> None:
         if not self.original_image:
@@ -2020,14 +2087,14 @@ class ImageOcrExcelApp:
             self.current_raw_results[result_idx] = raw_text
             self.current_results[result_idx] = text
             self.selected_index = result_idx
-            self.status_var.set(f"{self.fields[result_idx].name} をOCRしました。")
+            self.status_var.set(f"{self.fields[result_idx].name} を認識テストしました。")
             self._render_side_body()
 
         def on_error(error: Exception) -> None:
             self.status_var.set("OCRに失敗しました。")
             messagebox.showerror("OCRエラー", str(error))
 
-        self._run_background(f"{field.name} をOCR中です。", work, on_success, on_error)
+        self._run_background(f"{field.name} を認識テスト中です。", work, on_success, on_error)
 
     def _ocr_all_current(self, show_errors: bool) -> bool:
         if not self.original_image:

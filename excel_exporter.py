@@ -113,6 +113,8 @@ class ExcelExporter:
                     errors.append(ExportError(image_path.name, field.name, error or "OCRに失敗しました。"))
                     row.append("")
                     continue
+                if not text.strip():
+                    errors.append(ExportError(image_path.name, field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
                 row.append(text)
 
             self._write_excel_row(sheet, row_cursor, settings.start_col, row)
@@ -158,12 +160,18 @@ class ExcelExporter:
             for pair_index, (speaker_field, dialogue_field) in enumerate(pairs, start=1):
                 speaker_text, speaker_error = ocr_callback(image, speaker_field)
                 dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
+                speaker_failed = speaker_text is None
+                dialogue_failed = dialogue_text is None
                 if speaker_text is None:
                     errors.append(ExportError(image_path.name, speaker_field.name, speaker_error or "OCRに失敗しました。"))
                     speaker_text = ""
                 if dialogue_text is None:
                     errors.append(ExportError(image_path.name, dialogue_field.name, dialogue_error or "OCRに失敗しました。"))
                     dialogue_text = ""
+                if not speaker_failed and not speaker_text.strip():
+                    errors.append(ExportError(image_path.name, speaker_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
+                if not dialogue_failed and not dialogue_text.strip():
+                    errors.append(ExportError(image_path.name, dialogue_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
 
                 row = [str(pair_index), speaker_text, dialogue_text]
                 if settings.include_filename:

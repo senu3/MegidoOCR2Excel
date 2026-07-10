@@ -4,7 +4,7 @@
 
 このツールのUIは、ゲームの世界観を再現する画面ではなく、ノベル画面を正確に切り出すための作業台にする。
 
-採用する方向性は **midnight violet workbench**。黒い余白、紫の鋭い発光、硬い金属感を、スクリーンショット検査とOCR修正のための暗い作業環境として使う。ロゴ風の装飾やファンサイト的な演出にはしない。
+採用する方向性は **midnight violet workbench**。黒い余白、紫の鋭い発光、硬い金属感を、スクリーンショット検査と認識設定の検証に集中する暗い作業環境として使う。ロゴ風の装飾やファンサイト的な演出にはしない。
 
 ## Visual Policy
 
@@ -52,12 +52,12 @@ Do not use display fonts or fluid type in the application UI.
 Primary layout is two-pane:
 
 - Left: screenshot canvas, toolbar, scrollbars, and status bar.
-- Right: fixed-width workflow panel with segmented modes for range/column design, OCR review, and export.
+- Right: fixed-width workflow panel with segmented modes for range/column design, recognition testing, and export.
 
 The three modes are the product structure:
 
 - 1. 範囲・列: create and edit OCR regions, name fields, order Excel columns or dialogue-pair order, and load/save templates.
-- 2. OCR確認: run OCR on the current image, compare raw/corrected text, and tune only the OCR mode that affects recognition.
+- 2. 認識テスト: use representative images to inspect the selected crop and full OCR result, then tune the OCR mode before batch export. This is a preflight test; Excel export runs OCR again for every target image.
 - 3. Excel出力: choose source folder/output file, configure Excel writing, and batch export.
 
 ## Components
@@ -73,8 +73,10 @@ The three modes are the product structure:
 - Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
 - Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label moves its field unless the pointer is on a resize edge/corner. The selected field is drawn and hit-tested in front of other fields; non-selected fields are visually muted, and their labels are hidden while a field is selected.
 - Selecting a field should update existing row chrome and the active detail panel only. Avoid rebuilding the whole side panel or resizing the preview image for selection-only changes.
-- OCR review rows are selection controls. The detail panel shows raw OCR and OCR mode.
-- Correction-rule UI is currently hidden because the first editing surface was not useful enough. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation until the correction workflow is redesigned.
+- Recognition-test rows are selection controls. The detail panel shows the selected crop, the full processed result, raw OCR when it differs, and the OCR mode.
+- Recognition testing is sample-based rather than a per-image correction queue. Users switch representative images with the global previous/next controls and can test either one field or every enabled field.
+- Empty OCR output is a batch warning and is written to the Errors sheet even when the OCR backend itself did not raise an error.
+- Correction-rule UI is currently hidden because per-image editing is outside the batch-first workflow. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation for a bulk-correction workflow.
 - Export panel keeps folder, output file, summary, and final action close together.
 - Template load/save lives with range and column design, not in the global toolbar.
 - OCR run actions live at the bottom of the selected field detail panel, close to the raw OCR preview and OCR mode.
