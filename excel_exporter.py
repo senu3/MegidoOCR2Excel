@@ -9,7 +9,7 @@ from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image
 
 from atomic_io import atomic_save_workbook
-from ocr_models import EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, TemplateField
+from ocr_models import EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, TemplateField, dialogue_pair_groups, dialogue_pair_validation_error
 
 
 @dataclass
@@ -99,6 +99,10 @@ class ExcelExporter:
         ocr_callback: OcrCallback,
         progress_callback: Callable[[int, int, Path], None] | None = None,
     ) -> ExportResult:
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            pair_error = dialogue_pair_validation_error(fields)
+            if pair_error:
+                raise ValueError(pair_error)
         workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
         headers = self._headers(fields, settings)
         if settings.include_header and row_cursor == settings.start_row:
@@ -136,6 +140,10 @@ class ExcelExporter:
         retry_files: list[Path] | None = None,
         progress_callback: Callable[[int, int, Path], None] | None = None,
     ) -> ExportResult:
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            pair_error = dialogue_pair_validation_error(fields)
+            if pair_error:
+                raise ValueError(pair_error)
         if not output_path.exists():
             raise FileNotFoundError(f"再実行するExcelファイルがありません: {output_path}")
         workbook = load_workbook(output_path)
@@ -209,8 +217,7 @@ class ExcelExporter:
     ) -> tuple[list[list[str]], list[ExportError]]:
         errors: list[ExportError] = []
         rows: list[list[str]] = []
-        pairs = [(fields[idx], fields[idx + 1]) for idx in range(0, len(fields) - 1, 2)]
-        for pair_index, (speaker_field, dialogue_field) in enumerate(pairs, start=1):
+        for pair_id, speaker_field, dialogue_field in dialogue_pair_groups(fields):
             speaker_text, speaker_error = ocr_callback(image, speaker_field)
             dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
             speaker_failed = speaker_text is None
@@ -225,7 +232,7 @@ class ExcelExporter:
                 errors.append(ExportError(image_path.name, speaker_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
             if not dialogue_failed and not dialogue_text.strip():
                 errors.append(ExportError(image_path.name, dialogue_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
-            row = [str(pair_index), speaker_text, dialogue_text]
+            row = [str(pair_id), speaker_text, dialogue_text]
             if settings.include_filename:
                 row.insert(0, image_path.name)
             rows.append(row)
@@ -234,8 +241,8 @@ class ExcelExporter:
     def _blank_rows(self, image_path: Path, fields: list[TemplateField], settings: ExportSettings) -> list[list[str]]:
         if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
             rows = []
-            for pair_index in range(1, len(fields) // 2 + 1):
-                row = [str(pair_index), "", ""]
+            for pair_id, _speaker_field, _dialogue_field in dialogue_pair_groups(fields):
+                row = [str(pair_id), "", ""]
                 if settings.include_filename:
                     row.insert(0, image_path.name)
                 rows.append(row)

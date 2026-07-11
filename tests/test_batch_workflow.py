@@ -11,7 +11,7 @@ from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQue
 from excel_exporter import ExcelExporter, ExportSettings
 from megido_app_config import natural_image_sort_key
 from ocr_engine import detect_content_rect, scaled_field
-from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, EXPORT_LAYOUT_DIALOGUE_PAIR, CoordinateSettings, TemplateField
+from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, CoordinateSettings, TemplateField, dialogue_pair_validation_error
 from template_store import coordinate_settings_from_template, load_template
 
 
@@ -87,8 +87,8 @@ class BatchWorkflowTests(unittest.TestCase):
             output_path = root / "output.xlsx"
             Image.new("RGB", (20, 20), "white").save(image_path)
             fields = [
-                TemplateField("話者", 0, 0, 20, 10),
-                TemplateField("セリフ", 0, 10, 20, 20),
+                TemplateField("話者", 0, 0, 20, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+                TemplateField("セリフ", 0, 10, 20, 20, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
             ]
 
             result = ExcelExporter().export(
@@ -190,10 +190,10 @@ class BatchWorkflowTests(unittest.TestCase):
             output = root / "output.xlsx"
             Image.new("RGB", (20, 20), "white").save(image_path)
             fields = [
-                TemplateField("話者1", 0, 0, 10, 10),
-                TemplateField("セリフ1", 10, 0, 20, 10),
-                TemplateField("話者2", 0, 10, 10, 20),
-                TemplateField("セリフ2", 10, 10, 20, 20),
+                TemplateField("話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+                TemplateField("セリフ1", 10, 0, 20, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+                TemplateField("話者2", 0, 10, 10, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+                TemplateField("セリフ2", 10, 10, 20, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_TEXT),
             ]
             settings = ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR)
             exporter = ExcelExporter()
@@ -213,6 +213,43 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual(sheet.max_row, 3)
             self.assertEqual([sheet.cell(2, column).value for column in range(1, 5)], ["scene.png", "1", "A", "一行目"])
             self.assertEqual([sheet.cell(3, column).value for column in range(1, 5)], ["scene.png", "2", "B", "二行目"])
+
+    def test_dialogue_pairs_ignore_field_list_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "scene.png"
+            output = root / "output.xlsx"
+            Image.new("RGB", (20, 20), "white").save(image_path)
+            fields = [
+                TemplateField("セリフ2", 10, 10, 20, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_TEXT),
+                TemplateField("話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+                TemplateField("セリフ1", 10, 0, 20, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+                TemplateField("話者2", 0, 10, 10, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+            ]
+            recognized = {field.name: field.name for field in fields}
+
+            ExcelExporter().export(
+                output,
+                [image_path],
+                fields,
+                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                lambda _image, field: (recognized[field.name], None),
+            )
+            sheet = load_workbook(output)["OCR"]
+
+            self.assertEqual([sheet.cell(2, column).value for column in range(2, 5)], ["1", "話者1", "セリフ1"])
+            self.assertEqual([sheet.cell(3, column).value for column in range(2, 5)], ["2", "話者2", "セリフ2"])
+
+    def test_dialogue_pair_validation_reports_missing_and_duplicate_roles(self) -> None:
+        missing = [TemplateField("話者", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER)]
+        duplicate = [
+            TemplateField("話者A", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+            TemplateField("話者B", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+            TemplateField("本文", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+        ]
+
+        self.assertIn("セリフ", dialogue_pair_validation_error(missing) or "")
+        self.assertIn("複数", dialogue_pair_validation_error(duplicate) or "")
 
 
 if __name__ == "__main__":

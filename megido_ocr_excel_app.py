@@ -18,6 +18,8 @@ from ocr_models import (
     COORDINATE_SPACE_CONTENT,
     COORDINATE_SPACE_IMAGE,
     CORRECTION_ALL_TARGET,
+    DIALOGUE_ROLE_SPEAKER,
+    DIALOGUE_ROLE_TEXT,
     EXPORT_LAYOUT_DIALOGUE_PAIR,
     EXPORT_LAYOUT_IMAGE_ROW,
     EXPORT_LAYOUT_OPTIONS,
@@ -25,6 +27,7 @@ from ocr_models import (
     CoordinateSettings,
     CorrectionRule,
     TemplateField,
+    dialogue_pair_validation_error,
 )
 from profiles.base import OcrProfile
 from template_store import build_template_data, coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, save_template
@@ -121,6 +124,8 @@ class ImageOcrExcelApp:
         self.canvas_labels: dict[int, int] = {}
         self.canvas_label_bgs: dict[int, int] = {}
         self.canvas_pair_handles: dict[int, dict] = {}
+        self.pending_dialogue_pair_id: int | None = None
+        self.pending_dialogue_role: str = ""
         self.ocr_engine = OcrEngine()
         self.excel_exporter = ExcelExporter()
 
@@ -445,17 +450,103 @@ class ImageOcrExcelApp:
         layout_row.pack(fill="x", padx=16, pady=(0, 8))
         layout_row.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(layout_row, text="出力形式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ctk.CTkOptionMenu(layout_row, variable=self.export_layout_var, values=EXPORT_LAYOUT_OPTIONS, command=lambda _value: self._render_side_body(), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew")
+        ctk.CTkOptionMenu(layout_row, variable=self.export_layout_var, values=EXPORT_LAYOUT_OPTIONS, command=self._set_export_layout, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew")
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            ctk.CTkLabel(body, text="会話ペア出力: 項目順の 1つ目=話者、2つ目=セリフ として2項目ずつ縦行にします。", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=350).pack(fill="x", padx=16, pady=(0, 8))
+            ctk.CTkLabel(body, text="会話番号と役割でペアを構成します。項目名や表示順を変えても組み合わせは維持されます。", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=350).pack(fill="x", padx=16, pady=(0, 6))
+            pair_error = dialogue_pair_validation_error(self._enabled_fields()) if self.fields else None
+            if pair_error:
+                ctk.CTkLabel(body, text=pair_error, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_DANGER, wraplength=350).pack(fill="x", padx=16, pady=(0, 6))
+            action = ctk.CTkFrame(body, fg_color="transparent")
+            action.pack(fill="x", padx=16, pady=(0, 8))
+            action.grid_columnconfigure(0, weight=1)
+            pending = self.pending_dialogue_pair_id is not None
+            button_text = self._dialogue_creation_button_text()
+            ctk.CTkButton(action, text=button_text, command=self.begin_dialogue_pair_creation, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew")
+            if pending:
+                ctk.CTkButton(action, text="中止", command=self.cancel_dialogue_pair_creation, width=58, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(6, 0))
 
         scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
         if not self.fields:
-            self._empty_state(scroller, "項目がありません", "画像上で範囲をドラッグ")
+            self._empty_state(scroller, "項目がありません", "会話ペアを追加して範囲をドラッグ" if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR else "画像上で範囲をドラッグ")
+        elif self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            self._render_dialogue_pair_fields(scroller)
         else:
             for idx, field in enumerate(self.fields):
                 self._field_row(scroller, idx)
+
+    def _set_export_layout(self, value: str) -> None:
+        if value != EXPORT_LAYOUT_DIALOGUE_PAIR:
+            self.pending_dialogue_pair_id = None
+            self.pending_dialogue_role = ""
+        self._render_side_body()
+        self.redraw()
+
+    def _dialogue_pair_ids(self) -> list[int]:
+        return sorted({field.pair_id for field in self.fields if field.pair_id > 0})
+
+    def _next_dialogue_pair_id(self) -> int:
+        pair_ids = self._dialogue_pair_ids()
+        return (pair_ids[-1] + 1) if pair_ids else 1
+
+    def _dialogue_creation_button_text(self) -> str:
+        if self.pending_dialogue_pair_id is None:
+            return "＋ 会話ペアを追加"
+        role = "話者" if self.pending_dialogue_role == DIALOGUE_ROLE_SPEAKER else "セリフ"
+        return f"会話 {self.pending_dialogue_pair_id}: {role}範囲をCanvasでドラッグ"
+
+    def begin_dialogue_pair_creation(self) -> None:
+        if self.pending_dialogue_pair_id is None:
+            self.pending_dialogue_pair_id = self._next_dialogue_pair_id()
+            self.pending_dialogue_role = DIALOGUE_ROLE_SPEAKER
+        role = "話者" if self.pending_dialogue_role == DIALOGUE_ROLE_SPEAKER else "セリフ"
+        self.status_var.set(f"会話 {self.pending_dialogue_pair_id} の{role}範囲をCanvasでドラッグしてください。")
+        self._render_side_body()
+
+    def cancel_dialogue_pair_creation(self) -> None:
+        self.pending_dialogue_pair_id = None
+        self.pending_dialogue_role = ""
+        self.status_var.set("会話ペアの追加を中止しました。")
+        self._render_side_body()
+
+    def _render_dialogue_pair_fields(self, parent) -> None:
+        pair_ids = self._dialogue_pair_ids()
+        for position, pair_id in enumerate(pair_ids):
+            header = ctk.CTkFrame(parent, fg_color="transparent")
+            header.pack(fill="x", padx=8, pady=(8 if position == 0 else 12, 2))
+            header.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(header, text=f"会話 {pair_id}", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew")
+            ctk.CTkButton(header, text="↑", command=lambda value=pair_id: self.move_dialogue_pair(value, -1), width=30, height=26, state="normal" if position > 0 else "disabled", font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(4, 2))
+            ctk.CTkButton(header, text="↓", command=lambda value=pair_id: self.move_dialogue_pair(value, 1), width=30, height=26, state="normal" if position < len(pair_ids) - 1 else "disabled", font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=2, padx=(2, 0))
+            indexes = [idx for idx, field in enumerate(self.fields) if field.pair_id == pair_id]
+            indexes.sort(key=lambda idx: (0 if self.fields[idx].dialogue_role == DIALOGUE_ROLE_SPEAKER else 1, idx))
+            for idx in indexes:
+                self._dialogue_field_row(parent, idx)
+
+        unassigned = [idx for idx, field in enumerate(self.fields) if field.pair_id <= 0]
+        if unassigned:
+            ctk.CTkLabel(parent, text="未割当", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_DANGER).pack(fill="x", padx=8, pady=(12, 2))
+            for idx in unassigned:
+                self._dialogue_field_row(parent, idx)
+
+    def move_dialogue_pair(self, pair_id: int, direction: int) -> None:
+        pair_ids = self._dialogue_pair_ids()
+        if pair_id not in pair_ids:
+            return
+        position = pair_ids.index(pair_id)
+        target_position = position + direction
+        if not (0 <= target_position < len(pair_ids)):
+            return
+        other_id = pair_ids[target_position]
+        for field in self.fields:
+            if field.pair_id == pair_id:
+                field.pair_id = other_id
+            elif field.pair_id == other_id:
+                field.pair_id = pair_id
+        self._mark_dirty()
+        self.status_var.set("会話ペアの出力順を変更しました。")
+        self._render_side_body()
+        self.redraw()
 
     def _render_review_mode(self) -> None:
         side_body = self.side_body
@@ -963,7 +1054,7 @@ class ImageOcrExcelApp:
             settings.include_filename,
             settings.include_header,
             settings.output_layout,
-            tuple(field.name for field in fields),
+            tuple((field.name, field.pair_id, field.dialogue_role) for field in fields),
         )
 
     def _render_excel_output_settings(self, parent) -> None:
@@ -996,7 +1087,7 @@ class ImageOcrExcelApp:
 
     def _export_unit_summary(self, enabled_count: int) -> str:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            return f"{enabled_count // 2}会話ペア"
+            return f"{len(self._dialogue_pair_field_indexes())}会話ペア"
         return f"{enabled_count}項目"
 
     def _empty_state(self, parent, title: str, note: str) -> None:
@@ -1037,6 +1128,64 @@ class ImageOcrExcelApp:
         if self.editing_name_index != idx:
             name_widget.bind("<Button-1>", lambda _event, i=idx: self.select_field(i))
             name_widget.bind("<Double-Button-1>", lambda _event, i=idx: self.begin_inline_name_edit(i))
+
+    def _dialogue_field_row(self, parent, idx: int) -> None:
+        field = self.fields[idx]
+        selected = idx == self.selected_index
+        row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=THEME.palette.selected_row if selected else COLOR_SURFACE, border_width=1, border_color=COLOR_PRIMARY if selected else COLOR_BORDER)
+        row.pack(fill="x", padx=8, pady=4)
+        self.field_row_widgets.append(row)
+        self.field_row_by_index[idx] = row
+        row.grid_columnconfigure(2, weight=1)
+        var = BooleanVar(value=field.enabled)
+        self.field_check_vars.append(var)
+        ctk.CTkCheckBox(row, text="", variable=var, width=28, command=lambda i=idx, v=var: self.set_field_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, padx=(8, 0), pady=8)
+        role_label = self._dialogue_role_display(field.dialogue_role)
+        ctk.CTkLabel(row, text=role_label, width=48, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if field.enabled and field.dialogue_role else THEME.palette.disabled_fill, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=1, sticky="w", padx=(4, 6), pady=(8, 2))
+        name_widget = self._field_name_widget(row, idx)
+        name_widget.grid(row=0, column=2, columnspan=2, sticky="ew", padx=(0, 8), pady=(8, 2))
+
+        pair_values = ["未割当", *[f"会話 {value}" for value in range(1, self._next_dialogue_pair_id() + 1)]]
+        pair_menu = ctk.CTkOptionMenu(row, values=pair_values, command=lambda value, i=idx: self.set_field_pair(i, value), width=92, height=26, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT)
+        pair_menu.set(f"会話 {field.pair_id}" if field.pair_id > 0 else "未割当")
+        pair_menu.grid(row=1, column=1, sticky="w", padx=(4, 4), pady=(2, 8))
+        role_menu = ctk.CTkOptionMenu(row, values=["未割当", "話者", "セリフ"], command=lambda value, i=idx: self.set_field_dialogue_role(i, value), width=92, height=26, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT)
+        role_menu.set(role_label)
+        role_menu.grid(row=1, column=2, sticky="w", padx=(0, 4), pady=(2, 8))
+        ctk.CTkLabel(row, text=self._field_size_text(field), anchor="e", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=3, sticky="e", padx=(0, 8), pady=(2, 8))
+
+        for widget in [row, name_widget]:
+            widget.bind("<Button-1>", lambda _event, i=idx: self.select_field(i))
+            widget.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
+        if self.editing_name_index != idx:
+            name_widget.bind("<Double-Button-1>", lambda _event, i=idx: self.begin_inline_name_edit(i))
+
+    def _dialogue_role_display(self, role: str) -> str:
+        return {DIALOGUE_ROLE_SPEAKER: "話者", DIALOGUE_ROLE_TEXT: "セリフ"}.get(role, "未割当")
+
+    def set_field_pair(self, idx: int, display: str) -> None:
+        if not (0 <= idx < len(self.fields)):
+            return
+        pair_id = int(display.split()[-1]) if display.startswith("会話 ") else 0
+        if self.fields[idx].pair_id == pair_id:
+            return
+        self.fields[idx].pair_id = pair_id
+        self._mark_dirty()
+        self.status_var.set(f"{self.fields[idx].name} の会話番号を更新しました。")
+        self._render_side_body()
+        self.redraw()
+
+    def set_field_dialogue_role(self, idx: int, display: str) -> None:
+        if not (0 <= idx < len(self.fields)):
+            return
+        role = {"話者": DIALOGUE_ROLE_SPEAKER, "セリフ": DIALOGUE_ROLE_TEXT}.get(display, "")
+        if self.fields[idx].dialogue_role == role:
+            return
+        self.fields[idx].dialogue_role = role
+        self._mark_dirty()
+        self.status_var.set(f"{self.fields[idx].name} の役割を更新しました。")
+        self._render_side_body()
+        self.redraw()
 
     def _field_name_widget(self, parent, idx: int):
         field = self.fields[idx]
@@ -1244,6 +1393,8 @@ class ImageOcrExcelApp:
             return
         with self._without_dirty_tracking():
             self.fields = fields
+            self.pending_dialogue_pair_id = None
+            self.pending_dialogue_role = ""
             self.correction_rules = correction_rules_from_template(data)
             self.coordinate_settings = coordinate_settings_from_template(data)
             self._refresh_content_mapping()
@@ -1395,6 +1546,8 @@ class ImageOcrExcelApp:
             return
         self.fields[idx].enabled = enabled
         self._mark_dirty()
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            self._render_side_body()
         self.redraw()
 
     def move_selected_field_up(self, _event=None) -> None:
@@ -1406,6 +1559,9 @@ class ImageOcrExcelApp:
     def move_selected_field(self, direction: int) -> None:
         idx = self._require_field_selection()
         if idx is None:
+            return
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR and self.fields[idx].pair_id > 0:
+            self.move_dialogue_pair(self.fields[idx].pair_id, direction)
             return
         self.move_field(idx, direction)
 
@@ -1670,13 +1826,17 @@ class ImageOcrExcelApp:
         if remove_idx is None:
             self.status_var.set("追加した項目が見つからないため、取り消せませんでした。")
             return
-        field_name = self.fields[remove_idx].name
+        removed_field = self.fields[remove_idx]
+        field_name = removed_field.name
         del self.fields[remove_idx]
         if remove_idx < len(self.current_results):
             del self.current_results[remove_idx]
         if remove_idx < len(self.current_raw_results):
             del self.current_raw_results[remove_idx]
         self.selected_index = min(remove_idx, len(self.fields) - 1) if self.fields else None
+        if removed_field.pair_id > 0 and removed_field.dialogue_role in {DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT}:
+            self.pending_dialogue_pair_id = removed_field.pair_id
+            self.pending_dialogue_role = removed_field.dialogue_role
         self.status_var.set(f"{field_name} の追加を取り消しました。")
 
     def _undo_deleted_field(self, action: dict) -> None:
@@ -1771,16 +1931,24 @@ class ImageOcrExcelApp:
             return selected
         return None
 
-    def _dialogue_pair_field_indexes(self) -> list[tuple[int, int]]:
+    def _dialogue_pair_field_indexes(self) -> list[tuple[int, tuple[int, int]]]:
         if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
             return []
-        enabled_indexes = [idx for idx, field in enumerate(self.fields) if field.enabled]
-        return [(enabled_indexes[idx], enabled_indexes[idx + 1]) for idx in range(0, len(enabled_indexes) - 1, 2)]
+        grouped: dict[int, dict[str, int]] = {}
+        for idx, field in enumerate(self.fields):
+            if not field.enabled or field.pair_id <= 0 or field.dialogue_role not in {DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT}:
+                continue
+            grouped.setdefault(field.pair_id, {})[field.dialogue_role] = idx
+        return [
+            (pair_id, (roles[DIALOGUE_ROLE_SPEAKER], roles[DIALOGUE_ROLE_TEXT]))
+            for pair_id, roles in sorted(grouped.items())
+            if DIALOGUE_ROLE_SPEAKER in roles and DIALOGUE_ROLE_TEXT in roles
+        ]
 
     def _dialogue_pair_for_field(self, idx: int) -> tuple[int, int] | None:
-        for pair in self._dialogue_pair_field_indexes():
-            if idx in pair:
-                return pair
+        for _pair_id, indexes in self._dialogue_pair_field_indexes():
+            if idx in indexes:
+                return indexes
         return None
 
     def _canvas_editing_index(self) -> int | None:
@@ -1890,12 +2058,12 @@ class ImageOcrExcelApp:
     def _draw_pair_handles(self) -> None:
         if self.original_image is None:
             return
-        for pair_position, indexes in enumerate(self._dialogue_pair_field_indexes(), start=1):
+        for pair_id, indexes in self._dialogue_pair_field_indexes():
             rects = {}
             for idx in indexes:
                 field = self._scaled_field(self.fields[idx]).normalized()
                 rects[idx] = (field.x1, field.y1, field.x2, field.y2)
-            self._draw_pair_handle(pair_position, indexes, rects)
+            self._draw_pair_handle(pair_id, indexes, rects)
 
     def _draw_pair_handle(self, pair_position: int, indexes: tuple[int, int], rects: dict[int, tuple[int, int, int, int]]) -> None:
         x1, y1, x2, y2 = self._pair_canvas_rect(rects)
@@ -2331,16 +2499,35 @@ class ImageOcrExcelApp:
         if (x2 - x1) < 8 or (y2 - y1) < 8:
             return
 
-        name = self._next_field_name()
+        pair_id = self.pending_dialogue_pair_id if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR else None
+        dialogue_role = self.pending_dialogue_role if pair_id is not None else ""
+        if pair_id is not None and dialogue_role == DIALOGUE_ROLE_SPEAKER:
+            name = self._unique_field_name(f"話者{pair_id}")
+        elif pair_id is not None and dialogue_role == DIALOGUE_ROLE_TEXT:
+            name = self._unique_field_name(f"セリフ本文{pair_id}")
+        else:
+            name = self._next_field_name()
         source_width, source_height = self.original_image.size
-        self.fields.append(TemplateField(name, x1, y1, x2, y2, True, source_width, source_height))
+        field = TemplateField(name, x1, y1, x2, y2, True, source_width, source_height, pair_id=pair_id or 0, dialogue_role=dialogue_role)
+        if self.profile.has_field_ocr_preset(name):
+            for key, value in self.profile.field_ocr_preset(name).items():
+                setattr(field, key, value)
+        self.fields.append(field)
         self.current_results.append("")
         self.current_raw_results.append("")
         self.selected_index = len(self.fields) - 1
         self.mode_var.set(MODE_TEMPLATE)
         self._set_undo("add", idx=self.selected_index, field=replace(self.fields[self.selected_index]), field_ref=self.fields[self.selected_index], result="")
         self._mark_dirty()
-        self.status_var.set(f"{name} を追加しました。Esc / Ctrl+Z で戻せます。")
+        if pair_id is not None and dialogue_role == DIALOGUE_ROLE_SPEAKER:
+            self.pending_dialogue_role = DIALOGUE_ROLE_TEXT
+            self.status_var.set(f"{name} を追加しました。続けて会話 {pair_id} のセリフ範囲をドラッグしてください。")
+        elif pair_id is not None and dialogue_role == DIALOGUE_ROLE_TEXT:
+            self.pending_dialogue_pair_id = None
+            self.pending_dialogue_role = ""
+            self.status_var.set(f"会話 {pair_id} のペアを追加しました。Esc / Ctrl+Z で戻せます。")
+        else:
+            self.status_var.set(f"{name} を追加しました。会話番号と役割を設定してください。" if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR else f"{name} を追加しました。Esc / Ctrl+Z で戻せます。")
         self._render_side_body()
         self.redraw()
 
@@ -2677,11 +2864,7 @@ class ImageOcrExcelApp:
     def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
         if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
             return None
-        if len(fields) < 2:
-            return "会話ペア出力には、話者とセリフの2項目以上が必要です。"
-        if len(fields) % 2 != 0:
-            return "会話ペア出力では、有効項目を「話者、セリフ」の順で偶数個にしてください。"
-        return None
+        return dialogue_pair_validation_error(fields)
 
     def _initial_zoom(self) -> float:
         if not self.original_image:
@@ -2718,12 +2901,11 @@ class ImageOcrExcelApp:
 
     def _field_order_label(self, idx: int) -> str:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR and 0 <= idx < len(self.fields) and self.fields[idx].enabled:
-            enabled_indexes = [field_idx for field_idx, field in enumerate(self.fields) if field.enabled]
-            if idx in enabled_indexes:
-                enabled_position = enabled_indexes.index(idx)
-                pair_index = enabled_position // 2 + 1
-                role = "話" if enabled_position % 2 == 0 else "文"
-                return f"{pair_index}{role}"
+            field = self.fields[idx]
+            if field.pair_id > 0 and field.dialogue_role in {DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT}:
+                role = "話" if field.dialogue_role == DIALOGUE_ROLE_SPEAKER else "文"
+                return f"{field.pair_id}{role}"
+            return "未割当"
         return f"#{idx + 1}"
 
     def _field_size_text(self, field: TemplateField) -> str:

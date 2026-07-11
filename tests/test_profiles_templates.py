@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ocr_models import CoordinateSettings, TEMPLATE_VERSION, TemplateField
+from ocr_models import DIALOGUE_ROLE_SPEAKER, CoordinateSettings, TEMPLATE_VERSION, TemplateField
 from profiles import get_profile, registered_profiles
 from profiles.base import FieldPreset, OcrProfile
 from template_store import TemplateValidationError, build_template_data, load_template, save_template
@@ -98,6 +98,19 @@ class TemplateV1Tests(unittest.TestCase):
 
             with self.assertRaisesRegex(TemplateValidationError, "name"):
                 load_template(path)
+
+    def test_dialogue_assignment_is_preserved_in_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "dialogue.json"
+            data = valid_template()
+            data["fields"][0]["pair_id"] = 3
+            data["fields"][0]["dialogue_role"] = DIALOGUE_ROLE_SPEAKER
+
+            save_template(path, data)
+            loaded = load_template(path)
+
+            self.assertEqual(loaded["fields"][0]["pair_id"], 3)
+            self.assertEqual(loaded["fields"][0]["dialogue_role"], DIALOGUE_ROLE_SPEAKER)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,9 @@ EXPORT_LAYOUT_OPTIONS = [EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_DIALOGUE_PAIR]
 COORDINATE_SPACE_IMAGE = "image"
 COORDINATE_SPACE_CONTENT = "content"
 COORDINATE_SPACE_OPTIONS = [COORDINATE_SPACE_IMAGE, COORDINATE_SPACE_CONTENT]
+DIALOGUE_ROLE_SPEAKER = "speaker"
+DIALOGUE_ROLE_TEXT = "dialogue"
+DIALOGUE_ROLE_OPTIONS = [DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT]
 
 
 @dataclass(frozen=True)
@@ -113,6 +116,8 @@ class TemplateField:
     ocr_line_detect_threshold: int = 90
     ocr_line_detect_min_ratio: float = 0.015
     ocr_line_detect_gap: int = 10
+    pair_id: int = 0
+    dialogue_role: str = ""
 
     def normalized(self) -> "TemplateField":
         x1, x2 = sorted((self.x1, self.x2))
@@ -141,6 +146,8 @@ class TemplateField:
             self.ocr_line_detect_threshold,
             self.ocr_line_detect_min_ratio,
             self.ocr_line_detect_gap,
+            max(0, int(self.pair_id)),
+            self.dialogue_role if self.dialogue_role in DIALOGUE_ROLE_OPTIONS else "",
         )
 
     def to_dict(self) -> dict:
@@ -190,7 +197,42 @@ def field_from_dict(item: dict) -> TemplateField:
         int(item.get("ocr_line_detect_threshold") or 90),
         float(item.get("ocr_line_detect_min_ratio") or 0.015),
         int(item.get("ocr_line_detect_gap") or 10),
+        int(item.get("pair_id") or 0),
+        str(item.get("dialogue_role") or ""),
     ).normalized()
+
+
+def dialogue_pair_groups(fields: list[TemplateField]) -> list[tuple[int, TemplateField, TemplateField]]:
+    grouped: dict[int, dict[str, TemplateField]] = {}
+    for field in fields:
+        if not field.enabled or field.pair_id <= 0 or field.dialogue_role not in DIALOGUE_ROLE_OPTIONS:
+            continue
+        grouped.setdefault(field.pair_id, {})[field.dialogue_role] = field
+    return [
+        (pair_id, roles[DIALOGUE_ROLE_SPEAKER], roles[DIALOGUE_ROLE_TEXT])
+        for pair_id, roles in sorted(grouped.items())
+        if DIALOGUE_ROLE_SPEAKER in roles and DIALOGUE_ROLE_TEXT in roles
+    ]
+
+
+def dialogue_pair_validation_error(fields: list[TemplateField]) -> str | None:
+    if not fields:
+        return "会話ペア出力には、話者とセリフの範囲が必要です。"
+    unassigned = [field.name for field in fields if field.pair_id <= 0 or field.dialogue_role not in DIALOGUE_ROLE_OPTIONS]
+    if unassigned:
+        return f"会話ペアが未設定の項目があります: {', '.join(unassigned)}"
+    grouped: dict[int, dict[str, list[str]]] = {}
+    for field in fields:
+        roles = grouped.setdefault(field.pair_id, {})
+        roles.setdefault(field.dialogue_role, []).append(field.name)
+    for pair_id, roles in sorted(grouped.items()):
+        for role, label in ((DIALOGUE_ROLE_SPEAKER, "話者"), (DIALOGUE_ROLE_TEXT, "セリフ")):
+            names = roles.get(role, [])
+            if not names:
+                return f"会話 {pair_id} に{label}の範囲がありません。"
+            if len(names) > 1:
+                return f"会話 {pair_id} に{label}の範囲が複数あります: {', '.join(names)}"
+    return None
 
 
 def correction_rule_from_dict(item: dict) -> CorrectionRule:

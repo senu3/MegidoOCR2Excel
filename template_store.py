@@ -68,6 +68,10 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
             raise TemplateValidationError(f"fields[{index}].name を指定してください。")
         if any(type(item[key]) is not int for key in ("x1", "y1", "x2", "y2")):
             raise TemplateValidationError(f"fields[{index}] の座標は整数で指定してください。")
+        if "pair_id" in item and (type(item["pair_id"]) is not int or item["pair_id"] < 0):
+            raise TemplateValidationError(f"fields[{index}].pair_id は0以上の整数で指定してください。")
+        if "dialogue_role" in item and item["dialogue_role"] not in {"", "speaker", "dialogue"}:
+            raise TemplateValidationError(f"fields[{index}].dialogue_role は speaker または dialogue を指定してください。")
     return data
 
 

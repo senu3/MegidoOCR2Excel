@@ -32,6 +32,7 @@ Focused, sharp, archival. ゲームの黒背景と紫の発光感を手がかり
 - Recover without duplicating work: 自然順キューで対象を除外でき、失敗画像だけを元のExcel行へ安全に再実行できるようにする。
 - Keep specialization replaceable: UI・OCR・Excelの共通基盤はゲームを知らず、プロファイルがゲーム固有の既定値と項目規則を提供する。
 - Fail clearly at template boundaries: 正式なv1形式と対象プロファイルを読み込み時に検証し、別形式を推測して適用しない。
+- Make relationships explicit: 会話ペアは項目名や偶数順から推測せず、会話番号と話者・セリフの役割を保存して表示する。
 
 ## Accessibility & Inclusion
 
