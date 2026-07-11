@@ -22,6 +22,21 @@ DIALOGUE_ROLE_OPTIONS = [DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT]
 
 
 @dataclass(frozen=True)
+class DialogueLogDetectionConfig:
+    """Profile-specific visual rules for locating repeated dialogue cards."""
+
+    anchor_x1_ratio: float
+    anchor_x2_ratio: float
+    log_top_ratio: float
+    log_bottom_ratio: float
+    pair_height_ratio: float
+    min_bar_height_ratio: float = 0.015
+    max_bar_height_ratio: float = 0.03
+    row_match_ratio: float = 0.5
+    max_band_gap: int = 4
+
+
+@dataclass(frozen=True)
 class CoordinateSettings:
     coordinate_space: str = COORDINATE_SPACE_IMAGE
     source_content_rect: tuple[int, int, int, int] | None = None

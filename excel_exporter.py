@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -9,6 +9,7 @@ from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image
 
 from atomic_io import atomic_save_workbook
+from dialogue_log_detector import DialoguePairDetectionResult
 from ocr_models import EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, TemplateField, dialogue_pair_groups, dialogue_pair_validation_error
 
 
@@ -35,6 +36,7 @@ class ExportResult:
     total_images: int
     errors: list[ExportError]
     records: list["ImageExportRecord"]
+    notices: list["ExportNotice"] = field(default_factory=list)
 
     @property
     def failed_records(self) -> list["ImageExportRecord"]:
@@ -47,9 +49,19 @@ class ImageExportRecord:
     start_row: int
     row_count: int
     errors: list[ExportError]
+    notices: list["ExportNotice"] = field(default_factory=list)
+
+
+@dataclass
+class ExportNotice:
+    image: str
+    notice: str
 
 
 OcrCallback = Callable[[Image.Image, TemplateField], tuple[str | None, str | None]]
+DialoguePairResolver = Callable[
+    [Image.Image, list[TemplateField]], DialoguePairDetectionResult
+]
 
 
 def validate_export_settings(
@@ -98,6 +110,7 @@ class ExcelExporter:
         settings: ExportSettings,
         ocr_callback: OcrCallback,
         progress_callback: Callable[[int, int, Path], None] | None = None,
+        dialogue_pair_resolver: DialoguePairResolver | None = None,
     ) -> ExportResult:
         if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
             pair_error = dialogue_pair_validation_error(fields)
@@ -110,25 +123,34 @@ class ExcelExporter:
             row_cursor += 1
 
         errors: list[ExportError] = []
+        notices: list[ExportNotice] = []
         records: list[ImageExportRecord] = []
         total = len(image_files)
 
         for row_index, image_path in enumerate(image_files, start=1):
-            rows, image_errors = self._recognize_image_rows(image_path, fields, settings, ocr_callback)
+            rows, image_errors, image_notices = self._recognize_image_rows(
+                image_path, fields, settings, ocr_callback, dialogue_pair_resolver
+            )
             start_row = row_cursor
             for row in rows:
                 self._write_excel_row(sheet, row_cursor, settings.start_col, row)
                 row_cursor += 1
             errors.extend(image_errors)
-            records.append(ImageExportRecord(image_path, start_row, len(rows), image_errors))
+            notices.extend(image_notices)
+            records.append(
+                ImageExportRecord(
+                    image_path, start_row, len(rows), image_errors, image_notices
+                )
+            )
             if progress_callback:
                 progress_callback(row_index, total, image_path)
 
         self._fit_output_columns(sheet)
         self._write_error_sheet(workbook, errors)
+        self._write_notice_sheet(workbook, notices)
 
         atomic_save_workbook(workbook, output_path)
-        return ExportResult(total, errors, records)
+        return ExportResult(total, errors, records, notices)
 
     def retry_failed(
         self,
@@ -139,6 +161,7 @@ class ExcelExporter:
         ocr_callback: OcrCallback,
         retry_files: list[Path] | None = None,
         progress_callback: Callable[[int, int, Path], None] | None = None,
+        dialogue_pair_resolver: DialoguePairResolver | None = None,
     ) -> ExportResult:
         if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
             pair_error = dialogue_pair_validation_error(fields)
@@ -157,26 +180,41 @@ class ExcelExporter:
         ]
         retry_paths = {record.image_path for record in retry_records}
         errors = [error for record in previous_result.records if record.image_path not in retry_paths for error in record.errors]
+        notices = [notice for record in previous_result.records if record.image_path not in retry_paths for notice in record.notices]
         updated_by_path: dict[Path, ImageExportRecord] = {}
         total = len(retry_records)
 
         for row_index, record in enumerate(retry_records, start=1):
-            rows, image_errors = self._recognize_image_rows(record.image_path, fields, settings, ocr_callback)
+            rows, image_errors, image_notices = self._recognize_image_rows(
+                record.image_path,
+                fields,
+                settings,
+                ocr_callback,
+                dialogue_pair_resolver,
+            )
             if len(rows) != record.row_count:
                 raise ValueError("出力レイアウトが前回の一括出力から変更されています。全画像を再出力してください。")
             self._clear_record_rows(sheet, record, settings.start_col, len(self._headers(fields, settings)))
             for offset, row in enumerate(rows):
                 self._write_excel_row(sheet, record.start_row + offset, settings.start_col, row)
             errors.extend(image_errors)
-            updated_by_path[record.image_path] = ImageExportRecord(record.image_path, record.start_row, record.row_count, image_errors)
+            notices.extend(image_notices)
+            updated_by_path[record.image_path] = ImageExportRecord(
+                record.image_path,
+                record.start_row,
+                record.row_count,
+                image_errors,
+                image_notices,
+            )
             if progress_callback:
                 progress_callback(row_index, total, record.image_path)
 
         self._fit_output_columns(sheet)
         self._write_error_sheet(workbook, errors)
+        self._write_notice_sheet(workbook, notices)
         atomic_save_workbook(workbook, output_path)
         records = [updated_by_path.get(record.image_path, record) for record in previous_result.records]
-        return ExportResult(previous_result.total_images, errors, records)
+        return ExportResult(previous_result.total_images, errors, records, notices)
 
     def _recognize_image_rows(
         self,
@@ -184,15 +222,23 @@ class ExcelExporter:
         fields: list[TemplateField],
         settings: ExportSettings,
         ocr_callback: OcrCallback,
-    ) -> tuple[list[list[str]], list[ExportError]]:
+        dialogue_pair_resolver: DialoguePairResolver | None = None,
+    ) -> tuple[list[list[str]], list[ExportError], list[ExportNotice]]:
         try:
             image = Image.open(image_path).convert("RGB")
         except Exception as exc:
             error = ExportError(image_path.name, "", f"画像を開けませんでした: {exc}")
-            return self._blank_rows(image_path, fields, settings), [error]
+            return self._blank_rows(image_path, fields, settings), [error], []
 
         if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            return self._recognize_dialogue_pair_rows(image_path, image, fields, settings, ocr_callback)
+            return self._recognize_dialogue_pair_rows(
+                image_path,
+                image,
+                fields,
+                settings,
+                ocr_callback,
+                dialogue_pair_resolver,
+            )
 
         errors: list[ExportError] = []
         row = [image_path.name] if settings.include_filename else []
@@ -205,7 +251,7 @@ class ExcelExporter:
             if not text.strip():
                 errors.append(ExportError(image_path.name, field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
             row.append(text)
-        return [row], errors
+        return [row], errors, []
 
     def _recognize_dialogue_pair_rows(
         self,
@@ -214,10 +260,29 @@ class ExcelExporter:
         fields: list[TemplateField],
         settings: ExportSettings,
         ocr_callback: OcrCallback,
-    ) -> tuple[list[list[str]], list[ExportError]]:
+        dialogue_pair_resolver: DialoguePairResolver | None = None,
+    ) -> tuple[list[list[str]], list[ExportError], list[ExportNotice]]:
         errors: list[ExportError] = []
+        notices: list[ExportNotice] = []
         rows: list[list[str]] = []
-        for pair_id, speaker_field, dialogue_field in dialogue_pair_groups(fields):
+        if dialogue_pair_resolver is None:
+            groups = dialogue_pair_groups(fields)
+        else:
+            detection = dialogue_pair_resolver(image, fields)
+            groups = detection.groups
+            notices.extend(
+                ExportNotice(image_path.name, message)
+                for message in detection.notices
+            )
+            if not groups:
+                errors.append(
+                    ExportError(
+                        image_path.name,
+                        "会話ペア検出",
+                        "完全な話者・セリフの組を検出できませんでした。",
+                    )
+                )
+        for pair_id, speaker_field, dialogue_field in groups:
             speaker_text, speaker_error = ocr_callback(image, speaker_field)
             dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
             speaker_failed = speaker_text is None
@@ -236,7 +301,7 @@ class ExcelExporter:
             if settings.include_filename:
                 row.insert(0, image_path.name)
             rows.append(row)
-        return rows, errors
+        return rows, errors, notices
 
     def _blank_rows(self, image_path: Path, fields: list[TemplateField], settings: ExportSettings) -> list[list[str]]:
         if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
@@ -308,4 +373,15 @@ class ExcelExporter:
         sheet.append(["画像ファイル", "項目", "エラー"])
         for error in errors:
             sheet.append([error.image, error.field, error.error])
+        self._fit_output_columns(sheet)
+
+    def _write_notice_sheet(self, workbook, notices: list[ExportNotice]) -> None:
+        if "Notices" in workbook.sheetnames:
+            workbook.remove(workbook["Notices"])
+        if not notices:
+            return
+        sheet = workbook.create_sheet("Notices")
+        sheet.append(["画像ファイル", "処理通知"])
+        for notice in notices:
+            sheet.append([notice.image, notice.notice])
         self._fit_output_columns(sheet)

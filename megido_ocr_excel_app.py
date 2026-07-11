@@ -32,6 +32,7 @@ from batch_queue import (
     ImageQueue,
     ImageQueueItem,
 )
+from dialogue_log_detector import detect_complete_dialogue_pairs
 from excel_exporter import (
     ExcelExporter,
     ExportResult,
@@ -4616,6 +4617,7 @@ class ImageOcrExcelApp:
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
+        dialogue_detection = self.profile.dialogue_log_detection
 
         def work() -> tuple[list[str], list[str]]:
             raw_results = [""] * len(fields)
@@ -4854,6 +4856,19 @@ class ImageOcrExcelApp:
                     coordinate_settings,
                 ),
                 update_progress,
+                dialogue_pair_resolver=(
+                    (
+                        lambda image, detection_fields: detect_complete_dialogue_pairs(
+                            image,
+                            detection_fields,
+                            coordinate_settings,
+                            dialogue_detection,
+                        )
+                    )
+                    if dialogue_detection is not None
+                    and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+                    else None
+                ),
             )
 
         def on_success(result: ExportResult) -> None:
@@ -4868,13 +4883,29 @@ class ImageOcrExcelApp:
                 )
                 messagebox.showwarning(
                     "完了（エラーあり）",
-                    f"{result.total_images} 画像の処理が完了しました。\nエラー {len(result.errors)} 件は Errors シートに出力しました。\n{output_path}",
+                    f"{result.total_images} 画像の処理が完了しました。"
+                    f"\nエラー {len(result.errors)} 件は Errors シートに出力しました。"
+                    + (
+                        f"\n除外通知 {len(result.notices)} 件は Notices シートに出力しました。"
+                        if result.notices
+                        else ""
+                    )
+                    + f"\n{output_path}",
                 )
             else:
-                self.status_var.set(f"Excelへ出力しました: {output_path}")
+                notice_suffix = (
+                    f"（除外通知 {len(result.notices)} 件）" if result.notices else ""
+                )
+                self.status_var.set(f"Excelへ出力しました{notice_suffix}: {output_path}")
                 messagebox.showinfo(
                     "完了",
-                    f"{result.total_images} 画像をExcelへ出力しました。\n{output_path}",
+                    f"{result.total_images} 画像をExcelへ出力しました。"
+                    + (
+                        f"\n除外通知 {len(result.notices)} 件は Notices シートに出力しました。"
+                        if result.notices
+                        else ""
+                    )
+                    + f"\n{output_path}",
                 )
 
         def on_error(error: Exception) -> None:
@@ -4930,6 +4961,7 @@ class ImageOcrExcelApp:
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
+        dialogue_detection = self.profile.dialogue_log_detection
         total = len(retry_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set(f"失敗した {total} 画像を再実行します。")
@@ -4964,6 +4996,19 @@ class ImageOcrExcelApp:
                 ),
                 retry_files=retry_files,
                 progress_callback=update_progress,
+                dialogue_pair_resolver=(
+                    (
+                        lambda image, detection_fields: detect_complete_dialogue_pairs(
+                            image,
+                            detection_fields,
+                            coordinate_settings,
+                            dialogue_detection,
+                        )
+                    )
+                    if dialogue_detection is not None
+                    and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+                    else None
+                ),
             )
 
         def on_success(result: ExportResult) -> None:

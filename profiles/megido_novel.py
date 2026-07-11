@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from profiles.base import FieldPreset, OcrProfile
+from ocr_models import DialogueLogDetectionConfig
 
 COORDINATE_DEFAULTS = {
     "coordinate_space": "content",
@@ -54,5 +55,12 @@ PROFILE = OcrProfile(
                 "ocr_line_split": "detected",
             },
         ),
+    ),
+    dialogue_log_detection=DialogueLogDetectionConfig(
+        anchor_x1_ratio=0.10,
+        anchor_x2_ratio=0.29,
+        log_top_ratio=0.05,
+        log_bottom_ratio=0.911,
+        pair_height_ratio=0.123,
     ),
 )

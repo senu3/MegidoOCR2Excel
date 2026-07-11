@@ -8,14 +8,77 @@ from openpyxl import load_workbook
 from PIL import Image
 
 from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
+from dialogue_log_detector import detect_complete_dialogue_pairs
 from excel_exporter import ExcelExporter, ExportSettings
 from megido_app_config import natural_image_sort_key
 from ocr_engine import detect_content_rect, scaled_field
 from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, CoordinateSettings, TemplateField, dialogue_pair_validation_error
 from template_store import coordinate_settings_from_template, load_template
+from template_store import fields_from_template
+from profiles.megido_novel import PROFILE
 
 
 class BatchWorkflowTests(unittest.TestCase):
+    def test_log_detector_tracks_shifted_complete_pairs_and_skips_fragments(self) -> None:
+        template = load_template(
+            Path(".samples/megido_novellog_template.json"),
+            expected_profile_id="megido_novel",
+        )
+        fields = fields_from_template(template)
+        settings = coordinate_settings_from_template(template)
+        assert PROFILE.dialogue_log_detection is not None
+
+        b1 = detect_complete_dialogue_pairs(
+            Image.open(".samples/b1.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+        b2 = detect_complete_dialogue_pairs(
+            Image.open(".samples/b2.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(len(b1.groups), 5)
+        self.assertEqual(b1.skipped_trailing, 1)
+        self.assertEqual(b1.skipped_leading, 0)
+        self.assertEqual(len(b2.groups), 5)
+        self.assertEqual(b2.skipped_leading, 1)
+        self.assertEqual(b2.skipped_trailing, 0)
+        self.assertGreater(b2.groups[0][1].y1, b1.groups[0][1].y1)
+
+    def test_dynamic_log_export_writes_only_complete_pairs_and_notices(self) -> None:
+        template = load_template(
+            Path(".samples/megido_novellog_template.json"),
+            expected_profile_id="megido_novel",
+        )
+        fields = fields_from_template(template)
+        coordinate_settings = coordinate_settings_from_template(template)
+        assert PROFILE.dialogue_log_detection is not None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "log.xlsx"
+            result = ExcelExporter().export(
+                output,
+                [Path(".samples/b1.png"), Path(".samples/b2.png")],
+                fields,
+                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                lambda _image, field: (field.name, None),
+                dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
+                    image,
+                    detection_fields,
+                    coordinate_settings,
+                    PROFILE.dialogue_log_detection,
+                ),
+            )
+
+            sheet = load_workbook(output)["OCR"]
+            self.assertEqual(sheet.max_row, 11)
+            self.assertEqual([record.row_count for record in result.records], [5, 5])
+            self.assertEqual(len(result.notices), 2)
+            self.assertIn("Notices", load_workbook(output).sheetnames)
+
     def test_black_letterbox_content_rect_is_detected(self) -> None:
         image = Image.new("RGB", (100, 120), "black")
         image.paste(Image.new("RGB", (100, 80), "#303030"), (0, 20))
