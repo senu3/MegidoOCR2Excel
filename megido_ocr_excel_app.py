@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, BooleanVar, Canvas, Menu, Scrollbar, StringVar, filedialog, messagebox
@@ -73,6 +74,8 @@ class ImageOcrExcelApp:
         self.root.geometry(THEME.layout.window_size)
         self.root.minsize(*THEME.layout.min_window_size)
         self.root.option_add("*Font", f"{UI_FONT_FAMILY} 10")
+        self.dirty = False
+        self._dirty_tracking_suspended = True
 
         self.image_path: Path | None = None
         self.image_files: list[Path] = []
@@ -154,6 +157,10 @@ class ImageOcrExcelApp:
 
         self._build_ui()
         self._bind_shortcuts()
+        self._bind_dirty_tracking()
+        self._dirty_tracking_suspended = False
+        self._update_dirty_indicators()
+        self.root.protocol("WM_DELETE_WINDOW", self.request_close)
 
     def _build_ui(self) -> None:
         ctk.set_appearance_mode("dark")
@@ -321,6 +328,73 @@ class ImageOcrExcelApp:
         self.root.bind_all("<Escape>", self.undo_last_action)
         self.root.bind_all("<Control-z>", self.undo_last_action)
         self.root.bind_all("<Control-Z>", self.undo_last_action)
+
+    def _bind_dirty_tracking(self) -> None:
+        variables = [
+            self.lang_var,
+            self.backend_var,
+            self.tesseract_var,
+            self.export_sheet_var,
+            self.export_write_mode_var,
+            self.export_start_cell_var,
+            self.export_include_filename_var,
+            self.export_include_header_var,
+            self.export_layout_var,
+        ]
+        for variable in variables:
+            variable.trace_add("write", self._on_template_setting_changed)
+
+    def _on_template_setting_changed(self, *_args) -> None:
+        self._mark_dirty()
+
+    @contextmanager
+    def _without_dirty_tracking(self):
+        previous = self._dirty_tracking_suspended
+        self._dirty_tracking_suspended = True
+        try:
+            yield
+        finally:
+            self._dirty_tracking_suspended = previous
+
+    def _mark_dirty(self) -> None:
+        if self._dirty_tracking_suspended or self.dirty:
+            return
+        self.dirty = True
+        self._update_dirty_indicators()
+
+    def _mark_clean(self) -> None:
+        self.dirty = False
+        self._update_dirty_indicators()
+
+    def _update_dirty_indicators(self) -> None:
+        suffix = " *" if self.dirty else ""
+        self.root.title(f"{APP_TITLE}{suffix}")
+        template_name = self.template_path.name if self.template_path else "未保存"
+        self.template_var.set(f"{template_name}{suffix}")
+
+    def _confirm_unsaved_changes(self, action: str) -> bool:
+        if not self.dirty:
+            return True
+        response = messagebox.askyesnocancel(
+            "未保存の変更",
+            f"{action}前にテンプレートの変更を保存しますか。\n\n保存: 変更を保存して続行\n保存しない: 変更を破棄して続行\nキャンセル: 元の画面に戻る",
+        )
+        if response is None:
+            return False
+        if response:
+            return self.save_template()
+        return True
+
+    def request_close(self) -> None:
+        if self.busy:
+            messagebox.showwarning(
+                "処理中です",
+                "OCRまたはExcel出力が完了するまで終了できません。\n処理完了後にもう一度閉じてください。",
+            )
+            return
+        if not self._confirm_unsaved_changes("終了する"):
+            return
+        self.root.destroy()
 
     def _on_mode_change(self, _value: str | None = None) -> None:
         self._render_side_body()
@@ -598,6 +672,7 @@ class ImageOcrExcelApp:
         target = self.fields[self.selected_index].name if self.selected_index is not None and 0 <= self.selected_index < len(self.fields) else CORRECTION_ALL_TARGET
         self.correction_rules.append(CorrectionRule("", "", target, True))
         self.correction_rules_expanded = True
+        self._mark_dirty()
         self.status_var.set("補正ルールを追加しました。")
         self._render_correction_rules_panel()
 
@@ -605,6 +680,7 @@ class ImageOcrExcelApp:
         if not (0 <= idx < len(self.correction_rules)):
             return
         del self.correction_rules[idx]
+        self._mark_dirty()
         self._apply_correction_rules_to_current_results()
         self.status_var.set("補正ルールを削除しました。")
         self._render_correction_rules_panel()
@@ -613,18 +689,21 @@ class ImageOcrExcelApp:
         if not (0 <= idx < len(self.correction_rules)):
             return
         self.correction_rules[idx].enabled = enabled
+        self._mark_dirty()
         self._on_correction_rules_changed()
 
     def set_correction_rule_target(self, idx: int, target: str) -> None:
         if not (0 <= idx < len(self.correction_rules)):
             return
         self.correction_rules[idx].target = target if target in self._correction_target_options() else CORRECTION_ALL_TARGET
+        self._mark_dirty()
         self._on_correction_rules_changed()
 
     def set_correction_rule_text(self, idx: int, attr: str, value: str) -> None:
         if not (0 <= idx < len(self.correction_rules)) or attr not in {"pattern", "replacement"}:
             return
         setattr(self.correction_rules[idx], attr, value)
+        self._mark_dirty()
         self._on_correction_rules_changed()
 
     def _on_correction_rules_changed(self) -> None:
@@ -686,7 +765,11 @@ class ImageOcrExcelApp:
         if not (0 <= idx < len(self.fields)):
             return
         field = self.fields[idx]
-        field.ocr_line_split = self._line_split_value(value)
+        line_split = self._line_split_value(value)
+        if field.ocr_line_split == line_split:
+            return
+        field.ocr_line_split = line_split
+        self._mark_dirty()
         if idx < len(self.current_results):
             self.current_results[idx] = ""
         if idx < len(self.current_raw_results):
@@ -909,6 +992,7 @@ class ImageOcrExcelApp:
                 coordinate_space=COORDINATE_SPACE_IMAGE,
                 source_content_rect=None,
             )
+        self._mark_dirty()
 
     def _image_status_text(self) -> str:
         if not self.image_path:
@@ -932,20 +1016,22 @@ class ImageOcrExcelApp:
         self.output_var.set(self.output_path.name)
         self._render_side_body()
 
-    def save_template(self, _event=None) -> None:
+    def save_template(self, _event=None) -> bool:
         if not self.fields:
             messagebox.showinfo("項目なし", "保存する読み取り項目がありません。")
-            return
-        initial = self.template_path.name if self.template_path else THEME.copy.default_template_name
-        file_name = filedialog.asksaveasfilename(
-            title="テンプレートを保存",
-            initialfile=initial,
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json")],
-        )
-        if not file_name:
-            return
-        path = Path(file_name)
+            return False
+        if self.template_path:
+            path = self.template_path
+        else:
+            file_name = filedialog.asksaveasfilename(
+                title="テンプレートを保存",
+                initialfile=THEME.copy.default_template_name,
+                defaultextension=".json",
+                filetypes=[("JSON", "*.json")],
+            )
+            if not file_name:
+                return False
+            path = Path(file_name)
         if self.original_image:
             fill_missing_field_source_size(self.fields, self.original_image.size)
         data = build_template_data(
@@ -959,11 +1045,19 @@ class ImageOcrExcelApp:
             template_name=path.stem,
             profile_id=PROFILE_ID,
         )
-        save_template(path, data)
+        try:
+            save_template(path, data)
+        except Exception as exc:
+            messagebox.showerror(
+                "テンプレート保存エラー",
+                f"テンプレートを保存できませんでした。元のファイルは変更されていません。\n\n{path}\n{exc}",
+            )
+            return False
         self.template_path = path
-        self.template_var.set(path.name)
+        self._mark_clean()
         self.status_var.set(f"テンプレートを保存しました: {path.name}")
         self._render_side_body()
+        return True
 
     def load_template(self, _event=None) -> None:
         file_name = filedialog.askopenfilename(
@@ -982,29 +1076,31 @@ class ImageOcrExcelApp:
         if not fields:
             messagebox.showerror("テンプレートエラー", "読み取り項目がありません。")
             return
-        self.fields = fields
-        self.correction_rules = correction_rules_from_template(data)
-        self.coordinate_settings = coordinate_settings_from_template(data)
-        self._refresh_content_mapping()
-        self.current_results = [""] * len(self.fields)
-        self.current_raw_results = [""] * len(self.fields)
-        self.selected_index = 0
-        self.undo_action = None
-        self.template_path = path
-        self.template_var.set(path.name)
-        self.lang_var.set(data.get("lang") or DEFAULT_LANG)
-        self.lang_display_var.set(self._lang_display(self.lang_var.get()))
-        backend = str(data.get("ocr_backend") or DEFAULT_BACKEND)
-        self.backend_var.set(backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else DEFAULT_BACKEND)
-        self._apply_output_settings(data.get("output_settings") or {})
-        if data.get("tesseract_path"):
-            self.tesseract_var.set(data["tesseract_path"])
+        if not self._confirm_unsaved_changes("別のテンプレートを読み込む"):
+            return
+        with self._without_dirty_tracking():
+            self.fields = fields
+            self.correction_rules = correction_rules_from_template(data)
+            self.coordinate_settings = coordinate_settings_from_template(data)
+            self._refresh_content_mapping()
+            self.current_results = [""] * len(self.fields)
+            self.current_raw_results = [""] * len(self.fields)
+            self.selected_index = 0
+            self.undo_action = None
+            self.template_path = path
+            self.lang_var.set(data.get("lang") or DEFAULT_LANG)
+            self.lang_display_var.set(self._lang_display(self.lang_var.get()))
+            backend = str(data.get("ocr_backend") or DEFAULT_BACKEND)
+            self.backend_var.set(backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else DEFAULT_BACKEND)
+            self._apply_output_settings(data.get("output_settings") or {})
+            if data.get("tesseract_path"):
+                self.tesseract_var.set(data["tesseract_path"])
+        self._mark_clean()
         self.status_var.set(f"テンプレートを読み込みました: {path.name}")
         self._render_side_body()
         self.redraw()
 
     def open_settings_modal(self) -> None:
-        self.lang_display_var.set(self._lang_display(self.lang_var.get()))
         window = ctk.CTkToplevel(self.root)
         window.title("設定")
         window.geometry(THEME.layout.settings_size)
@@ -1012,6 +1108,9 @@ class ImageOcrExcelApp:
         window.transient(self.root)
         window.grab_set()
         window.configure(fg_color=COLOR_BG)
+        dialog_lang_display = StringVar(window, value=self._lang_display(self.lang_var.get()))
+        dialog_backend = StringVar(window, value=self.backend_var.get())
+        dialog_tesseract = StringVar(window, value=self.tesseract_var.get())
 
         panel = ctk.CTkFrame(window, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
         panel.pack(fill=BOTH, expand=True, padx=18, pady=18)
@@ -1020,9 +1119,8 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(panel, text="OCR言語", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 6))
         ctk.CTkComboBox(
             panel,
-            variable=self.lang_display_var,
+            variable=dialog_lang_display,
             values=["日本語 + English", "日本語のみ", "English のみ"],
-            command=self._sync_lang_from_display,
             height=THEME.layout.entry_height,
             font=UI_FONT,
             dropdown_font=UI_FONT,
@@ -1036,28 +1134,37 @@ class ImageOcrExcelApp:
         tesseract_frame = ctk.CTkFrame(panel, fg_color="transparent")
 
         def sync_backend_fields(_value: str | None = None) -> None:
-            if self.backend_var.get() == "tesseract":
+            if dialog_backend.get() == "tesseract":
                 tesseract_frame.grid(row=5, column=0, sticky="ew", padx=16, pady=(14, 0))
             else:
                 tesseract_frame.grid_remove()
 
-        ctk.CTkOptionMenu(panel, variable=self.backend_var, values=[value for value in OCR_BACKEND_OPTIONS if value != "default"], command=sync_backend_fields, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=4, column=0, sticky="ew", padx=16)
+        ctk.CTkOptionMenu(panel, variable=dialog_backend, values=[value for value in OCR_BACKEND_OPTIONS if value != "default"], command=sync_backend_fields, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=4, column=0, sticky="ew", padx=16)
         tesseract_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(tesseract_frame, text="Tesseractパス", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ctk.CTkEntry(tesseract_frame, textvariable=self.tesseract_var, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SURFACE_ALT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=0, sticky="ew")
+        ctk.CTkEntry(tesseract_frame, textvariable=dialog_tesseract, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SURFACE_ALT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=0, sticky="ew")
         sync_backend_fields()
         buttons = ctk.CTkFrame(panel, fg_color="transparent")
         buttons.grid(row=7, column=0, sticky="ew", padx=16, pady=(20, 16))
         buttons.grid_columnconfigure(0, weight=1)
         buttons.grid_columnconfigure(1, weight=1)
         ctk.CTkButton(buttons, text="キャンセル", command=window.destroy, height=THEME.layout.row_button_height, font=UI_FONT, fg_color=COLOR_SURFACE, hover_color=THEME.palette.modal_button_hover, border_width=1, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(buttons, text="保存", command=lambda: self._apply_settings(window), height=THEME.layout.row_button_height, font=UI_FONT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ctk.CTkButton(buttons, text="保存", command=lambda: self._apply_settings(window, dialog_lang_display.get(), dialog_backend.get(), dialog_tesseract.get()), height=THEME.layout.row_button_height, font=UI_FONT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-    def _apply_settings(self, window: ctk.CTkToplevel) -> None:
-        self._sync_lang_from_display()
-        if self.backend_var.get() not in OCR_BACKEND_OPTIONS or self.backend_var.get() == "default":
-            self.backend_var.set(DEFAULT_BACKEND)
-        self.status_var.set("OCR設定を更新しました。")
+    def _apply_settings(self, window: ctk.CTkToplevel, lang_display: str, backend: str, tesseract_path: str) -> None:
+        backend = backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else DEFAULT_BACKEND
+        lang = self._lang_value(lang_display)
+        changed = (lang, backend, tesseract_path) != (self.lang_var.get(), self.backend_var.get(), self.tesseract_var.get())
+        with self._without_dirty_tracking():
+            self.lang_var.set(lang)
+            self.lang_display_var.set(self._lang_display(lang))
+            self.backend_var.set(backend)
+            self.tesseract_var.set(tesseract_path)
+        if changed:
+            self._mark_dirty()
+            self.status_var.set("OCR設定を更新しました。テンプレートを保存してください。")
+        else:
+            self.status_var.set("OCR設定は変更されていません。")
         window.destroy()
 
     def select_field(self, idx: int) -> None:
@@ -1120,9 +1227,11 @@ class ImageOcrExcelApp:
         self.review_line_split_var.set(self._line_split_display(field.ocr_line_split))
 
     def set_field_enabled(self, idx: int, enabled: bool) -> None:
-        if 0 <= idx < len(self.fields):
-            self.fields[idx].enabled = enabled
-            self.redraw()
+        if not (0 <= idx < len(self.fields)) or self.fields[idx].enabled == enabled:
+            return
+        self.fields[idx].enabled = enabled
+        self._mark_dirty()
+        self.redraw()
 
     def move_selected_field_up(self, _event=None) -> None:
         self.move_selected_field(-1)
@@ -1148,6 +1257,7 @@ class ImageOcrExcelApp:
         self.current_results[idx], self.current_results[new_idx] = self.current_results[new_idx], self.current_results[idx]
         self.current_raw_results[idx], self.current_raw_results[new_idx] = self.current_raw_results[new_idx], self.current_raw_results[idx]
         self.selected_index = new_idx
+        self._mark_dirty()
         self.status_var.set("項目順を変更しました。Excel出力の列順にも反映されます。")
         self._render_side_body()
         self.redraw()
@@ -1169,6 +1279,7 @@ class ImageOcrExcelApp:
         self.current_results.insert(target_idx, result)
         self.current_raw_results.insert(target_idx, raw_result)
         self.selected_index = target_idx
+        self._mark_dirty()
         self.status_var.set("項目順を変更しました。Excel出力の列順にも反映されます。")
         self._render_side_body()
         self.redraw()
@@ -1231,11 +1342,14 @@ class ImageOcrExcelApp:
         name = self._unique_field_name(name.strip() or self.fields[idx].name, skip_index=idx)
         self.fields[idx].name = name
         self._rename_correction_rule_targets(previous_name, name)
-        if self._apply_profile_preset_after_rename(idx, previous_name):
+        preset_changed = self._apply_profile_preset_after_rename(idx, previous_name)
+        if preset_changed:
             if idx < len(self.current_results):
                 self.current_results[idx] = ""
             if idx < len(self.current_raw_results):
                 self.current_raw_results[idx] = ""
+        if name != previous_name or preset_changed:
+            self._mark_dirty()
         self._render_side_body()
         self.redraw()
         return "break"
@@ -1310,6 +1424,7 @@ class ImageOcrExcelApp:
             return
         self._set_undo("delete", idx=idx, field=replace(self.fields[idx]), result=self.current_results[idx] if idx < len(self.current_results) else "", raw_result=self.current_raw_results[idx] if idx < len(self.current_raw_results) else "")
         del self.fields[idx]
+        self._mark_dirty()
         if idx < len(self.current_results):
             del self.current_results[idx]
         if idx < len(self.current_raw_results):
@@ -1368,6 +1483,7 @@ class ImageOcrExcelApp:
             return "break"
 
         self.undo_action = None
+        self._mark_dirty()
         self._render_side_body()
         self.redraw()
         return "break"
@@ -2006,6 +2122,7 @@ class ImageOcrExcelApp:
                         self.current_raw_results[idx] = ""
                 self.selected_index = previous_selected
                 self._set_undo("update_pair_rects", fields=before_fields, results=before_results, raw_results=before_raw_results, selected=self.selected_index)
+                self._mark_dirty()
                 self.status_var.set(f"会話ペア #{pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。")
                 self._render_side_body()
                 self.redraw()
@@ -2029,6 +2146,7 @@ class ImageOcrExcelApp:
                 self.current_raw_results[idx] = ""
             self.selected_index = idx
             self._set_undo("update_rect", idx=idx, field=before_field, result=before_result, raw_result=before_raw_result)
+            self._mark_dirty()
             self.status_var.set(f"{field.name} の範囲を更新しました。Esc / Ctrl+Z で戻せます。")
             self._render_side_body()
             self.redraw()
@@ -2057,6 +2175,7 @@ class ImageOcrExcelApp:
         self.selected_index = len(self.fields) - 1
         self.mode_var.set(MODE_TEMPLATE)
         self._set_undo("add", idx=self.selected_index, field=replace(self.fields[self.selected_index]), field_ref=self.fields[self.selected_index], result="")
+        self._mark_dirty()
         self.status_var.set(f"{name} を追加しました。Esc / Ctrl+Z で戻せます。")
         self._render_side_body()
         self.redraw()
@@ -2379,10 +2498,6 @@ class ImageOcrExcelApp:
             "English のみ": "eng",
         }
         return values.get(display, display or DEFAULT_LANG)
-
-    def _sync_lang_from_display(self, display: str | None = None) -> None:
-        self.lang_var.set(self._lang_value(display or self.lang_display_var.get()))
-
 
 def main() -> None:
     root = ctk.CTk()

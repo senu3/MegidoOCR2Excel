@@ -8,6 +8,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image
 
+from atomic_io import atomic_save_workbook
 from ocr_models import EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, TemplateField
 
 
@@ -125,8 +126,7 @@ class ExcelExporter:
         self._fit_output_columns(sheet)
         self._write_error_sheet(workbook, errors)
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        workbook.save(output_path)
+        atomic_save_workbook(workbook, output_path)
         return ExportResult(total, errors)
 
     def _export_dialogue_pairs(
@@ -185,8 +185,7 @@ class ExcelExporter:
         self._fit_output_columns(sheet)
         self._write_error_sheet(workbook, errors)
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        workbook.save(output_path)
+        atomic_save_workbook(workbook, output_path)
         return ExportResult(total, errors)
 
     def _prepare_output_sheet(self, output_path: Path, settings: ExportSettings):

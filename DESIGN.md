@@ -80,6 +80,8 @@ The three modes are the product structure:
 - Empty OCR output is a batch warning and is written to the Errors sheet even when the OCR backend itself did not raise an error.
 - Correction-rule UI is currently hidden because per-image editing is outside the batch-first workflow. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation for a bulk-correction workflow.
 - Export panel keeps folder, output file, summary, and final action close together.
+- Unsaved template state is visible as `*` in both the window title and template filename. Loading another template or closing offers save, discard, and cancel; closing is blocked while OCR/export is active.
+- Template and Excel writes use same-directory temporary files followed by atomic replacement so a failed save does not damage the previous file.
 - Template load/save lives with range and column design, not in the global toolbar.
 - OCR run actions live at the bottom of the selected field detail panel, close to the raw OCR preview and OCR mode.
 

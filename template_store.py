@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from atomic_io import atomic_write_text
 from ocr_models import CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, TemplateField, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict
 
 
@@ -35,7 +36,7 @@ def build_template_data(
 
 
 def save_template(path: Path, data: dict) -> None:
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def load_template(path: Path) -> dict:
