@@ -34,6 +34,19 @@ class ExportError:
 class ExportResult:
     total_images: int
     errors: list[ExportError]
+    records: list["ImageExportRecord"]
+
+    @property
+    def failed_records(self) -> list["ImageExportRecord"]:
+        return [record for record in self.records if record.errors]
+
+
+@dataclass
+class ImageExportRecord:
+    image_path: Path
+    start_row: int
+    row_count: int
+    errors: list[ExportError]
 
 
 OcrCallback = Callable[[Image.Image, TemplateField], tuple[str | None, str | None]]
@@ -86,40 +99,24 @@ class ExcelExporter:
         ocr_callback: OcrCallback,
         progress_callback: Callable[[int, int, Path], None] | None = None,
     ) -> ExportResult:
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            return self._export_dialogue_pairs(output_path, image_files, fields, settings, ocr_callback, progress_callback)
-
         workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
-        headers = self._export_headers(fields, settings.include_filename)
+        headers = self._headers(fields, settings)
         if settings.include_header and row_cursor == settings.start_row:
             self._write_excel_row(sheet, row_cursor, settings.start_col, headers)
             row_cursor += 1
 
         errors: list[ExportError] = []
+        records: list[ImageExportRecord] = []
         total = len(image_files)
 
         for row_index, image_path in enumerate(image_files, start=1):
-            try:
-                image = Image.open(image_path).convert("RGB")
-            except Exception as exc:
-                errors.append(ExportError(image_path.name, "", f"画像を開けませんでした: {exc}"))
-                if progress_callback:
-                    progress_callback(row_index, total, image_path)
-                continue
-
-            row = [image_path.name] if settings.include_filename else []
-            for field in fields:
-                text, error = ocr_callback(image, field)
-                if text is None:
-                    errors.append(ExportError(image_path.name, field.name, error or "OCRに失敗しました。"))
-                    row.append("")
-                    continue
-                if not text.strip():
-                    errors.append(ExportError(image_path.name, field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
-                row.append(text)
-
-            self._write_excel_row(sheet, row_cursor, settings.start_col, row)
-            row_cursor += 1
+            rows, image_errors = self._recognize_image_rows(image_path, fields, settings, ocr_callback)
+            start_row = row_cursor
+            for row in rows:
+                self._write_excel_row(sheet, row_cursor, settings.start_col, row)
+                row_cursor += 1
+            errors.extend(image_errors)
+            records.append(ImageExportRecord(image_path, start_row, len(rows), image_errors))
             if progress_callback:
                 progress_callback(row_index, total, image_path)
 
@@ -127,66 +124,133 @@ class ExcelExporter:
         self._write_error_sheet(workbook, errors)
 
         atomic_save_workbook(workbook, output_path)
-        return ExportResult(total, errors)
+        return ExportResult(total, errors, records)
 
-    def _export_dialogue_pairs(
+    def retry_failed(
         self,
         output_path: Path,
-        image_files: list[Path],
+        previous_result: ExportResult,
         fields: list[TemplateField],
         settings: ExportSettings,
         ocr_callback: OcrCallback,
+        retry_files: list[Path] | None = None,
         progress_callback: Callable[[int, int, Path], None] | None = None,
     ) -> ExportResult:
-        workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
-        headers = self._dialogue_pair_headers(settings.include_filename)
-        if settings.include_header and row_cursor == settings.start_row:
-            self._write_excel_row(sheet, row_cursor, settings.start_col, headers)
-            row_cursor += 1
+        if not output_path.exists():
+            raise FileNotFoundError(f"再実行するExcelファイルがありません: {output_path}")
+        workbook = load_workbook(output_path)
+        if settings.sheet_name not in workbook.sheetnames:
+            raise ValueError(f"再実行先のシートがありません: {settings.sheet_name}")
+        sheet = workbook[settings.sheet_name]
+        retry_targets = set(retry_files) if retry_files is not None else None
+        retry_records = [
+            record for record in previous_result.failed_records
+            if retry_targets is None or record.image_path in retry_targets
+        ]
+        retry_paths = {record.image_path for record in retry_records}
+        errors = [error for record in previous_result.records if record.image_path not in retry_paths for error in record.errors]
+        updated_by_path: dict[Path, ImageExportRecord] = {}
+        total = len(retry_records)
 
-        errors: list[ExportError] = []
-        total = len(image_files)
-        pairs = [(fields[idx], fields[idx + 1]) for idx in range(0, len(fields) - 1, 2)]
-
-        for row_index, image_path in enumerate(image_files, start=1):
-            try:
-                image = Image.open(image_path).convert("RGB")
-            except Exception as exc:
-                errors.append(ExportError(image_path.name, "", f"画像を開けませんでした: {exc}"))
-                if progress_callback:
-                    progress_callback(row_index, total, image_path)
-                continue
-
-            for pair_index, (speaker_field, dialogue_field) in enumerate(pairs, start=1):
-                speaker_text, speaker_error = ocr_callback(image, speaker_field)
-                dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
-                speaker_failed = speaker_text is None
-                dialogue_failed = dialogue_text is None
-                if speaker_text is None:
-                    errors.append(ExportError(image_path.name, speaker_field.name, speaker_error or "OCRに失敗しました。"))
-                    speaker_text = ""
-                if dialogue_text is None:
-                    errors.append(ExportError(image_path.name, dialogue_field.name, dialogue_error or "OCRに失敗しました。"))
-                    dialogue_text = ""
-                if not speaker_failed and not speaker_text.strip():
-                    errors.append(ExportError(image_path.name, speaker_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
-                if not dialogue_failed and not dialogue_text.strip():
-                    errors.append(ExportError(image_path.name, dialogue_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
-
-                row = [str(pair_index), speaker_text, dialogue_text]
-                if settings.include_filename:
-                    row.insert(0, image_path.name)
-                self._write_excel_row(sheet, row_cursor, settings.start_col, row)
-                row_cursor += 1
-
+        for row_index, record in enumerate(retry_records, start=1):
+            rows, image_errors = self._recognize_image_rows(record.image_path, fields, settings, ocr_callback)
+            if len(rows) != record.row_count:
+                raise ValueError("出力レイアウトが前回の一括出力から変更されています。全画像を再出力してください。")
+            self._clear_record_rows(sheet, record, settings.start_col, len(self._headers(fields, settings)))
+            for offset, row in enumerate(rows):
+                self._write_excel_row(sheet, record.start_row + offset, settings.start_col, row)
+            errors.extend(image_errors)
+            updated_by_path[record.image_path] = ImageExportRecord(record.image_path, record.start_row, record.row_count, image_errors)
             if progress_callback:
-                progress_callback(row_index, total, image_path)
+                progress_callback(row_index, total, record.image_path)
 
         self._fit_output_columns(sheet)
         self._write_error_sheet(workbook, errors)
-
         atomic_save_workbook(workbook, output_path)
-        return ExportResult(total, errors)
+        records = [updated_by_path.get(record.image_path, record) for record in previous_result.records]
+        return ExportResult(previous_result.total_images, errors, records)
+
+    def _recognize_image_rows(
+        self,
+        image_path: Path,
+        fields: list[TemplateField],
+        settings: ExportSettings,
+        ocr_callback: OcrCallback,
+    ) -> tuple[list[list[str]], list[ExportError]]:
+        try:
+            image = Image.open(image_path).convert("RGB")
+        except Exception as exc:
+            error = ExportError(image_path.name, "", f"画像を開けませんでした: {exc}")
+            return self._blank_rows(image_path, fields, settings), [error]
+
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            return self._recognize_dialogue_pair_rows(image_path, image, fields, settings, ocr_callback)
+
+        errors: list[ExportError] = []
+        row = [image_path.name] if settings.include_filename else []
+        for field in fields:
+            text, error = ocr_callback(image, field)
+            if text is None:
+                errors.append(ExportError(image_path.name, field.name, error or "OCRに失敗しました。"))
+                row.append("")
+                continue
+            if not text.strip():
+                errors.append(ExportError(image_path.name, field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
+            row.append(text)
+        return [row], errors
+
+    def _recognize_dialogue_pair_rows(
+        self,
+        image_path: Path,
+        image: Image.Image,
+        fields: list[TemplateField],
+        settings: ExportSettings,
+        ocr_callback: OcrCallback,
+    ) -> tuple[list[list[str]], list[ExportError]]:
+        errors: list[ExportError] = []
+        rows: list[list[str]] = []
+        pairs = [(fields[idx], fields[idx + 1]) for idx in range(0, len(fields) - 1, 2)]
+        for pair_index, (speaker_field, dialogue_field) in enumerate(pairs, start=1):
+            speaker_text, speaker_error = ocr_callback(image, speaker_field)
+            dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
+            speaker_failed = speaker_text is None
+            dialogue_failed = dialogue_text is None
+            if speaker_text is None:
+                errors.append(ExportError(image_path.name, speaker_field.name, speaker_error or "OCRに失敗しました。"))
+                speaker_text = ""
+            if dialogue_text is None:
+                errors.append(ExportError(image_path.name, dialogue_field.name, dialogue_error or "OCRに失敗しました。"))
+                dialogue_text = ""
+            if not speaker_failed and not speaker_text.strip():
+                errors.append(ExportError(image_path.name, speaker_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
+            if not dialogue_failed and not dialogue_text.strip():
+                errors.append(ExportError(image_path.name, dialogue_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
+            row = [str(pair_index), speaker_text, dialogue_text]
+            if settings.include_filename:
+                row.insert(0, image_path.name)
+            rows.append(row)
+        return rows, errors
+
+    def _blank_rows(self, image_path: Path, fields: list[TemplateField], settings: ExportSettings) -> list[list[str]]:
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            rows = []
+            for pair_index in range(1, len(fields) // 2 + 1):
+                row = [str(pair_index), "", ""]
+                if settings.include_filename:
+                    row.insert(0, image_path.name)
+                rows.append(row)
+            return rows
+        return [[*([image_path.name] if settings.include_filename else []), *([""] * len(fields))]]
+
+    def _headers(self, fields: list[TemplateField], settings: ExportSettings) -> list[str]:
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            return self._dialogue_pair_headers(settings.include_filename)
+        return self._export_headers(fields, settings.include_filename)
+
+    def _clear_record_rows(self, sheet, record: ImageExportRecord, start_col: int, column_count: int) -> None:
+        for row in range(record.start_row, record.start_row + record.row_count):
+            for column in range(start_col, start_col + column_count):
+                sheet.cell(row=row, column=column).value = None
 
     def _prepare_output_sheet(self, output_path: Path, settings: ExportSettings):
         if settings.write_mode == "追記" and output_path.exists():

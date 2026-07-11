@@ -9,7 +9,8 @@ from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, Boolea
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
-from excel_exporter import ExcelExporter, ExportSettings, validate_export_settings
+from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_PENDING, STATUS_PROCESSING, STATUS_SUCCESS, ImageQueue, ImageQueueItem
+from excel_exporter import ExcelExporter, ExportResult, ExportSettings, validate_export_settings
 from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_COORDINATE_SETTINGS, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID, natural_image_sort_key
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_content_rect, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
@@ -79,6 +80,7 @@ class ImageOcrExcelApp:
 
         self.image_path: Path | None = None
         self.image_files: list[Path] = []
+        self.image_queue = ImageQueue()
         self.current_image_index = -1
         self.source_folder: Path | None = None
         self.output_path: Path | None = None
@@ -144,6 +146,13 @@ class ImageOcrExcelApp:
         self.review_processed_preview_var = StringVar(value="未OCR")
         self.review_line_split_var = StringVar(value=OCR_MODE_OPTIONS[0])
         self.review_crop_preview: ctk.CTkImage | None = None
+        self.queue_include_vars: dict[Path, BooleanVar] = {}
+        self.queue_status_labels: dict[Path, ctk.CTkLabel] = {}
+        self.queue_summary_var = StringVar(value="処理対象 0 / 0")
+        self.retry_button: ctk.CTkButton | None = None
+        self.last_export_result: ExportResult | None = None
+        self.last_export_signature: tuple | None = None
+        self.last_export_output_path: Path | None = None
 
         self.side_body: ctk.CTkFrame | None = None
         self.review_detail_host: ctk.CTkFrame | None = None
@@ -783,7 +792,13 @@ class ImageOcrExcelApp:
         body = self.side_body
         assert body is not None
 
-        content = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
+        content = ctk.CTkScrollableFrame(
+            body,
+            corner_radius=0,
+            fg_color=COLOR_SURFACE,
+            scrollbar_button_color=COLOR_SECONDARY,
+            scrollbar_button_hover_color=COLOR_SECONDARY_HOVER,
+        )
         content.pack(side=TOP, fill=BOTH, expand=True)
 
         panel = ctk.CTkFrame(content, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -796,14 +811,159 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(panel, textvariable=self.output_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=210).grid(row=3, column=0, sticky="ew", padx=(12, 8), pady=(0, 12))
         ctk.CTkButton(panel, text=f"{ICON_SAVE} 選択", command=self.select_output_file, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
 
+        self._render_image_queue(content)
         self._render_excel_output_settings(content)
 
         enabled_count = len(self._enabled_fields())
-        image_count = len(self.image_files)
+        image_count = len(self.image_queue.included_files())
         summary_text = f"{image_count}画像（自然順） / {self._export_unit_summary(enabled_count)} / {self._export_column_summary()}"
         ctk.CTkLabel(content, text=summary_text, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=330).pack(fill="x", padx=18, pady=(0, 12))
 
-        ctk.CTkButton(body, text=f"{ICON_EXCEL} Excel出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
+        actions = ctk.CTkFrame(body, fg_color=COLOR_SURFACE)
+        actions.pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
+        retry_count = len(self.image_queue.failed_files()) if self.last_export_result else 0
+        self.retry_button = ctk.CTkButton(
+            actions,
+            text=f"失敗分を再実行（{retry_count}）",
+            command=self.retry_failed_images,
+            state="normal" if retry_count else "disabled",
+            height=THEME.layout.primary_button_height,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+        )
+        self.retry_button.pack(fill="x", pady=(0, 6))
+        ctk.CTkButton(actions, text=f"{ICON_EXCEL} Excel出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(fill="x")
+
+    def _render_image_queue(self, parent) -> None:
+        panel = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        panel.pack(fill="x", padx=16, pady=(0, 10))
+        header = ctk.CTkFrame(panel, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=(8, 6))
+        header.grid_columnconfigure(0, weight=1)
+        self._update_queue_summary()
+        ctk.CTkLabel(header, textvariable=self.queue_summary_var, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(header, text="全選択", command=lambda: self.set_all_queue_items(True), width=58, height=26, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(4, 2))
+        ctk.CTkButton(header, text="全解除", command=lambda: self.set_all_queue_items(False), width=58, height=26, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=2, padx=(2, 0))
+
+        queue_frame = ctk.CTkScrollableFrame(
+            panel,
+            height=190,
+            corner_radius=4,
+            fg_color=COLOR_SURFACE,
+            scrollbar_button_color=COLOR_SECONDARY,
+            scrollbar_button_hover_color=COLOR_SECONDARY_HOVER,
+        )
+        queue_frame.pack(fill="x", padx=8, pady=(0, 8))
+        self.queue_include_vars = {}
+        self.queue_status_labels = {}
+        if not self.image_queue.items:
+            ctk.CTkLabel(queue_frame, text="画像フォルダを選択すると、自然順で処理対象を表示します。", anchor="w", justify="left", wraplength=300, font=UI_FONT_SMALL, text_color=COLOR_MUTED).pack(fill="x", padx=8, pady=16)
+            return
+        for index, item in enumerate(self.image_queue.items, start=1):
+            self._queue_row(queue_frame, index, item)
+
+    def _queue_row(self, parent, index: int, item: ImageQueueItem) -> None:
+        row = ctk.CTkFrame(parent, corner_radius=0, fg_color="transparent", height=30)
+        row.pack(fill="x", padx=2, pady=1)
+        row.grid_columnconfigure(2, weight=1)
+        include_var = BooleanVar(value=item.included)
+        self.queue_include_vars[item.path] = include_var
+        ctk.CTkCheckBox(
+            row,
+            text="",
+            variable=include_var,
+            width=24,
+            command=lambda path=item.path, variable=include_var: self.set_queue_item_included(path, variable.get()),
+            fg_color=COLOR_PRIMARY,
+            hover_color=COLOR_PRIMARY_HOVER,
+        ).grid(row=0, column=0, padx=(4, 2), pady=3)
+        ctk.CTkLabel(row, text=f"{index:03}", width=34, anchor="e", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=1, padx=(0, 6))
+        filename = ctk.CTkLabel(row, text=self._compact_queue_filename(item.path.name), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT if item.included else COLOR_MUTED, cursor="hand2")
+        filename.grid(row=0, column=2, sticky="ew")
+        filename.bind("<Button-1>", lambda _event, path=item.path: self.show_queue_image(path))
+        status_text, status_color = self._queue_status_presentation(item)
+        status = ctk.CTkLabel(row, text=status_text, width=66, anchor="e", font=UI_FONT_SMALL, text_color=status_color)
+        status.grid(row=0, column=3, padx=(6, 4))
+        self.queue_status_labels[item.path] = status
+
+    def _queue_status_presentation(self, item: ImageQueueItem) -> tuple[str, str]:
+        presentations = {
+            STATUS_PENDING: ("待機", COLOR_MUTED),
+            STATUS_PROCESSING: ("処理中", THEME.palette.info),
+            STATUS_SUCCESS: ("完了", THEME.palette.success),
+            STATUS_FAILED: ("要再実行", COLOR_DANGER),
+            STATUS_EXCLUDED: ("除外", THEME.palette.disabled_fill),
+        }
+        return presentations.get(item.status, ("待機", COLOR_MUTED))
+
+    def _compact_queue_filename(self, value: str, limit: int = 23) -> str:
+        if len(value) <= limit:
+            return value
+        path = Path(value)
+        suffix = path.suffix
+        stem_limit = max(6, limit - len(suffix) - 3)
+        return f"{path.stem[:stem_limit]}...{suffix}"
+
+    def _update_queue_summary(self) -> None:
+        included = len(self.image_queue.included_files())
+        total = len(self.image_queue.items)
+        self.queue_summary_var.set(f"処理対象 {included} / {total}")
+        if self.retry_button is not None and self.retry_button.winfo_exists():
+            retry_count = len(self.image_queue.failed_files()) if self.last_export_result else 0
+            self.retry_button.configure(
+                text=f"失敗分を再実行（{retry_count}）",
+                state="normal" if retry_count else "disabled",
+            )
+
+    def _refresh_queue_item_status(self, path: Path) -> None:
+        item = next((candidate for candidate in self.image_queue.items if candidate.path == path), None)
+        label = self.queue_status_labels.get(path)
+        if item is None or label is None or not label.winfo_exists():
+            return
+        text, color = self._queue_status_presentation(item)
+        label.configure(text=text, text_color=color)
+
+    def set_queue_item_included(self, path: Path, included: bool) -> None:
+        self.image_queue.set_included(path, included)
+        self._refresh_queue_item_status(path)
+        self._update_queue_summary()
+
+    def set_all_queue_items(self, included: bool) -> None:
+        self.image_queue.set_all(included)
+        for path, variable in self.queue_include_vars.items():
+            variable.set(included)
+            self._refresh_queue_item_status(path)
+        self._update_queue_summary()
+
+    def show_queue_image(self, path: Path) -> None:
+        try:
+            self.current_image_index = self.image_files.index(path)
+        except ValueError:
+            return
+        self._load_current_image(auto_ocr=False)
+        item = next((candidate for candidate in self.image_queue.items if candidate.path == path), None)
+        if item is not None and item.detail:
+            self.status_var.set(f"{path.name}: {item.detail}")
+
+    def _clear_retry_context(self, reset_queue: bool = False) -> None:
+        self.last_export_result = None
+        self.last_export_signature = None
+        self.last_export_output_path = None
+        if reset_queue:
+            self.image_queue.prepare(self.image_queue.included_files())
+        self._update_queue_summary()
+
+    def _export_structure_signature(self, fields: list[TemplateField], settings: ExportSettings) -> tuple:
+        return (
+            settings.sheet_name,
+            settings.start_row,
+            settings.start_col,
+            settings.include_filename,
+            settings.include_header,
+            settings.output_layout,
+            tuple(field.name for field in fields),
+        )
 
     def _render_excel_output_settings(self, parent) -> None:
         panel = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -904,6 +1064,8 @@ class ImageOcrExcelApp:
             return
         self.source_folder = folder
         self.image_files = files
+        self.image_queue.reset(files)
+        self._clear_retry_context()
         self.folder_var.set(self._folder_status_text())
         self.current_image_index = 0
         self._load_current_image(auto_ocr=False)
@@ -1014,6 +1176,7 @@ class ImageOcrExcelApp:
             return
         self.output_path = Path(file_name)
         self.output_var.set(self.output_path.name)
+        self._clear_retry_context(reset_queue=True)
         self._render_side_body()
 
     def save_template(self, _event=None) -> bool:
@@ -2348,6 +2511,10 @@ class ImageOcrExcelApp:
         if not self.image_files:
             messagebox.showerror("画像なし", "画像フォルダを選択してください。")
             return
+        image_files = self.image_queue.included_files()
+        if not image_files:
+            messagebox.showerror("処理対象なし", "画像キューで処理する画像を1枚以上選択してください。")
+            return
         if not self.output_path:
             self.select_output_file()
             if not self.output_path:
@@ -2359,19 +2526,27 @@ class ImageOcrExcelApp:
         if settings.write_mode == "上書き" and self.output_path.exists() and not messagebox.askyesno("上書き確認", f"既存ファイルを上書きします。\n{self.output_path}"):
             return
 
-        total = len(self.image_files)
+        total = len(image_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set("Excel出力を開始しました。")
         output_path = self.output_path
-        image_files = list(self.image_files)
+        image_files = list(image_files)
         export_fields = [replace(field) for field in fields]
+        coordinate_settings = replace(self.coordinate_settings)
         lang = self.lang_var.get()
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
+        export_signature = self._export_structure_signature(export_fields, settings)
+        self._clear_retry_context()
+        self.image_queue.prepare(image_files)
+        for path in image_files:
+            self._refresh_queue_item_status(path)
 
         def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
             def apply_update() -> None:
+                self.image_queue.mark_processing(image_path)
+                self._refresh_queue_item_status(image_path)
                 self.progress_var.set(f"{row_index} / {total_count}")
                 self.status_var.set(f"OCR中: {image_path.name}")
                 self._update_loading(f"Excel出力中です。{row_index} / {total_count}\n{image_path.name}")
@@ -2385,12 +2560,17 @@ class ImageOcrExcelApp:
                 export_fields,
                 settings,
                 lambda image, field: self.ocr_engine.recognize_field(
-                    image, field, lang, tesseract_path, backend, correction_rules, self.coordinate_settings
+                    image, field, lang, tesseract_path, backend, correction_rules, coordinate_settings
                 ),
                 update_progress,
             )
 
-        def on_success(result) -> None:
+        def on_success(result: ExportResult) -> None:
+            self.last_export_result = result
+            self.last_export_signature = export_signature
+            self.last_export_output_path = output_path
+            self.image_queue.apply_result(result)
+            self._render_side_body()
             if result.errors:
                 self.status_var.set(f"Excelへ出力しました（エラー {len(result.errors)} 件）: {output_path}")
                 messagebox.showwarning("完了（エラーあり）", f"{result.total_images} 画像の処理が完了しました。\nエラー {len(result.errors)} 件は Errors シートに出力しました。\n{output_path}")
@@ -2399,6 +2579,8 @@ class ImageOcrExcelApp:
                 messagebox.showinfo("完了", f"{result.total_images} 画像をExcelへ出力しました。\n{output_path}")
 
         def on_error(error: Exception) -> None:
+            self.image_queue.prepare(image_files)
+            self._render_side_body()
             self.status_var.set("Excel出力に失敗しました。")
             messagebox.showerror("出力エラー", f"Excelへ出力できませんでした。\n{error}")
 
@@ -2406,6 +2588,90 @@ class ImageOcrExcelApp:
             self.progress_var.set("")
 
         self._run_background(f"Excel出力中です。0 / {total}", work, on_success, on_error, on_finally)
+
+    def retry_failed_images(self) -> None:
+        if self.last_export_result is None or self.last_export_output_path is None:
+            messagebox.showinfo("再実行対象なし", "先にExcel出力を実行してください。")
+            return
+        retry_files = self.image_queue.failed_files()
+        if not retry_files:
+            messagebox.showinfo("再実行対象なし", "再実行が必要な画像はありません。")
+            return
+        fields = self._enabled_fields()
+        pair_error = self._validate_dialogue_pair_export(fields)
+        if pair_error:
+            messagebox.showerror("会話ペア設定エラー", pair_error)
+            return
+        settings, error = self._build_export_settings()
+        if error or settings is None:
+            messagebox.showerror("出力設定エラー", error or "Excel出力設定を確認してください。")
+            return
+        current_signature = self._export_structure_signature(fields, settings)
+        if self.output_path != self.last_export_output_path or current_signature != self.last_export_signature:
+            messagebox.showerror(
+                "再実行できません",
+                "出力先、シート、開始セル、列構成のいずれかが前回の出力から変更されています。\n全画像をExcel出力し直してください。",
+            )
+            return
+
+        output_path = self.last_export_output_path
+        previous_result = self.last_export_result
+        export_fields = [replace(field) for field in fields]
+        coordinate_settings = replace(self.coordinate_settings)
+        lang = self.lang_var.get()
+        tesseract_path = self.tesseract_var.get().strip()
+        backend = self.backend_var.get()
+        correction_rules = [replace(rule) for rule in self.correction_rules]
+        total = len(retry_files)
+        self.progress_var.set(f"0 / {total}")
+        self.status_var.set(f"失敗した {total} 画像を再実行します。")
+        self.image_queue.prepare(retry_files)
+
+        def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
+            def apply_update() -> None:
+                self.image_queue.mark_processing(image_path)
+                self._refresh_queue_item_status(image_path)
+                self.progress_var.set(f"{row_index} / {total_count}")
+                self.status_var.set(f"再OCR中: {image_path.name}")
+                self._update_loading(f"失敗分を再実行中です。{row_index} / {total_count}\n{image_path.name}")
+
+            self.root.after(0, apply_update)
+
+        def work():
+            return self.excel_exporter.retry_failed(
+                output_path,
+                previous_result,
+                export_fields,
+                settings,
+                lambda image, field: self.ocr_engine.recognize_field(
+                    image, field, lang, tesseract_path, backend, correction_rules, coordinate_settings
+                ),
+                retry_files=retry_files,
+                progress_callback=update_progress,
+            )
+
+        def on_success(result: ExportResult) -> None:
+            self.last_export_result = result
+            self.image_queue.apply_result(result)
+            self._render_side_body()
+            remaining = len(self.image_queue.failed_files())
+            if remaining:
+                self.status_var.set(f"再実行が完了しました（要再実行 {remaining} 画像）: {output_path}")
+                messagebox.showwarning("再実行完了", f"{total} 画像を再実行しました。\n要再実行: {remaining} 画像\n{output_path}")
+            else:
+                self.status_var.set(f"失敗分の再実行が完了しました: {output_path}")
+                messagebox.showinfo("再実行完了", f"{total} 画像の再実行が完了しました。\n{output_path}")
+
+        def on_error(error: Exception) -> None:
+            self.image_queue.apply_result(previous_result)
+            self._render_side_body()
+            self.status_var.set("失敗分の再実行に失敗しました。")
+            messagebox.showerror("再実行エラー", f"失敗分を再実行できませんでした。\n{error}")
+
+        def on_finally() -> None:
+            self.progress_var.set("")
+
+        self._run_background(f"失敗分を再実行中です。0 / {total}", work, on_success, on_error, on_finally)
 
     def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
         if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:

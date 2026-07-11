@@ -27,6 +27,8 @@ class Palette:
     secondary_hover: str = "#392d54"
     danger: str = "#d64a65"
     danger_hover: str = "#b63a52"
+    success: str = "#55c98b"
+    info: str = "#55c7e8"
     cta: str = "#7a31c8"
     cta_hover: str = "#6b27b4"
     canvas_bg: str = "#050506"

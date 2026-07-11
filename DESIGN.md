@@ -59,7 +59,7 @@ The three modes are the product structure:
 
 - 1. 範囲・列: create and edit OCR regions, name fields, order Excel columns or dialogue-pair order, and load/save templates.
 - 2. 認識テスト: use representative images to inspect the selected crop and full OCR result, then tune the OCR mode before batch export. This is a preflight test; Excel export runs OCR again for every target image.
-- 3. Excel出力: choose source folder/output file, configure Excel writing, and batch export.
+- 3. Excel出力: review the naturally sorted image queue, exclude non-target captures, choose the output file/settings, and batch export.
 
 ## Components
 
@@ -79,7 +79,8 @@ The three modes are the product structure:
 - Recognition testing reports whether content-relative coordinate correction is active or whether the app fell back to full-image scaling.
 - Empty OCR output is a batch warning and is written to the Errors sheet even when the OCR backend itself did not raise an error.
 - Correction-rule UI is currently hidden because per-image editing is outside the batch-first workflow. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation for a bulk-correction workflow.
-- Export panel keeps folder, output file, summary, and final action close together.
+- Export panel keeps folder, output file, queue, summary, and final action close together. Queue rows use explicit text states (`待機 / 処理中 / 完了 / 要再実行 / 除外`) so status never depends on color alone.
+- Failed-image retry overwrites the exact row range reserved by the preceding export. It is session-scoped and disabled when the output path or structural Excel settings no longer match.
 - Unsaved template state is visible as `*` in both the window title and template filename. Loading another template or closing offers save, discard, and cancel; closing is blocked while OCR/export is active.
 - Template and Excel writes use same-directory temporary files followed by atomic replacement so a failed save does not damage the previous file.
 - Template load/save lives with range and column design, not in the global toolbar.

@@ -29,6 +29,7 @@ Focused, sharp, archival. ゲームの黒背景と紫の発光感を手がかり
 - Normalize letterboxed captures: 画像サイズや黒余白が異なっても、同じゲーム画面パターンはコンテンツ領域基準で同じテンプレートへ揃える。
 - Protect long setup work: 未保存状態、終了確認、処理中終了の防止、アトミック保存によりテンプレートとExcelを失わない。
 - Prefer reproducible batch results: 代表画像で再現可能な認識設定を作り、一括処理後は空結果と失敗を明示する。
+- Recover without duplicating work: 自然順キューで対象を除外でき、失敗画像だけを元のExcel行へ安全に再実行できるようにする。
 
 ## Accessibility & Inclusion
 

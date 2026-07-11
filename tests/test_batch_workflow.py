@@ -7,6 +7,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 from PIL import Image
 
+from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
 from excel_exporter import ExcelExporter, ExportSettings
 from megido_app_config import natural_image_sort_key
 from ocr_engine import detect_content_rect, scaled_field
@@ -100,6 +101,118 @@ class BatchWorkflowTests(unittest.TestCase):
 
             self.assertEqual(len(result.errors), 2)
             self.assertTrue(all("空です" in error.error for error in result.errors))
+
+    def test_queue_preserves_failed_state_across_exclusion(self) -> None:
+        first = Path("1.png")
+        second = Path("2.png")
+        queue = ImageQueue()
+        queue.reset([first, second])
+
+        queue.items[0].status = STATUS_FAILED
+        queue.items[0].resume_status = STATUS_FAILED
+        queue.items[1].status = STATUS_SUCCESS
+        queue.items[1].resume_status = STATUS_SUCCESS
+        queue.set_included(first, False)
+
+        self.assertEqual(queue.items[0].status, STATUS_EXCLUDED)
+        self.assertEqual(queue.failed_files(), [])
+
+        queue.set_included(first, True)
+
+        self.assertEqual(queue.failed_files(), [first])
+        self.assertEqual(queue.items[0].status, STATUS_FAILED)
+
+    def test_failed_image_retry_overwrites_original_row_without_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            good = root / "1.png"
+            failed = root / "2.png"
+            output = root / "output.xlsx"
+            Image.new("RGB", (10, 10), "white").save(good)
+            Image.new("RGB", (10, 10), "black").save(failed)
+            exporter = ExcelExporter()
+            settings = ExportSettings()
+            fields = [TemplateField("本文", 0, 0, 10, 10)]
+
+            first_result = exporter.export(
+                output,
+                [good, failed],
+                fields,
+                settings,
+                lambda image, _field: ("成功", None) if image.getpixel((0, 0)) == (255, 255, 255) else (None, "一時的な失敗"),
+            )
+
+            self.assertEqual(first_result.failed_records[0].start_row, 3)
+            retry_result = exporter.retry_failed(
+                output,
+                first_result,
+                fields,
+                settings,
+                lambda _image, _field: ("再認識", None),
+            )
+            workbook = load_workbook(output)
+            sheet = workbook["OCR"]
+
+            self.assertEqual(sheet.max_row, 3)
+            self.assertEqual(sheet.cell(3, 1).value, "2.png")
+            self.assertEqual(sheet.cell(3, 2).value, "再認識")
+            self.assertEqual(retry_result.errors, [])
+            self.assertNotIn("Errors", workbook.sheetnames)
+
+    def test_unreadable_image_reserves_a_row_for_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "broken.png"
+            output = root / "output.xlsx"
+            image_path.write_text("not an image", encoding="utf-8")
+            exporter = ExcelExporter()
+            settings = ExportSettings()
+            fields = [TemplateField("本文", 0, 0, 10, 10)]
+
+            first_result = exporter.export(output, [image_path], fields, settings, lambda _image, _field: ("未使用", None))
+            first_sheet = load_workbook(output)["OCR"]
+
+            self.assertEqual(first_result.records[0].row_count, 1)
+            self.assertEqual(first_sheet.cell(2, 1).value, "broken.png")
+            self.assertIsNone(first_sheet.cell(2, 2).value)
+
+            Image.new("RGB", (10, 10), "white").save(image_path)
+            exporter.retry_failed(output, first_result, fields, settings, lambda _image, _field: ("復旧", None))
+            retried_sheet = load_workbook(output)["OCR"]
+
+            self.assertEqual(retried_sheet.max_row, 2)
+            self.assertEqual(retried_sheet.cell(2, 2).value, "復旧")
+
+    def test_dialogue_pair_retry_keeps_recorded_row_range(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "scene.png"
+            output = root / "output.xlsx"
+            Image.new("RGB", (20, 20), "white").save(image_path)
+            fields = [
+                TemplateField("話者1", 0, 0, 10, 10),
+                TemplateField("セリフ1", 10, 0, 20, 10),
+                TemplateField("話者2", 0, 10, 10, 20),
+                TemplateField("セリフ2", 10, 10, 20, 20),
+            ]
+            settings = ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR)
+            exporter = ExcelExporter()
+            first_result = exporter.export(
+                output,
+                [image_path],
+                fields,
+                settings,
+                lambda _image, _field: (None, "失敗"),
+            )
+
+            self.assertEqual(first_result.records[0].row_count, 2)
+            values = iter(["A", "一行目", "B", "二行目"])
+            exporter.retry_failed(output, first_result, fields, settings, lambda _image, _field: (next(values), None))
+            sheet = load_workbook(output)["OCR"]
+
+            self.assertEqual(sheet.max_row, 3)
+            self.assertEqual([sheet.cell(2, column).value for column in range(1, 5)], ["scene.png", "1", "A", "一行目"])
+            self.assertEqual([sheet.cell(3, column).value for column in range(1, 5)], ["scene.png", "2", "B", "二行目"])
 
 
 if __name__ == "__main__":
