@@ -10,7 +10,7 @@ import customtkinter as ctk
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, AutoHideScrollableFrame, ImageOcrExcelApp
-from ocr_models import DIALOGUE_ROLE_SPEAKER, EXPORT_LAYOUT_DIALOGUE_PAIR, TemplateField
+from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, TemplateField
 
 
 class _FailingWorkbook:
@@ -223,6 +223,36 @@ class FieldNameInteractionTests(unittest.TestCase):
 
         self.assertEqual(row.configure.call_args.kwargs["fg_color"], "#241936")
         self.assertEqual(handle.configure.call_args.kwargs["fg_color"], "transparent")
+
+    def test_dialogue_role_text_enables_line_splitting(self) -> None:
+        app = self._logic_only_app()
+        app.fields = [TemplateField("本文", 0, 0, 10, 10, ocr_line_split="none")]
+        app.current_results = ["recognized"]
+        app.current_raw_results = ["raw"]
+
+        app.set_field_dialogue_role(0, "セリフ")
+
+        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_TEXT)
+        self.assertEqual(app.fields[0].ocr_line_split, "detected")
+        self.assertEqual(app.current_results[0], "")
+        self.assertEqual(app.current_raw_results[0], "")
+        app._mark_dirty.assert_called_once()
+
+    def test_unselected_dialogue_pair_draws_only_the_outer_outline(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.canvas = MagicMock()
+        app.canvas.create_rectangle.side_effect = [10, 11]
+        app.canvas.create_text.return_value = 12
+        app.zoom = 1.0
+        app.selected_index = None
+        app.canvas_pair_handles = {}
+
+        app._draw_pair_handle(1, (0, 1), {0: (10, 10, 30, 20), 1: (10, 22, 80, 50)})
+
+        app.canvas.create_rectangle.assert_called_once()
+        self.assertEqual(app.canvas_pair_handles[1]["outline"], 10)
+        self.assertIsNone(app.canvas_pair_handles[1]["handle"])
+        app.canvas.create_text.assert_not_called()
 
 
 if __name__ == "__main__":
