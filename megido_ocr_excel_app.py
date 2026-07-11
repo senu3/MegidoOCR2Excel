@@ -4,7 +4,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, BooleanVar, Canvas, Menu, Scrollbar, StringVar, filedialog, messagebox
+from tkinter import BOTH, BOTTOM, HORIZONTAL, LEFT, RIGHT, TOP, VERTICAL, BooleanVar, Canvas, Menu, StringVar, filedialog, messagebox
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
@@ -12,6 +12,7 @@ from PIL import Image, ImageTk
 from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_PENDING, STATUS_PROCESSING, STATUS_SUCCESS, ImageQueue, ImageQueueItem
 from excel_exporter import ExcelExporter, ExportResult, ExportSettings, validate_export_settings
 from megido_app_config import APP_PROFILE, APP_TITLE, IMAGE_EXTENSIONS, natural_image_sort_key
+from megido_icons import ICONS
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_content_rect, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
 from ocr_models import (
@@ -43,6 +44,7 @@ UI_FONT_CANVAS = THEME.fonts.canvas
 COLOR_BG = THEME.palette.app_bg
 COLOR_SURFACE = THEME.palette.surface
 COLOR_SURFACE_ALT = THEME.palette.surface_alt
+COLOR_INPUT = THEME.palette.input_bg
 COLOR_BORDER = THEME.palette.border
 COLOR_TEXT = THEME.palette.text
 COLOR_MUTED = THEME.palette.muted
@@ -62,15 +64,6 @@ OCR_MODE_OPTIONS = ["範囲全体", "行切り出し"]
 MODE_TEMPLATE = "1. 範囲・列"
 MODE_REVIEW = "2. 認識テスト"
 MODE_EXPORT = "3. Excel出力"
-ICON_OPEN = "📂"
-ICON_SAVE = "💾"
-ICON_SETTINGS = "⚙"
-ICON_PREV = "‹"
-ICON_NEXT = "›"
-ICON_RUN = "▶"
-ICON_EXCEL = "▦"
-
-
 class ImageOcrExcelApp:
     def __init__(self, root: ctk.CTk, profile: OcrProfile = APP_PROFILE) -> None:
         self.root = root
@@ -78,7 +71,7 @@ class ImageOcrExcelApp:
         self.root.title(self.profile.app_title)
         self.root.geometry(THEME.layout.window_size)
         self.root.minsize(*THEME.layout.min_window_size)
-        self.root.option_add("*Font", f"{UI_FONT_FAMILY} 10")
+        self.root.option_add("*Font", f"{{{UI_FONT_FAMILY}}} 10")
         self.dirty = False
         self._dirty_tracking_suspended = True
 
@@ -164,8 +157,8 @@ class ImageOcrExcelApp:
         self.review_detail_host: ctk.CTkFrame | None = None
         self.correction_rules_host: ctk.CTkFrame | None = None
         self.canvas: Canvas
-        self.hbar: Scrollbar | None = None
-        self.vbar: Scrollbar | None = None
+        self.hbar: ctk.CTkScrollbar | None = None
+        self.vbar: ctk.CTkScrollbar | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
         self.loading_progress: ctk.CTkProgressBar | None = None
         self.busy = False
@@ -191,19 +184,20 @@ class ImageOcrExcelApp:
         toolbar = ctk.CTkFrame(canvas_area, height=THEME.layout.toolbar_height, corner_radius=0, fg_color=COLOR_CANVAS_TOOLBAR)
         toolbar.pack(side=TOP, fill="x")
         toolbar.pack_propagate(False)
-        self._toolbar_button(toolbar, f"{ICON_OPEN} 画像", self.open_image_folder, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, 94).pack(side=LEFT, padx=(12, 4), pady=10)
-        ctk.CTkFrame(toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider).pack(side=LEFT, padx=8, pady=14)
-        self._toolbar_button(toolbar, f"{ICON_SETTINGS} 設定", self.open_settings_modal, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, 72).pack(side=LEFT, padx=4, pady=10)
-        ctk.CTkLabel(toolbar, textvariable=self.image_var, font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_text, anchor="w").pack(side=LEFT, fill="x", expand=True, padx=(12, 12))
-        self._toolbar_button(toolbar, ICON_NEXT, self.next_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=(4, 12), pady=10)
-        ctk.CTkLabel(toolbar, textvariable=self.image_count_var, width=72, anchor="center", font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_muted).pack(side=RIGHT)
-        self._toolbar_button(toolbar, ICON_PREV, self.previous_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=4, pady=10)
+        self._toolbar_button(toolbar, "画像を開く", "folder", self.open_image_folder, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, 116).pack(side=LEFT, padx=(12, 4), pady=10)
+        ctk.CTkFrame(toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider).pack(side=LEFT, padx=8, pady=16)
+        ctk.CTkLabel(toolbar, textvariable=self.image_var, font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_text, anchor="w").pack(side=LEFT, fill="x", expand=True, padx=(8, 12))
+        self._toolbar_button(toolbar, "", "settings", self.open_settings_modal, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=(4, 12), pady=10)
+        ctk.CTkFrame(toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider).pack(side=RIGHT, padx=(4, 8), pady=16)
+        self._toolbar_button(toolbar, "", "chevron_right", self.next_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=2, pady=10)
+        ctk.CTkLabel(toolbar, textvariable=self.image_count_var, width=66, anchor="center", font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_muted).pack(side=RIGHT)
+        self._toolbar_button(toolbar, "", "chevron_left", self.previous_image, THEME.palette.toolbar_button, THEME.palette.toolbar_button_hover, 34).pack(side=RIGHT, padx=2, pady=10)
 
         canvas_frame = ctk.CTkFrame(canvas_area, corner_radius=0, fg_color=COLOR_CANVAS_PANEL)
         canvas_frame.pack(side=TOP, fill=BOTH, expand=True)
         self.canvas = Canvas(canvas_frame, bg=COLOR_CANVAS_BG, highlightthickness=0)
-        self.hbar = Scrollbar(canvas_frame, orient=HORIZONTAL, command=self.canvas.xview)
-        self.vbar = Scrollbar(canvas_frame, orient=VERTICAL, command=self.canvas.yview)
+        self.hbar = ctk.CTkScrollbar(canvas_frame, orientation=HORIZONTAL, command=self.canvas.xview, height=12, corner_radius=0, fg_color=COLOR_CANVAS_TOOLBAR, button_color=COLOR_SECONDARY, button_hover_color=COLOR_SECONDARY_HOVER)
+        self.vbar = ctk.CTkScrollbar(canvas_frame, orientation=VERTICAL, command=self.canvas.yview, width=12, corner_radius=0, fg_color=COLOR_CANVAS_TOOLBAR, button_color=COLOR_SECONDARY, button_hover_color=COLOR_SECONDARY_HOVER)
         self.canvas.configure(xscrollcommand=self.hbar.set, yscrollcommand=self.vbar.set)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.vbar.grid(row=0, column=1, sticky="ns")
@@ -227,7 +221,7 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(status_bar, textvariable=self.status_var, anchor="w", font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_text).pack(side=LEFT, fill="x", expand=True, padx=12)
         ctk.CTkLabel(status_bar, textvariable=self.progress_var, anchor="e", font=UI_FONT_SMALL, text_color=THEME.palette.toolbar_muted).pack(side=RIGHT, padx=12)
 
-        side = ctk.CTkFrame(main, width=THEME.layout.side_panel_width, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
+        side = ctk.CTkFrame(main, width=THEME.layout.side_panel_width, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=THEME.palette.border_subtle)
         side.pack(side=RIGHT, fill="y", padx=(12, 12), pady=12)
         side.pack_propagate(False)
 
@@ -237,6 +231,7 @@ class ImageOcrExcelApp:
             variable=self.mode_var,
             command=self._on_mode_change,
             height=THEME.layout.primary_button_height,
+            corner_radius=THEME.layout.control_radius,
             font=UI_FONT_SMALL,
             selected_color=COLOR_PRIMARY,
             selected_hover_color=COLOR_PRIMARY_HOVER,
@@ -250,8 +245,20 @@ class ImageOcrExcelApp:
         self._render_side_body()
         self._build_loading_overlay()
 
-    def _toolbar_button(self, parent, text: str, command, fg: str, hover: str, width: int) -> ctk.CTkButton:
-        return ctk.CTkButton(parent, text=text, command=command, width=width, height=THEME.layout.button_height, font=UI_FONT_SMALL, fg_color=fg, hover_color=hover)
+    def _toolbar_button(self, parent, text: str, icon: str, command, fg: str, hover: str, width: int) -> ctk.CTkButton:
+        return ctk.CTkButton(
+            parent,
+            text=text,
+            image=ICONS.get(icon, 18, THEME.palette.toolbar_text),
+            compound="left",
+            command=command,
+            width=width,
+            height=THEME.layout.button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=fg,
+            hover_color=hover,
+        )
 
     def _build_loading_overlay(self) -> None:
         overlay = ctk.CTkFrame(
@@ -261,11 +268,11 @@ class ImageOcrExcelApp:
             corner_radius=THEME.layout.panel_radius,
             fg_color=COLOR_SURFACE,
             border_width=1,
-            border_color=COLOR_PRIMARY,
+            border_color=THEME.palette.info,
         )
         overlay.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(overlay, textvariable=self.loading_var, anchor="center", justify="center", font=UI_FONT_BOLD, text_color=COLOR_TEXT, wraplength=300).grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 10))
-        self.loading_progress = ctk.CTkProgressBar(overlay, mode="indeterminate", height=8, fg_color=COLOR_SECONDARY, progress_color=COLOR_PRIMARY)
+        self.loading_progress = ctk.CTkProgressBar(overlay, mode="indeterminate", height=6, fg_color=COLOR_SECONDARY, progress_color=THEME.palette.info)
         self.loading_progress.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 18))
         self.loading_overlay = overlay
         self.loading_overlay.place_forget()
@@ -443,8 +450,8 @@ class ImageOcrExcelApp:
         action_row.pack(fill="x", padx=16, pady=(2, 8))
         action_row.grid_columnconfigure(0, weight=1)
         action_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(action_row, text=f"{ICON_OPEN} 読込", command=self.load_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(action_row, text=f"{ICON_SAVE} 保存", command=self.save_template, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ctk.CTkButton(action_row, text="読み込む", image=ICONS.get("file_input", 17, COLOR_TEXT), compound="left", command=self.load_template, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER, border_width=1, border_color=COLOR_BORDER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(action_row, text="保存", image=ICONS.get("save", 17, THEME.palette.on_color), compound="left", command=self.save_template, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
         ctk.CTkLabel(body, textvariable=self.template_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=340).pack(fill="x", padx=16, pady=(0, 8))
         layout_row = ctk.CTkFrame(body, fg_color="transparent")
         layout_row.pack(fill="x", padx=16, pady=(0, 8))
@@ -455,15 +462,15 @@ class ImageOcrExcelApp:
             ctk.CTkLabel(body, text="会話番号と役割でペアを構成します。項目名や表示順を変えても組み合わせは維持されます。", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=350).pack(fill="x", padx=16, pady=(0, 6))
             pair_error = dialogue_pair_validation_error(self._enabled_fields()) if self.fields else None
             if pair_error:
-                ctk.CTkLabel(body, text=pair_error, anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_DANGER, wraplength=350).pack(fill="x", padx=16, pady=(0, 6))
+                ctk.CTkLabel(body, text=pair_error, image=ICONS.get("alert_circle", 16, COLOR_DANGER), compound="left", anchor="w", justify="left", font=UI_FONT_SMALL, text_color=COLOR_DANGER, wraplength=320).pack(fill="x", padx=16, pady=(0, 6))
             action = ctk.CTkFrame(body, fg_color="transparent")
             action.pack(fill="x", padx=16, pady=(0, 8))
             action.grid_columnconfigure(0, weight=1)
             pending = self.pending_dialogue_pair_id is not None
             button_text = self._dialogue_creation_button_text()
-            ctk.CTkButton(action, text=button_text, command=self.begin_dialogue_pair_creation, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew")
+            ctk.CTkButton(action, text=button_text, image=ICONS.get("plus", 16, THEME.palette.on_color), compound="left", command=self.begin_dialogue_pair_creation, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=0, sticky="ew")
             if pending:
-                ctk.CTkButton(action, text="中止", command=self.cancel_dialogue_pair_creation, width=58, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(6, 0))
+                ctk.CTkButton(action, text="中止", image=ICONS.get("x", 15, COLOR_TEXT), compound="left", command=self.cancel_dialogue_pair_creation, width=68, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(6, 0))
 
         scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
@@ -516,8 +523,8 @@ class ImageOcrExcelApp:
             header.pack(fill="x", padx=8, pady=(8 if position == 0 else 12, 2))
             header.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(header, text=f"会話 {pair_id}", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew")
-            ctk.CTkButton(header, text="↑", command=lambda value=pair_id: self.move_dialogue_pair(value, -1), width=30, height=26, state="normal" if position > 0 else "disabled", font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(4, 2))
-            ctk.CTkButton(header, text="↓", command=lambda value=pair_id: self.move_dialogue_pair(value, 1), width=30, height=26, state="normal" if position < len(pair_ids) - 1 else "disabled", font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=2, padx=(2, 0))
+            ctk.CTkButton(header, text="", image=ICONS.get("arrow_up", 15, COLOR_MUTED), command=lambda value=pair_id: self.move_dialogue_pair(value, -1), width=30, height=28, state="normal" if position > 0 else "disabled", corner_radius=THEME.layout.control_radius, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(4, 2))
+            ctk.CTkButton(header, text="", image=ICONS.get("arrow_down", 15, COLOR_MUTED), command=lambda value=pair_id: self.move_dialogue_pair(value, 1), width=30, height=28, state="normal" if position < len(pair_ids) - 1 else "disabled", corner_radius=THEME.layout.control_radius, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=2, padx=(2, 0))
             indexes = [idx for idx, field in enumerate(self.fields) if field.pair_id == pair_id]
             indexes.sort(key=lambda idx: (0 if self.fields[idx].dialogue_role == DIALOGUE_ROLE_SPEAKER else 1, idx))
             for idx in indexes:
@@ -575,7 +582,9 @@ class ImageOcrExcelApp:
 
         ctk.CTkButton(
             body,
-            text=f"{ICON_RUN} 現在の画像を全項目テスト",
+            text="現在の画像を全項目テスト",
+            image=ICONS.get("scan", 18, THEME.palette.on_color),
+            compound="left",
             command=self.ocr_current_image,
             height=THEME.layout.primary_button_height,
             font=UI_FONT_BOLD,
@@ -601,7 +610,7 @@ class ImageOcrExcelApp:
         else:
             coordinate_status = "座標補正: 画像全体"
         return (
-            "現在の画像で認識精度を試します。上部の ‹ › で代表画像を切り替えてください。\n"
+            "現在の画像で認識精度を試します。上部の前後ボタンで代表画像を切り替えてください。\n"
             f"Excel出力時は、対象画像を改めて一括OCRします。 / {coordinate_status}"
         )
 
@@ -639,7 +648,7 @@ class ImageOcrExcelApp:
 
         ctk.CTkLabel(panel, text="OCR方式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=2)
         ctk.CTkOptionMenu(panel, variable=self.review_line_split_var, values=OCR_MODE_OPTIONS, command=self.set_selected_field_line_split, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=2)
-        ctk.CTkButton(panel, text=f"{ICON_RUN} 選択項目を再テスト", command=self.ocr_selected_field, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
+        ctk.CTkButton(panel, text="選択項目を再テスト", image=ICONS.get("refresh", 16, COLOR_TEXT), compound="left", command=self.ocr_selected_field, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER, border_width=1, border_color=COLOR_BORDER).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
 
     def _result_preview(self, parent) -> None:
         preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
@@ -681,7 +690,7 @@ class ImageOcrExcelApp:
             height=height,
             wrap="word",
             font=UI_FONT_SMALL,
-            fg_color=COLOR_SURFACE_ALT,
+            fg_color=COLOR_INPUT,
             border_width=1,
             border_color=COLOR_BORDER,
             text_color=COLOR_TEXT,
@@ -706,7 +715,7 @@ class ImageOcrExcelApp:
         header.pack(fill="x", padx=12, pady=(10, 6))
         header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(header, text="補正ルール", anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(header, text=self._accordion_icon(), command=self.toggle_correction_rules_panel, width=30, height=28, font=UI_FONT_BOLD, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="e")
+        ctk.CTkButton(header, text="", image=ICONS.get("chevron_up" if self.correction_rules_expanded else "chevron_right", 15, COLOR_MUTED), command=self.toggle_correction_rules_panel, width=30, height=28, corner_radius=THEME.layout.control_radius, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, sticky="e")
 
         self._correction_result_preview(panel)
         if not self.correction_rules_expanded:
@@ -724,9 +733,6 @@ class ImageOcrExcelApp:
             self._correction_rule_row(scroller, idx, rule)
         self._correction_add_button(panel)
 
-    def _accordion_icon(self) -> str:
-        return "v" if self.correction_rules_expanded else ">"
-
     def _correction_result_preview(self, parent) -> None:
         preview = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE, border_width=1, border_color=COLOR_BORDER)
         preview.pack(fill="x", padx=12, pady=(0, 8))
@@ -739,7 +745,7 @@ class ImageOcrExcelApp:
         self._render_correction_rules_panel()
 
     def _correction_add_button(self, parent) -> None:
-        ctk.CTkButton(parent, text="+ ルールを追加", command=self.add_correction_rule, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).pack(fill="x", padx=12, pady=(0, 12))
+        ctk.CTkButton(parent, text="ルールを追加", image=ICONS.get("plus", 16, THEME.palette.on_color), compound="left", command=self.add_correction_rule, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).pack(fill="x", padx=12, pady=(0, 12))
 
     def _correction_rule_row(self, parent, idx: int, rule: CorrectionRule) -> None:
         row = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -748,19 +754,19 @@ class ImageOcrExcelApp:
         row.grid_columnconfigure(2, weight=1)
 
         enabled_var = BooleanVar(value=rule.enabled)
-        ctk.CTkCheckBox(row, text="", variable=enabled_var, width=26, command=lambda i=idx, v=enabled_var: self.set_correction_rule_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, sticky="nw", padx=(8, 0), pady=9)
+        ctk.CTkCheckBox(row, text="", variable=enabled_var, width=22, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1, command=lambda i=idx, v=enabled_var: self.set_correction_rule_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, sticky="nw", padx=(8, 0), pady=9)
 
         target_var = StringVar(value=rule.target if rule.target in self._correction_target_options() else CORRECTION_ALL_TARGET)
         ctk.CTkOptionMenu(row, variable=target_var, values=self._correction_target_options(), command=lambda value, i=idx: self.set_correction_rule_target(i, value), height=28, width=104, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(8, 4), pady=(8, 3))
-        ctk.CTkButton(row, text="削除", command=lambda i=idx: self.delete_correction_rule(i), width=52, height=28, font=UI_FONT_SMALL, fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER).grid(row=0, column=2, sticky="e", padx=(4, 8), pady=(8, 3))
+        ctk.CTkButton(row, text="削除", image=ICONS.get("trash", 15, THEME.palette.on_color), compound="left", command=lambda i=idx: self.delete_correction_rule(i), width=72, height=28, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER).grid(row=0, column=2, sticky="e", padx=(4, 8), pady=(8, 3))
 
         pattern_var = StringVar(value=rule.pattern)
         replacement_var = StringVar(value=rule.replacement)
         pattern_var.trace_add("write", lambda *_args, i=idx, v=pattern_var: self.set_correction_rule_text(i, "pattern", v.get()))
         replacement_var.trace_add("write", lambda *_args, i=idx, v=replacement_var: self.set_correction_rule_text(i, "replacement", v.get()))
         self.result_vars.extend([target_var, pattern_var, replacement_var])
-        ctk.CTkEntry(row, textvariable=pattern_var, placeholder_text="置換前", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(8, 4), pady=(3, 8))
-        ctk.CTkEntry(row, textvariable=replacement_var, placeholder_text="置換後", height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=2, sticky="ew", padx=(4, 8), pady=(3, 8))
+        ctk.CTkEntry(row, textvariable=pattern_var, placeholder_text="置換前", height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_INPUT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(8, 4), pady=(3, 8))
+        ctk.CTkEntry(row, textvariable=replacement_var, placeholder_text="置換後", height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_INPUT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=2, sticky="ew", padx=(4, 8), pady=(3, 8))
 
     def _correction_target_options(self) -> list[str]:
         options = [CORRECTION_ALL_TARGET]
@@ -898,10 +904,10 @@ class ImageOcrExcelApp:
         panel.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(panel, text="画像フォルダ", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(12, 8), pady=(12, 2))
         ctk.CTkLabel(panel, textvariable=self.folder_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=210).grid(row=1, column=0, sticky="ew", padx=(12, 8), pady=(0, 8))
-        ctk.CTkButton(panel, text=f"{ICON_OPEN} 変更", command=self.open_image_folder, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(12, 8))
+        ctk.CTkButton(panel, text="変更", image=ICONS.get("folder", 16, COLOR_TEXT), compound="left", command=self.open_image_folder, width=104, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER, border_width=1, border_color=COLOR_BORDER).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(12, 8))
         ctk.CTkLabel(panel, text="出力ファイル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=2, column=0, sticky="ew", padx=(12, 8), pady=(2, 2))
         ctk.CTkLabel(panel, textvariable=self.output_var, anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED, wraplength=210).grid(row=3, column=0, sticky="ew", padx=(12, 8), pady=(0, 12))
-        ctk.CTkButton(panel, text=f"{ICON_SAVE} 選択", command=self.select_output_file, width=116, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
+        ctk.CTkButton(panel, text="選択", image=ICONS.get("table", 16, COLOR_TEXT), compound="left", command=self.select_output_file, width=104, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER, border_width=1, border_color=COLOR_BORDER).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
 
         self._render_image_queue(content)
         self._render_excel_output_settings(content)
@@ -917,6 +923,8 @@ class ImageOcrExcelApp:
         self.retry_button = ctk.CTkButton(
             actions,
             text=f"失敗分を再実行（{retry_count}）",
+            image=ICONS.get("refresh", 17, COLOR_TEXT),
+            compound="left",
             command=self.retry_failed_images,
             state="normal" if retry_count else "disabled",
             height=THEME.layout.primary_button_height,
@@ -925,7 +933,7 @@ class ImageOcrExcelApp:
             hover_color=COLOR_SECONDARY_HOVER,
         )
         self.retry_button.pack(fill="x", pady=(0, 6))
-        ctk.CTkButton(actions, text=f"{ICON_EXCEL} Excel出力", command=self.export_to_excel, height=THEME.layout.export_button_height, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(fill="x")
+        ctk.CTkButton(actions, text="Excel出力", image=ICONS.get("table", 18, THEME.palette.on_color), compound="left", command=self.export_to_excel, height=THEME.layout.export_button_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_BOLD, fg_color=COLOR_CTA, hover_color=COLOR_CTA_HOVER).pack(fill="x")
 
     def _render_image_queue(self, parent) -> None:
         panel = ctk.CTkFrame(parent, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
@@ -966,6 +974,10 @@ class ImageOcrExcelApp:
             text="",
             variable=include_var,
             width=24,
+            checkbox_width=18,
+            checkbox_height=18,
+            corner_radius=4,
+            border_width=1,
             command=lambda path=item.path, variable=include_var: self.set_queue_item_included(path, variable.get()),
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
@@ -974,20 +986,20 @@ class ImageOcrExcelApp:
         filename = ctk.CTkLabel(row, text=self._compact_queue_filename(item.path.name), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT if item.included else COLOR_MUTED, cursor="hand2")
         filename.grid(row=0, column=2, sticky="ew")
         filename.bind("<Button-1>", lambda _event, path=item.path: self.show_queue_image(path))
-        status_text, status_color = self._queue_status_presentation(item)
-        status = ctk.CTkLabel(row, text=status_text, width=66, anchor="e", font=UI_FONT_SMALL, text_color=status_color)
+        status_text, status_color, status_icon = self._queue_status_presentation(item)
+        status = ctk.CTkLabel(row, text=status_text, image=ICONS.get(status_icon, 15, status_color), compound="left", width=82, anchor="e", font=UI_FONT_SMALL, text_color=status_color)
         status.grid(row=0, column=3, padx=(6, 4))
         self.queue_status_labels[item.path] = status
 
-    def _queue_status_presentation(self, item: ImageQueueItem) -> tuple[str, str]:
+    def _queue_status_presentation(self, item: ImageQueueItem) -> tuple[str, str, str]:
         presentations = {
-            STATUS_PENDING: ("待機", COLOR_MUTED),
-            STATUS_PROCESSING: ("処理中", THEME.palette.info),
-            STATUS_SUCCESS: ("完了", THEME.palette.success),
-            STATUS_FAILED: ("要再実行", COLOR_DANGER),
-            STATUS_EXCLUDED: ("除外", THEME.palette.disabled_fill),
+            STATUS_PENDING: ("待機", COLOR_MUTED, "circle"),
+            STATUS_PROCESSING: ("処理中", THEME.palette.info, "refresh"),
+            STATUS_SUCCESS: ("完了", THEME.palette.success, "check_circle"),
+            STATUS_FAILED: ("要再実行", COLOR_DANGER, "alert_circle"),
+            STATUS_EXCLUDED: ("除外", THEME.palette.disabled_fill, "minus_circle"),
         }
-        return presentations.get(item.status, ("待機", COLOR_MUTED))
+        return presentations.get(item.status, ("待機", COLOR_MUTED, "circle"))
 
     def _compact_queue_filename(self, value: str, limit: int = 23) -> str:
         if len(value) <= limit:
@@ -1013,8 +1025,8 @@ class ImageOcrExcelApp:
         label = self.queue_status_labels.get(path)
         if item is None or label is None or not label.winfo_exists():
             return
-        text, color = self._queue_status_presentation(item)
-        label.configure(text=text, text_color=color)
+        status_text, color, status_icon = self._queue_status_presentation(item)
+        label.configure(text=status_text, text_color=color, image=ICONS.get(status_icon, 15, color))
 
     def set_queue_item_included(self, path: Path, included: bool) -> None:
         self.image_queue.set_included(path, included)
@@ -1063,19 +1075,19 @@ class ImageOcrExcelApp:
         panel.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(panel, text="シート名", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=0, column=0, sticky="w", padx=(12, 8), pady=(12, 4))
-        ctk.CTkEntry(panel, textvariable=self.export_sheet_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 4))
+        ctk.CTkEntry(panel, textvariable=self.export_sheet_var, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_INPUT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(12, 4))
 
         ctk.CTkLabel(panel, text="書き込み", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=4)
         ctk.CTkOptionMenu(panel, variable=self.export_write_mode_var, values=["上書き", "追記"], height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=4)
 
         ctk.CTkLabel(panel, text="開始セル", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=2, column=0, sticky="w", padx=(12, 8), pady=4)
-        ctk.CTkEntry(panel, textvariable=self.export_start_cell_var, height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SURFACE, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=4)
+        ctk.CTkEntry(panel, textvariable=self.export_start_cell_var, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_INPUT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=4)
 
         ctk.CTkLabel(panel, text="出力形式", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
         ctk.CTkOptionMenu(panel, variable=self.export_layout_var, values=EXPORT_LAYOUT_OPTIONS, command=lambda _value: self._render_side_body(), height=THEME.layout.entry_height, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
 
-        ctk.CTkCheckBox(panel, text="ファイル名列", variable=self.export_include_filename_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
-        ctk.CTkCheckBox(panel, text="ヘッダー行", variable=self.export_include_header_var, command=self._render_side_body, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
+        ctk.CTkCheckBox(panel, text="ファイル名列", variable=self.export_include_filename_var, command=self._render_side_body, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
+        ctk.CTkCheckBox(panel, text="ヘッダー行", variable=self.export_include_header_var, command=self._render_side_body, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1, font=UI_FONT_SMALL, text_color=COLOR_TEXT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
 
     def _export_column_summary(self) -> str:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
@@ -1091,10 +1103,10 @@ class ImageOcrExcelApp:
         return f"{enabled_count}項目"
 
     def _empty_state(self, parent, title: str, note: str) -> None:
-        box = ctk.CTkFrame(parent, fg_color=COLOR_SURFACE_ALT, corner_radius=THEME.layout.panel_radius)
+        box = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
         box.pack(fill=BOTH, expand=True, padx=12, pady=20)
-        ctk.CTkLabel(box, text=title, font=UI_FONT_BOLD, text_color=COLOR_TEXT).pack(pady=(28, 4))
-        ctk.CTkLabel(box, text=note, font=UI_FONT_SMALL, text_color=COLOR_MUTED).pack(pady=(0, 28))
+        ctk.CTkLabel(box, text=title, image=ICONS.get("scan", 20, COLOR_MUTED), compound="top", font=UI_FONT_BOLD, text_color=COLOR_TEXT).pack(pady=(28, 6))
+        ctk.CTkLabel(box, text=note, justify="center", wraplength=290, font=UI_FONT_SMALL, text_color=COLOR_MUTED).pack(pady=(0, 28))
 
     def _field_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
@@ -1106,7 +1118,7 @@ class ImageOcrExcelApp:
         row.grid_columnconfigure(2, weight=1)
         var = BooleanVar(value=field.enabled)
         self.field_check_vars.append(var)
-        ctk.CTkCheckBox(row, text="", variable=var, width=28, command=lambda i=idx, v=var: self.set_field_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, padx=(8, 0), pady=8)
+        ctk.CTkCheckBox(row, text="", variable=var, width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1, command=lambda i=idx, v=var: self.set_field_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, padx=(8, 0), pady=8)
         ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if field.enabled else THEME.palette.disabled_fill, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=1, sticky="w", padx=(4, 6), pady=(8, 2))
         name_widget = self._field_name_widget(row, idx)
         name_widget.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=(8, 2))
@@ -1114,7 +1126,7 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(row, text=self._line_split_display(field.ocr_line_split), width=78, height=22, font=UI_FONT_SMALL, fg_color=badge_color, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=3, sticky="e", padx=(0, 6), pady=(8, 2))
         detail_label = ctk.CTkLabel(row, text=self._field_size_text(field), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED)
         detail_label.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(4, 8), pady=(0, 8))
-        drag_handle = ctk.CTkLabel(row, text="☰", width=30, font=UI_FONT_BOLD, text_color=COLOR_MUTED)
+        drag_handle = ctk.CTkLabel(row, text="", image=ICONS.get("grip", 16, COLOR_MUTED), width=30)
         drag_handle.grid(row=0, column=4, rowspan=2, sticky="e", padx=(0, 8), pady=8)
         drag_handle.bind("<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i))
         drag_handle.bind("<B1-Motion>", lambda event, i=idx: self.update_field_drag(event, i))
@@ -1139,7 +1151,7 @@ class ImageOcrExcelApp:
         row.grid_columnconfigure(2, weight=1)
         var = BooleanVar(value=field.enabled)
         self.field_check_vars.append(var)
-        ctk.CTkCheckBox(row, text="", variable=var, width=28, command=lambda i=idx, v=var: self.set_field_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, padx=(8, 0), pady=8)
+        ctk.CTkCheckBox(row, text="", variable=var, width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1, command=lambda i=idx, v=var: self.set_field_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, padx=(8, 0), pady=8)
         role_label = self._dialogue_role_display(field.dialogue_role)
         ctk.CTkLabel(row, text=role_label, width=48, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if field.enabled and field.dialogue_role else THEME.palette.disabled_fill, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=1, sticky="w", padx=(4, 6), pady=(8, 2))
         name_widget = self._field_name_widget(row, idx)
@@ -1193,7 +1205,7 @@ class ImageOcrExcelApp:
             return ctk.CTkLabel(parent, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT if field.enabled else COLOR_MUTED)
 
         name_var = StringVar(value=field.name)
-        entry = ctk.CTkEntry(parent, textvariable=name_var, height=THEME.layout.entry_height, font=UI_FONT_BOLD, fg_color=COLOR_SURFACE_ALT, border_color=COLOR_PRIMARY, text_color=COLOR_TEXT)
+        entry = ctk.CTkEntry(parent, textvariable=name_var, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_BOLD, fg_color=COLOR_INPUT, border_color=COLOR_PRIMARY, text_color=COLOR_TEXT)
         entry.bind("<Return>", lambda _event, i=idx, v=name_var: self.commit_inline_name_edit(i, v.get()))
         entry.bind("<Escape>", lambda _event: self.cancel_inline_name_edit())
         entry.bind("<FocusOut>", lambda _event, i=idx, v=name_var: self.commit_inline_name_edit(i, v.get()))
@@ -1439,7 +1451,7 @@ class ImageOcrExcelApp:
             height=THEME.layout.entry_height,
             font=UI_FONT,
             dropdown_font=UI_FONT,
-            fg_color=COLOR_SURFACE_ALT,
+            fg_color=COLOR_INPUT,
             border_color=COLOR_BORDER,
             button_color=COLOR_PRIMARY,
             button_hover_color=COLOR_PRIMARY_HOVER,
@@ -1457,14 +1469,14 @@ class ImageOcrExcelApp:
         ctk.CTkOptionMenu(panel, variable=dialog_backend, values=[value for value in OCR_BACKEND_OPTIONS if value != "default"], command=sync_backend_fields, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT).grid(row=4, column=0, sticky="ew", padx=16)
         tesseract_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(tesseract_frame, text="Tesseractパス", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ctk.CTkEntry(tesseract_frame, textvariable=dialog_tesseract, height=THEME.layout.entry_height, font=UI_FONT, fg_color=COLOR_SURFACE_ALT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=0, sticky="ew")
+        ctk.CTkEntry(tesseract_frame, textvariable=dialog_tesseract, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT, fg_color=COLOR_INPUT, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=1, column=0, sticky="ew")
         sync_backend_fields()
         buttons = ctk.CTkFrame(panel, fg_color="transparent")
         buttons.grid(row=7, column=0, sticky="ew", padx=16, pady=(20, 16))
         buttons.grid_columnconfigure(0, weight=1)
         buttons.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(buttons, text="キャンセル", command=window.destroy, height=THEME.layout.row_button_height, font=UI_FONT, fg_color=COLOR_SURFACE, hover_color=THEME.palette.modal_button_hover, border_width=1, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(buttons, text="保存", command=lambda: self._apply_settings(window, dialog_lang_display.get(), dialog_backend.get(), dialog_tesseract.get()), height=THEME.layout.row_button_height, font=UI_FONT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        ctk.CTkButton(buttons, text="キャンセル", image=ICONS.get("x", 16, COLOR_TEXT), compound="left", command=window.destroy, height=THEME.layout.row_button_height, corner_radius=THEME.layout.control_radius, font=UI_FONT, fg_color=COLOR_SURFACE, hover_color=THEME.palette.modal_button_hover, border_width=1, border_color=COLOR_BORDER, text_color=COLOR_TEXT).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(buttons, text="保存", image=ICONS.get("save", 16, THEME.palette.on_color), compound="left", command=lambda: self._apply_settings(window, dialog_lang_display.get(), dialog_backend.get(), dialog_tesseract.get()), height=THEME.layout.row_button_height, corner_radius=THEME.layout.control_radius, font=UI_FONT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
     def _apply_settings(self, window: ctk.CTkToplevel, lang_display: str, backend: str, tesseract_path: str) -> None:
         backend = backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else self.profile.default_backend
@@ -2094,7 +2106,7 @@ class ImageOcrExcelApp:
         label = self.canvas.create_text(
             (handle_x1 + handle_x2) / 2,
             (handle_y1 + handle_y2) / 2,
-            text=f"#{pair_position}",
+            text=str(pair_position),
             fill=THEME.palette.on_color,
             font=UI_FONT_CANVAS,
         )
@@ -2455,7 +2467,7 @@ class ImageOcrExcelApp:
                 self.selected_index = previous_selected
                 self._set_undo("update_pair_rects", fields=before_fields, results=before_results, raw_results=before_raw_results, selected=self.selected_index)
                 self._mark_dirty()
-                self.status_var.set(f"会話ペア #{pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。")
+                self.status_var.set(f"会話 {pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。")
                 self._render_side_body()
                 self.redraw()
                 return

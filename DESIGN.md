@@ -38,7 +38,7 @@ Conceptual tokens are OKLCH. Tkinter implementation values live in `megido_ui_th
 
 ## Typography
 
-Use `Meiryo` for the desktop app. Japanese OCR workflows benefit from familiar Windows rendering more than expressive display type.
+Use `Yu Gothic UI` with `Meiryo` as the Windows fallback. Japanese OCR workflows benefit from familiar system rendering more than expressive display type.
 
 - Support text: 12px
 - Controls: 13px
@@ -63,15 +63,17 @@ The three modes are the product structure:
 
 ## Components
 
-- Toolbar buttons are compact filled controls for global image navigation and OCR settings only.
+- Toolbar buttons are compact controls for global image navigation and OCR settings only. Only `画像を開く` uses the primary fill; navigation and settings use neutral icon buttons.
 - Segmented mode switch is the main workflow navigation.
 - Tabs carry the section label; do not repeat tab headings or explanatory text inside the tab body.
 - Persistent path displays should use compact names, not full filesystem paths. Keep full paths for dialogs and transient status messages only.
-- Use icon-plus-short-label buttons for frequent actions, and icon-only buttons for compact global controls when the icon is familiar.
+- Use icon-plus-short-label buttons for frequent actions, and icon-only buttons for compact global controls when the icon is familiar. Icons come from the local monochrome outline system in `megido_icons.py`: 1.75px-equivalent stroke, gently rounded joins, 16/18/20px sizes, and no emoji or Unicode-symbol mixing.
+- Buttons use three roles: purple Primary for one main action per surface, bordered dark Secondary for supporting actions, and neutral icon-only controls for navigation. Standard controls are 32–34px high with 6px corners; final actions are 40px high.
+- Queue status combines a monochrome state icon, semantic color, and a text label. Color is never the only status channel.
 - Field rows show enabled state, order, field name, and pixel size.
 - Dialogue-pair export is a template/output mode, not a positional convention. Every field stores an explicit `pair_id` and `dialogue_role`; Excel groups by pair ID and folds each complete pair into `ログ順 / 話者 / セリフ` rows. Field names and raw list order never determine meaning.
 - Range design groups fields under `会話 n`, exposes role/pair assignment inline, and reorders the whole pair with one action. Adding a pair guides the user through speaker range and then dialogue range on the Canvas.
-- In dialogue-pair mode, Canvas shows an amber pair outline and a compact `#n` handle for each complete enabled pair. Inner field rectangles stay hidden by default to avoid double outlines; selecting an individual field shows only that field's rectangle for precise move/resize. Dragging the pair handle moves both regions together.
+- In dialogue-pair mode, Canvas shows an amber pair outline and a compact numeric handle for each complete enabled pair. Inner field rectangles stay hidden by default to avoid double outlines; selecting an individual field shows only that field's rectangle for precise move/resize. Dragging the pair handle moves both regions together.
 - Line-split OCR is a mode of a normal field, not a separate region type. Show it with a cyan field outline, a compact row badge, and light horizontal guides inside the existing rectangle.
 - Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label moves its field unless the pointer is on a resize edge/corner. The selected field is drawn and hit-tested in front of other fields; non-selected fields are visually muted, and their labels are hidden while a field is selected.
 - Selecting a field should update existing row chrome and the active detail panel only. Avoid rebuilding the whole side panel or resizing the preview image for selection-only changes.
@@ -94,6 +96,7 @@ The three modes are the product structure:
 UI direction should be changed in these files first:
 
 - `megido_ui_theme.py`: colors, fonts, dimensions, visible UI copy.
+- `megido_icons.py`: the local, dependency-free outline icon renderer and icon cache.
 - `profiles/base.py`: profile interface shared by every game.
 - `profiles/<game>.py`: game-specific defaults and field preset rules.
 - `DESIGN.md`: rationale and product-level design rules.
