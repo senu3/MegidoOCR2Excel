@@ -13,7 +13,7 @@ class IconSet:
     """Small monochrome outline icon set rendered at high resolution for Tk."""
 
     def __init__(self) -> None:
-        self._cache: dict[tuple[str, int, str], ctk.CTkImage] = {}
+        self._cache: dict[tuple[str, int, str], Image.Image] = {}
 
     def get(self, name: str, size: int = 18, color: str = "#F3EFF8") -> ctk.CTkImage:
         key = (name, size, color)
@@ -26,8 +26,11 @@ class IconSet:
             alpha = image.getchannel("A")
             solid = Image.new("RGBA", image.size, color)
             solid.putalpha(alpha)
-            self._cache[key] = ctk.CTkImage(light_image=solid, dark_image=solid, size=(size, size))
-        return self._cache[key]
+            self._cache[key] = solid
+        image = self._cache[key]
+        # CTkImage internally owns Tk PhotoImages, which cannot cross destroyed Tk roots.
+        # Return a lightweight wrapper per widget while reusing the rendered PIL bitmap.
+        return ctk.CTkImage(light_image=image, dark_image=image, size=(size, size))
 
 
 def _line(draw: ImageDraw.ImageDraw, points, scale: int, *, width: float = 1.75) -> None:
@@ -118,6 +121,21 @@ def _draw_trash(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
     _line(draw, [(5*scale, 5*scale), (6*scale, 15*scale), (12*scale, 15*scale), (13*scale, 5*scale)], scale)
 
 
+def _draw_pencil(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
+    _line(draw, [(4*scale, 14*scale), (5*scale, 10*scale), (12*scale, 3*scale), (15*scale, 6*scale), (8*scale, 13*scale), (4*scale, 14*scale)], scale)
+    _line(draw, [(10.5*scale, 4.5*scale), (13.5*scale, 7.5*scale)], scale)
+
+
+def _draw_more(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
+    for y in (4, 9, 14):
+        draw.ellipse((8*scale, (y-1)*scale, 10*scale, (y+1)*scale), fill="white")
+
+
+def _draw_duplicate(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
+    _box(draw, (5*scale, 5*scale, 15*scale, 15*scale), scale)
+    _line(draw, [(3*scale, 12*scale), (3*scale, 3*scale), (12*scale, 3*scale)], scale)
+
+
 def _draw_grip(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
     for x in (6, 12):
         for y in (4, 9, 14):
@@ -161,6 +179,9 @@ _DRAWERS: dict[str, IconDrawer] = {
     "plus": _draw_plus,
     "x": _draw_x,
     "trash": _draw_trash,
+    "pencil": _draw_pencil,
+    "more": _draw_more,
+    "duplicate": _draw_duplicate,
     "grip": _draw_grip,
     "circle": _draw_circle,
     "check_circle": _draw_check_circle,

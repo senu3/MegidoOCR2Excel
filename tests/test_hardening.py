@@ -3,13 +3,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import customtkinter as ctk
 
 from atomic_io import atomic_save_workbook, atomic_write_text
-from megido_ocr_excel_app import APP_TITLE, ImageOcrExcelApp
-from ocr_models import TemplateField
+from megido_app_config import APP_PROFILE
+from megido_ocr_excel_app import APP_TITLE, AutoHideScrollableFrame, ImageOcrExcelApp
+from ocr_models import DIALOGUE_ROLE_SPEAKER, EXPORT_LAYOUT_DIALOGUE_PAIR, TemplateField
 
 
 class _FailingWorkbook:
@@ -57,6 +58,26 @@ class AtomicSaveTests(unittest.TestCase):
 
             self.assertEqual(output.read_text(encoding="utf-8"), "original")
             self.assertEqual(list(root.glob(".template-*.json")), [])
+
+
+class AutoHideScrollableFrameTests(unittest.TestCase):
+    def test_scrollbar_appears_only_when_content_overflows(self) -> None:
+        frame = AutoHideScrollableFrame.__new__(AutoHideScrollableFrame)
+        frame._orientation = "vertical"
+        frame._scrollbar_visibility_job = "pending"
+        frame._scrollbar_is_visible = True
+        frame._parent_canvas = MagicMock()
+        frame._parent_canvas.winfo_height.return_value = 120
+        frame._scrollbar = MagicMock()
+
+        frame._parent_canvas.bbox.return_value = (0, 0, 260, 36)
+        frame._update_scrollbar_visibility()
+        frame._scrollbar.grid_remove.assert_called_once()
+        frame._scrollbar.grid.assert_not_called()
+
+        frame._parent_canvas.bbox.return_value = (0, 0, 260, 324)
+        frame._update_scrollbar_visibility()
+        frame._scrollbar.grid.assert_called_once()
 
 
 class DirtyStateTests(unittest.TestCase):
@@ -120,6 +141,69 @@ class DirtyStateTests(unittest.TestCase):
                 showerror.assert_called_once()
         finally:
             root.destroy()
+
+
+class FieldNameInteractionTests(unittest.TestCase):
+    def _logic_only_app(self) -> ImageOcrExcelApp:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.fields = []
+        app.current_results = []
+        app.current_raw_results = []
+        app.correction_rules = []
+        app.editing_name_index = None
+        app.editing_name_value = ""
+        app.editing_name_error = ""
+        app.editing_name_entry = None
+        app.editing_name_error_label = None
+        app.selected_index = None
+        app.original_image = None
+        app.profile = APP_PROFILE
+        app.status_var = MagicMock()
+        app.export_layout_var = MagicMock()
+        app._mark_dirty = MagicMock()
+        app._render_side_body = MagicMock()
+        app.redraw = MagicMock()
+        return app
+
+    def test_inline_edit_rejects_duplicates_and_keeps_original_for_blank(self) -> None:
+        app = self._logic_only_app()
+        app.fields = [TemplateField("話者", 0, 0, 10, 10), TemplateField("本文", 0, 10, 10, 20)]
+        app.current_results = ["", ""]
+        app.current_raw_results = ["", ""]
+        app.editing_name_index = 0
+
+        app.commit_inline_name_edit(0, "本文")
+
+        self.assertEqual(app.fields[0].name, "話者")
+        self.assertEqual(app.editing_name_index, 0)
+        self.assertIn("既に使用", app.editing_name_error)
+
+        app.commit_inline_name_edit(0, "新しい話者")
+
+        self.assertEqual(app.fields[0].name, "新しい話者")
+        self.assertIsNone(app.editing_name_index)
+
+        app.editing_name_index = 0
+        app.commit_inline_name_edit(0, "   ")
+
+        self.assertEqual(app.fields[0].name, "新しい話者")
+        self.assertIsNone(app.editing_name_index)
+
+    def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
+        app = self._logic_only_app()
+        app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR
+        app.fields = [TemplateField("話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER)]
+        app.current_results = ["recognized"]
+        app.current_raw_results = ["raw"]
+
+        app.duplicate_field_at(0)
+
+        self.assertEqual(len(app.fields), 2)
+        self.assertEqual(app.fields[1].name, "話者1 のコピー")
+        self.assertEqual(app.fields[1].pair_id, 0)
+        self.assertEqual(app.fields[1].dialogue_role, "")
+        self.assertEqual(app.current_results[1], "")
+        self.assertEqual(app.undo_action["type"], "add")
 
 
 if __name__ == "__main__":

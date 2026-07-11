@@ -34,6 +34,48 @@ from profiles.base import OcrProfile
 from template_store import build_template_data, coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, save_template
 
 
+class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
+    """Show the scrollbar only while the frame content exceeds its viewport."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._scrollbar_visibility_job: str | None = None
+        self._scrollbar_is_visible = True
+        self.bind("<Configure>", self._schedule_scrollbar_visibility_update, add="+")
+        self._parent_canvas.bind("<Configure>", self._schedule_scrollbar_visibility_update, add="+")
+        self._schedule_scrollbar_visibility_update()
+
+    def _schedule_scrollbar_visibility_update(self, _event=None) -> None:
+        if self._scrollbar_visibility_job is not None:
+            self.after_cancel(self._scrollbar_visibility_job)
+        self._scrollbar_visibility_job = self.after_idle(self._update_scrollbar_visibility)
+
+    def _update_scrollbar_visibility(self) -> None:
+        self._scrollbar_visibility_job = None
+        bbox = self._parent_canvas.bbox("all")
+        if self._orientation == "vertical":
+            content_size = 0 if bbox is None else bbox[3] - bbox[1]
+            viewport_size = self._parent_canvas.winfo_height()
+        else:
+            content_size = 0 if bbox is None else bbox[2] - bbox[0]
+            viewport_size = self._parent_canvas.winfo_width()
+
+        should_show = viewport_size > 1 and content_size > viewport_size + 1
+        if should_show == self._scrollbar_is_visible:
+            return
+        if should_show:
+            self._scrollbar.grid()
+        else:
+            self._scrollbar.grid_remove()
+        self._scrollbar_is_visible = should_show
+
+    def destroy(self) -> None:
+        if self._scrollbar_visibility_job is not None:
+            self.after_cancel(self._scrollbar_visibility_job)
+            self._scrollbar_visibility_job = None
+        super().destroy()
+
+
 UI_FONT_FAMILY = THEME.fonts.family
 UI_FONT = THEME.fonts.normal
 UI_FONT_SMALL = THEME.fonts.small
@@ -107,6 +149,10 @@ class ImageOcrExcelApp:
         self.review_summary_label_by_index: dict[int, ctk.CTkLabel] = {}
         self.selected_index: int | None = None
         self.editing_name_index: int | None = None
+        self.editing_name_value: str = ""
+        self.editing_name_error: str = ""
+        self.editing_name_entry: ctk.CTkEntry | None = None
+        self.editing_name_error_label: ctk.CTkLabel | None = None
         self.dragging_field_index: int | None = None
         self.canvas_edit_state: dict | None = None
         self.undo_action: dict | None = None
@@ -156,6 +202,7 @@ class ImageOcrExcelApp:
         self.side_body: ctk.CTkFrame | None = None
         self.review_detail_host: ctk.CTkFrame | None = None
         self.correction_rules_host: ctk.CTkFrame | None = None
+        self.template_fields_scroller: AutoHideScrollableFrame | None = None
         self.canvas: Canvas
         self.hbar: ctk.CTkScrollbar | None = None
         self.vbar: ctk.CTkScrollbar | None = None
@@ -207,6 +254,7 @@ class ImageOcrExcelApp:
         self._set_canvas_scrollbars(False, False)
 
         self.canvas.bind("<ButtonPress-1>", self.on_mouse_down)
+        self.canvas.bind("<Double-Button-1>", self.on_canvas_double_click)
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
         self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
@@ -347,6 +395,7 @@ class ImageOcrExcelApp:
         self.root.bind_all("<Control-Return>", self.export_to_excel)
         self.root.bind_all("<Alt-Up>", self.move_selected_field_up)
         self.root.bind_all("<Alt-Down>", self.move_selected_field_down)
+        self.root.bind_all("<F2>", self.edit_selected_field_name)
         self.root.bind_all("<Escape>", self.undo_last_action)
         self.root.bind_all("<Control-z>", self.undo_last_action)
         self.root.bind_all("<Control-Z>", self.undo_last_action)
@@ -432,6 +481,7 @@ class ImageOcrExcelApp:
         self.review_summary_label_by_index = {}
         self.review_detail_host = None
         self.correction_rules_host = None
+        self.template_fields_scroller = None
         mode = self.mode_var.get()
         if mode == MODE_TEMPLATE:
             self._render_template_mode()
@@ -472,8 +522,9 @@ class ImageOcrExcelApp:
             if pending:
                 ctk.CTkButton(action, text="中止", image=ICONS.get("x", 15, COLOR_TEXT), compound="left", command=self.cancel_dialogue_pair_creation, width=68, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER).grid(row=0, column=1, padx=(6, 0))
 
-        scroller = ctk.CTkScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
+        scroller = AutoHideScrollableFrame(body, corner_radius=THEME.layout.panel_radius, fg_color=COLOR_SURFACE_ALT, border_width=1, border_color=COLOR_BORDER)
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
+        self.template_fields_scroller = scroller
         if not self.fields:
             self._empty_state(scroller, "項目がありません", "会話ペアを追加して範囲をドラッグ" if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR else "画像上で範囲をドラッグ")
         elif self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
@@ -1121,18 +1172,27 @@ class ImageOcrExcelApp:
         ctk.CTkCheckBox(row, text="", variable=var, width=24, checkbox_width=18, checkbox_height=18, corner_radius=4, border_width=1, command=lambda i=idx, v=var: self.set_field_enabled(i, v.get())).grid(row=0, column=0, rowspan=2, padx=(8, 0), pady=8)
         ctk.CTkLabel(row, text=self._field_order_label(idx), width=42, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if field.enabled else THEME.palette.disabled_fill, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=1, sticky="w", padx=(4, 6), pady=(8, 2))
         name_widget = self._field_name_widget(row, idx)
-        name_widget.grid(row=0, column=2, sticky="ew", padx=(0, 8), pady=(8, 2))
+        editing = self.editing_name_index == idx
+        name_widget.grid(row=0, column=2, columnspan=4 if editing else 1, sticky="ew", padx=(0, 8 if editing else 6), pady=(8, 2))
         badge_color = THEME.palette.line_badge if field.ocr_line_split == "detected" and field.enabled else COLOR_SECONDARY
-        ctk.CTkLabel(row, text=self._line_split_display(field.ocr_line_split), width=78, height=22, font=UI_FONT_SMALL, fg_color=badge_color, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=3, sticky="e", padx=(0, 6), pady=(8, 2))
+        ctk.CTkLabel(row, text=self._line_split_display(field.ocr_line_split), width=78, height=22, font=UI_FONT_SMALL, fg_color=badge_color, text_color=THEME.palette.on_color, corner_radius=4).grid(row=1, column=4, sticky="e", padx=(4, 2), pady=(0, 8))
         detail_label = ctk.CTkLabel(row, text=self._field_size_text(field), anchor="w", font=UI_FONT_SMALL, text_color=COLOR_MUTED)
-        detail_label.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(4, 8), pady=(0, 8))
-        drag_handle = ctk.CTkLabel(row, text="", image=ICONS.get("grip", 16, COLOR_MUTED), width=30)
-        drag_handle.grid(row=0, column=4, rowspan=2, sticky="e", padx=(0, 8), pady=8)
-        drag_handle.bind("<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i))
-        drag_handle.bind("<B1-Motion>", lambda event, i=idx: self.update_field_drag(event, i))
-        drag_handle.bind("<ButtonRelease-1>", lambda event, i=idx: self.finish_field_drag(event, i))
-        drag_handle.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
-        interactive_children = [child for child in row.winfo_children() if child is not name_widget and child is not drag_handle]
+        detail_label.grid(row=1, column=1, columnspan=3, sticky="ew", padx=(4, 4), pady=(0, 8))
+        edit_button = more_button = drag_handle = None
+        if not editing:
+            edit_button = self._field_action_button(row, "pencil", lambda i=idx: self.begin_inline_name_edit(i))
+            edit_button.grid(row=0, column=3, sticky="e", padx=(0, 2), pady=(7, 1))
+            more_button = self._field_action_button(row, "more", lambda: None)
+            more_button.configure(command=lambda button=more_button, i=idx: self.show_field_actions_menu(button, i))
+            more_button.grid(row=0, column=4, sticky="e", padx=2, pady=(7, 1))
+            drag_handle = ctk.CTkLabel(row, text="", image=ICONS.get("grip", 16, COLOR_MUTED), width=30)
+            drag_handle.grid(row=0, column=5, rowspan=2, sticky="e", padx=(0, 6), pady=8)
+            drag_handle.bind("<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i))
+            drag_handle.bind("<B1-Motion>", lambda event, i=idx: self.update_field_drag(event, i))
+            drag_handle.bind("<ButtonRelease-1>", lambda event, i=idx: self.finish_field_drag(event, i))
+            drag_handle.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
+        excluded = {widget for widget in (name_widget, edit_button, more_button, drag_handle) if widget is not None}
+        interactive_children = [child for child in row.winfo_children() if child not in excluded]
         for widget in interactive_children + [row]:
             widget.bind("<Button-1>", lambda _event, i=idx: self.select_field(i))
             widget.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
@@ -1155,7 +1215,14 @@ class ImageOcrExcelApp:
         role_label = self._dialogue_role_display(field.dialogue_role)
         ctk.CTkLabel(row, text=role_label, width=48, height=22, font=UI_FONT_SMALL, fg_color=COLOR_PRIMARY if field.enabled and field.dialogue_role else THEME.palette.disabled_fill, text_color=THEME.palette.on_color, corner_radius=4).grid(row=0, column=1, sticky="w", padx=(4, 6), pady=(8, 2))
         name_widget = self._field_name_widget(row, idx)
-        name_widget.grid(row=0, column=2, columnspan=2, sticky="ew", padx=(0, 8), pady=(8, 2))
+        editing = self.editing_name_index == idx
+        name_widget.grid(row=0, column=2, columnspan=4 if editing else 2, sticky="ew", padx=(0, 8 if editing else 6), pady=(8, 2))
+        if not editing:
+            edit_button = self._field_action_button(row, "pencil", lambda i=idx: self.begin_inline_name_edit(i))
+            edit_button.grid(row=0, column=4, sticky="e", padx=(0, 2), pady=(7, 1))
+            more_button = self._field_action_button(row, "more", lambda: None)
+            more_button.configure(command=lambda button=more_button, i=idx: self.show_field_actions_menu(button, i))
+            more_button.grid(row=0, column=5, sticky="e", padx=(0, 6), pady=(7, 1))
 
         pair_values = ["未割当", *[f"会話 {value}" for value in range(1, self._next_dialogue_pair_id() + 1)]]
         pair_menu = ctk.CTkOptionMenu(row, values=pair_values, command=lambda value, i=idx: self.set_field_pair(i, value), width=92, height=26, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT)
@@ -1164,13 +1231,27 @@ class ImageOcrExcelApp:
         role_menu = ctk.CTkOptionMenu(row, values=["未割当", "話者", "セリフ"], command=lambda value, i=idx: self.set_field_dialogue_role(i, value), width=92, height=26, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY, button_color=COLOR_PRIMARY, button_hover_color=COLOR_PRIMARY_HOVER, dropdown_fg_color=COLOR_SURFACE_ALT, dropdown_hover_color=COLOR_SECONDARY_HOVER, text_color=COLOR_TEXT)
         role_menu.set(role_label)
         role_menu.grid(row=1, column=2, sticky="w", padx=(0, 4), pady=(2, 8))
-        ctk.CTkLabel(row, text=self._field_size_text(field), anchor="e", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=3, sticky="e", padx=(0, 8), pady=(2, 8))
+        ctk.CTkLabel(row, text=self._field_compact_size_text(field), anchor="e", font=UI_FONT_SMALL, text_color=COLOR_MUTED).grid(row=1, column=3, columnspan=3, sticky="e", padx=(4, 8), pady=(2, 8))
 
         for widget in [row, name_widget]:
             widget.bind("<Button-1>", lambda _event, i=idx: self.select_field(i))
             widget.bind("<Button-3>", lambda event, i=idx: self.show_field_context_menu(event, i))
         if self.editing_name_index != idx:
             name_widget.bind("<Double-Button-1>", lambda _event, i=idx: self.begin_inline_name_edit(i))
+
+    def _field_action_button(self, parent, icon: str, command) -> ctk.CTkButton:
+        return ctk.CTkButton(
+            parent,
+            text="",
+            image=ICONS.get(icon, 15, COLOR_MUTED),
+            command=command,
+            width=28,
+            height=28,
+            corner_radius=THEME.layout.control_radius,
+            fg_color="transparent",
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=0,
+        )
 
     def _dialogue_role_display(self, role: str) -> str:
         return {DIALOGUE_ROLE_SPEAKER: "話者", DIALOGUE_ROLE_TEXT: "セリフ"}.get(role, "未割当")
@@ -1204,13 +1285,22 @@ class ImageOcrExcelApp:
         if self.editing_name_index != idx:
             return ctk.CTkLabel(parent, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT if field.enabled else COLOR_MUTED)
 
-        name_var = StringVar(value=field.name)
-        entry = ctk.CTkEntry(parent, textvariable=name_var, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_BOLD, fg_color=COLOR_INPUT, border_color=COLOR_PRIMARY, text_color=COLOR_TEXT)
+        editor = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
+        editor.grid_columnconfigure(0, weight=1)
+        name_var = StringVar(value=self.editing_name_value or field.name)
+        entry = ctk.CTkEntry(editor, textvariable=name_var, height=THEME.layout.entry_height, corner_radius=THEME.layout.control_radius, font=UI_FONT_BOLD, fg_color=COLOR_INPUT, border_color=COLOR_DANGER if self.editing_name_error else COLOR_PRIMARY, text_color=COLOR_TEXT)
+        entry.grid(row=0, column=0, sticky="ew")
         entry.bind("<Return>", lambda _event, i=idx, v=name_var: self.commit_inline_name_edit(i, v.get()))
         entry.bind("<Escape>", lambda _event: self.cancel_inline_name_edit())
         entry.bind("<FocusOut>", lambda _event, i=idx, v=name_var: self.commit_inline_name_edit(i, v.get()))
+        error_label = ctk.CTkLabel(editor, text=self.editing_name_error, anchor="w", justify="left", wraplength=230, font=UI_FONT_SMALL, text_color=COLOR_DANGER)
+        error_label.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        if not self.editing_name_error:
+            error_label.grid_remove()
+        self.editing_name_entry = entry
+        self.editing_name_error_label = error_label
         entry.after(10, lambda widget=entry: (widget.focus_set(), widget.select_range(0, "end")))
-        return entry
+        return editor
 
     def open_image_folder(self) -> None:
         folder_name = filedialog.askdirectory(title="画像フォルダを選択")
@@ -1502,6 +1592,9 @@ class ImageOcrExcelApp:
     def _select_field_index(self, idx: int, update_review_detail: bool, redraw_canvas: bool = True) -> None:
         if not (0 <= idx < len(self.fields)):
             return
+        if self.editing_name_index is not None and self.editing_name_index != idx:
+            if not self._commit_active_name_edit():
+                return
         if self.selected_index == idx:
             return
         self.selected_index = idx
@@ -1569,6 +1662,8 @@ class ImageOcrExcelApp:
         self.move_selected_field(1)
 
     def move_selected_field(self, direction: int) -> None:
+        if not self._commit_active_name_edit():
+            return
         idx = self._require_field_selection()
         if idx is None:
             return
@@ -1656,22 +1751,50 @@ class ImageOcrExcelApp:
     def rename_field_at(self, idx: int) -> None:
         self.begin_inline_name_edit(idx)
 
+    def edit_selected_field_name(self, _event=None) -> str:
+        if self._focus_is_text_entry():
+            return "break"
+        idx = self._require_field_selection()
+        if idx is not None:
+            self.begin_inline_name_edit(idx)
+        return "break"
+
     def begin_inline_name_edit(self, idx: int) -> str:
         if not (0 <= idx < len(self.fields)):
             return "break"
         self.selected_index = idx
         self.editing_name_index = idx
+        self.editing_name_value = self.fields[idx].name
+        self.editing_name_error = ""
         self._render_side_body()
         self.redraw()
+        self.root.after(20, self._scroll_selected_field_into_view)
         return "break"
 
     def commit_inline_name_edit(self, idx: int, value: str) -> str:
         if self.editing_name_index != idx or not (0 <= idx < len(self.fields)):
             return "break"
-        self.editing_name_index = None
         previous_name = self.fields[idx].name
-        name = value.strip() or self.fields[idx].name
-        name = self._unique_field_name(name.strip() or self.fields[idx].name, skip_index=idx)
+        name = value.strip()
+        if not name:
+            self.status_var.set("項目名は変更されませんでした。")
+            return self.cancel_inline_name_edit()
+        if any(field.name == name for field_idx, field in enumerate(self.fields) if field_idx != idx):
+            self.editing_name_value = value
+            self.editing_name_error = f"「{name}」は既に使用されています。"
+            if self.editing_name_entry is not None and self.editing_name_entry.winfo_exists():
+                self.editing_name_entry.configure(border_color=COLOR_DANGER)
+                self.editing_name_entry.focus_set()
+                self.editing_name_entry.icursor("end")
+            if self.editing_name_error_label is not None and self.editing_name_error_label.winfo_exists():
+                self.editing_name_error_label.configure(text=self.editing_name_error)
+                self.editing_name_error_label.grid()
+            return "break"
+        self.editing_name_index = None
+        self.editing_name_value = ""
+        self.editing_name_error = ""
+        self.editing_name_entry = None
+        self.editing_name_error_label = None
         self.fields[idx].name = name
         self._rename_correction_rule_targets(previous_name, name)
         preset_changed = self._apply_profile_preset_after_rename(idx, previous_name)
@@ -1685,6 +1808,27 @@ class ImageOcrExcelApp:
         self._render_side_body()
         self.redraw()
         return "break"
+
+    def _scroll_selected_field_into_view(self) -> None:
+        idx = self.selected_index
+        row = self.field_row_by_index.get(idx) if idx is not None else None
+        scroller = self.template_fields_scroller
+        if row is None or scroller is None or not row.winfo_exists() or not scroller.winfo_exists():
+            return
+        try:
+            canvas = scroller._parent_canvas
+            canvas.update_idletasks()
+            content_height = max(1, int(canvas.bbox("all")[3]))
+            row_top = row.winfo_y()
+            row_bottom = row_top + row.winfo_height()
+            visible_top = canvas.canvasy(0)
+            visible_bottom = visible_top + canvas.winfo_height()
+            if row_top < visible_top:
+                canvas.yview_moveto(max(0.0, row_top / content_height))
+            elif row_bottom > visible_bottom:
+                canvas.yview_moveto(max(0.0, (row_bottom - canvas.winfo_height()) / content_height))
+        except (AttributeError, TypeError, IndexError):
+            return
 
     def _rename_correction_rule_targets(self, previous_name: str, name: str) -> None:
         if previous_name == name:
@@ -1704,26 +1848,66 @@ class ImageOcrExcelApp:
 
     def cancel_inline_name_edit(self) -> str:
         self.editing_name_index = None
+        self.editing_name_value = ""
+        self.editing_name_error = ""
+        self.editing_name_entry = None
+        self.editing_name_error_label = None
         self._render_side_body()
         self.redraw()
         return "break"
 
+    def _commit_active_name_edit(self) -> bool:
+        idx = self.editing_name_index
+        if idx is None:
+            return True
+        value = self.editing_name_value
+        if self.editing_name_entry is not None and self.editing_name_entry.winfo_exists():
+            value = self.editing_name_entry.get()
+        self.commit_inline_name_edit(idx, value)
+        return self.editing_name_index is None
+
     def show_field_context_menu(self, event, idx: int) -> str:
         if not (0 <= idx < len(self.fields)):
             return "break"
-        self.editing_name_index = None
-        self.selected_index = idx
-        self._render_side_body()
-        self.redraw()
-        menu = Menu(self.root, tearoff=0)
-        menu.add_command(label="項目名を編集", command=lambda i=idx: self.rename_field_at(i))
-        menu.add_separator()
-        menu.add_command(label="削除", command=lambda i=idx: self.delete_field_at(i, confirm=True))
+        self._select_field_index(idx, update_review_detail=True)
+        menu = self._field_actions_menu(idx)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
         return "break"
+
+    def show_field_actions_menu(self, button, idx: int) -> None:
+        if not (0 <= idx < len(self.fields)):
+            return
+        self._select_field_index(idx, update_review_detail=True)
+        menu = self._field_actions_menu(idx)
+        try:
+            menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
+        finally:
+            menu.grab_release()
+
+    def _field_actions_menu(self, idx: int, include_undo: bool = False) -> Menu:
+        menu = Menu(
+            self.root,
+            tearoff=0,
+            background=COLOR_SURFACE_ALT,
+            foreground=COLOR_TEXT,
+            activebackground=COLOR_PRIMARY,
+            activeforeground=THEME.palette.on_color,
+            disabledforeground=THEME.palette.disabled_fill,
+            borderwidth=1,
+            relief="flat",
+        )
+        menu.add_command(label="項目名を編集    F2", command=lambda i=idx: self.rename_field_at(i))
+        menu.add_command(label="範囲を選択", command=lambda i=idx: self.select_field(i))
+        menu.add_command(label="複製", command=lambda i=idx: self.duplicate_field_at(i))
+        menu.add_separator()
+        menu.add_command(label="削除", command=lambda i=idx: self.delete_field_at(i, confirm=False))
+        if include_undo:
+            menu.add_separator()
+            menu.add_command(label="直前の操作を取り消す", command=self.undo_last_action, state="normal" if self.undo_action else "disabled")
+        return menu
 
     def show_canvas_context_menu(self, event) -> str:
         if not self.original_image:
@@ -1733,19 +1917,48 @@ class ImageOcrExcelApp:
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         x, y = self._event_image_point(event)
         hit_idx, _mode = (label_hit_idx, "move") if label_hit_idx is not None else self._hit_test_field(x, y)
-        menu = Menu(self.root, tearoff=0)
         if hit_idx is not None:
-            self.editing_name_index = None
             self._select_field_index(hit_idx, update_review_detail=True)
-            menu.add_command(label="項目名を編集", command=lambda i=hit_idx: self.rename_field_at(i))
-            menu.add_command(label="削除", command=lambda i=hit_idx: self.delete_field_at(i, confirm=False))
-            menu.add_separator()
-        menu.add_command(label="直前の操作を取り消す", command=self.undo_last_action, state="normal" if self.undo_action else "disabled")
+            menu = self._field_actions_menu(hit_idx, include_undo=True)
+        else:
+            menu = Menu(self.root, tearoff=0, background=COLOR_SURFACE_ALT, foreground=COLOR_TEXT, activebackground=COLOR_PRIMARY, activeforeground=THEME.palette.on_color, disabledforeground=THEME.palette.disabled_fill, borderwidth=1, relief="flat")
+            menu.add_command(label="直前の操作を取り消す", command=self.undo_last_action, state="normal" if self.undo_action else "disabled")
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
         return "break"
+
+    def duplicate_field_at(self, idx: int) -> None:
+        if not (0 <= idx < len(self.fields)):
+            return
+        source = self.fields[idx]
+        duplicate = replace(source)
+        duplicate.name = self._unique_field_name(f"{source.name} のコピー")
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            duplicate.pair_id = 0
+            duplicate.dialogue_role = ""
+        if self.original_image is not None:
+            width, height = self.original_image.size
+            dx = 12 if duplicate.x2 + 12 <= width else -12 if duplicate.x1 >= 12 else 0
+            dy = 12 if duplicate.y2 + 12 <= height else -12 if duplicate.y1 >= 12 else 0
+            duplicate.x1 += dx
+            duplicate.x2 += dx
+            duplicate.y1 += dy
+            duplicate.y2 += dy
+        insert_idx = idx + 1
+        self._ensure_current_results()
+        self.fields.insert(insert_idx, duplicate)
+        self.current_results.insert(insert_idx, "")
+        self.current_raw_results.insert(insert_idx, "")
+        self.selected_index = insert_idx
+        self.editing_name_index = None
+        self._set_undo("add", idx=insert_idx, field=replace(duplicate), field_ref=duplicate, result="")
+        self._mark_dirty()
+        assignment_note = "会話番号と役割は未割当です。" if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR else ""
+        self.status_var.set(f"{duplicate.name} を複製しました。{assignment_note} Esc / Ctrl+Z で戻せます。")
+        self._render_side_body()
+        self.redraw()
 
     def delete_field_at(self, idx: int, confirm: bool = False) -> None:
         if not (0 <= idx < len(self.fields)):
@@ -2354,10 +2567,30 @@ class ImageOcrExcelApp:
         if label_bg is not None and label_box:
             self.canvas.coords(label_bg, label_box[0] - 5, label_box[1] - 3, label_box[2] + 5, label_box[3] + 3)
 
+    def on_canvas_double_click(self, event) -> str:
+        if not self.original_image:
+            return "break"
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        idx = self._hit_test_label(canvas_x, canvas_y)
+        if idx is None:
+            x, y = self._event_image_point(event)
+            idx, _mode = self._hit_test_field(x, y)
+        if idx is None:
+            return "break"
+        self.canvas_edit_state = None
+        self.drag_start = None
+        if self.drag_rect:
+            self.canvas.delete(self.drag_rect)
+            self.drag_rect = None
+        self.begin_inline_name_edit(idx)
+        return "break"
+
     def on_mouse_down(self, event) -> None:
         if not self.original_image:
             return
-        self.editing_name_index = None
+        if not self._commit_active_name_edit():
+            return
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         x, y = self._event_image_point(event)
@@ -2539,7 +2772,10 @@ class ImageOcrExcelApp:
             self.pending_dialogue_role = ""
             self.status_var.set(f"会話 {pair_id} のペアを追加しました。Esc / Ctrl+Z で戻せます。")
         else:
-            self.status_var.set(f"{name} を追加しました。会話番号と役割を設定してください。" if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR else f"{name} を追加しました。Esc / Ctrl+Z で戻せます。")
+            self.editing_name_index = self.selected_index
+            self.editing_name_value = name
+            self.editing_name_error = ""
+            self.status_var.set("項目名を入力してください。Enterで確定、Escで元の名前に戻します。")
         self._render_side_body()
         self.redraw()
 
@@ -2925,6 +3161,10 @@ class ImageOcrExcelApp:
         size_text = f"{normalized.x2 - normalized.x1} x {normalized.y2 - normalized.y1}px"
         source_text = f" / 基準 {normalized.source_width}x{normalized.source_height}" if normalized.source_width and normalized.source_height else ""
         return f"{size_text}{source_text}"
+
+    def _field_compact_size_text(self, field: TemplateField) -> str:
+        normalized = field.normalized()
+        return f"{normalized.x2 - normalized.x1}×{normalized.y2 - normalized.y1}px"
 
     def _unique_field_name(self, name: str, skip_index: int | None = None) -> str:
         used = {field.name for idx, field in enumerate(self.fields) if idx != skip_index}
