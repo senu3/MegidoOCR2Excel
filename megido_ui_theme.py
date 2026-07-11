@@ -47,6 +47,8 @@ class Palette:
     segmented_bg: str = "#18141f"
     segmented_hover: str = "#282132"
     selected_row: str = "#241936"
+    dragging_row: str = "#302047"
+    dragging_border: str = "#b77af5"
     disabled_fill: str = "#5f566a"
     enabled_region: str = "#b77af5"
     inactive_region: str = "#6f5a86"

@@ -205,6 +205,25 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertEqual(app.current_results[1], "")
         self.assertEqual(app.undo_action["type"], "add")
 
+    def test_drag_visual_highlights_row_and_handle(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        row = MagicMock()
+        handle = MagicMock()
+        app.selected_index = 0
+        app.field_row_by_index = {0: row}
+        app.field_drag_handle_by_index = {0: handle}
+
+        app._set_field_drag_visual(0, True)
+
+        self.assertEqual(row.configure.call_args.kwargs["fg_color"], "#302047")
+        self.assertEqual(row.configure.call_args.kwargs["border_color"], "#b77af5")
+        self.assertEqual(handle.configure.call_args.kwargs["fg_color"], "#8b49df")
+
+        app._set_field_drag_visual(0, False)
+
+        self.assertEqual(row.configure.call_args.kwargs["fg_color"], "#241936")
+        self.assertEqual(handle.configure.call_args.kwargs["fg_color"], "transparent")
+
 
 if __name__ == "__main__":
     unittest.main()

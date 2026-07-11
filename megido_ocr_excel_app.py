@@ -145,6 +145,7 @@ class ImageOcrExcelApp:
         self.field_check_vars: list[BooleanVar] = []
         self.field_row_widgets: list[ctk.CTkFrame] = []
         self.field_row_by_index: dict[int, ctk.CTkFrame] = {}
+        self.field_drag_handle_by_index: dict[int, ctk.CTkLabel] = {}
         self.review_order_label_by_index: dict[int, ctk.CTkLabel] = {}
         self.review_summary_label_by_index: dict[int, ctk.CTkLabel] = {}
         self.selected_index: int | None = None
@@ -477,6 +478,7 @@ class ImageOcrExcelApp:
         for child in self.side_body.winfo_children():
             child.destroy()
         self.field_row_by_index = {}
+        self.field_drag_handle_by_index = {}
         self.review_order_label_by_index = {}
         self.review_summary_label_by_index = {}
         self.review_detail_host = None
@@ -496,6 +498,7 @@ class ImageOcrExcelApp:
         self.field_check_vars = []
         self.field_row_widgets = []
         self.field_row_by_index = {}
+        self.field_drag_handle_by_index = {}
         action_row = ctk.CTkFrame(body, fg_color="transparent")
         action_row.pack(fill="x", padx=16, pady=(2, 8))
         action_row.grid_columnconfigure(0, weight=1)
@@ -1185,8 +1188,9 @@ class ImageOcrExcelApp:
             more_button = self._field_action_button(row, "more", lambda: None)
             more_button.configure(command=lambda button=more_button, i=idx: self.show_field_actions_menu(button, i))
             more_button.grid(row=0, column=4, sticky="e", padx=2, pady=(7, 1))
-            drag_handle = ctk.CTkLabel(row, text="", image=ICONS.get("grip", 16, COLOR_MUTED), width=30)
+            drag_handle = ctk.CTkLabel(row, text="", image=ICONS.get("grip", 16, COLOR_MUTED), width=30, cursor="fleur")
             drag_handle.grid(row=0, column=5, rowspan=2, sticky="e", padx=(0, 6), pady=8)
+            self.field_drag_handle_by_index[idx] = drag_handle
             drag_handle.bind("<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i))
             drag_handle.bind("<B1-Motion>", lambda event, i=idx: self.update_field_drag(event, i))
             drag_handle.bind("<ButtonRelease-1>", lambda event, i=idx: self.finish_field_drag(event, i))
@@ -1717,6 +1721,7 @@ class ImageOcrExcelApp:
         self.editing_name_index = None
         self.dragging_field_index = idx
         self.selected_index = idx
+        self._set_field_drag_visual(idx, True)
         self.status_var.set(f"{self.fields[idx].name} をドラッグして並び替えます。")
         return "break"
 
@@ -1731,10 +1736,26 @@ class ImageOcrExcelApp:
     def finish_field_drag(self, event, idx: int) -> str:
         if self.dragging_field_index != idx:
             return "break"
+        self._set_field_drag_visual(idx, False)
         self.dragging_field_index = None
         target_idx = self._field_drop_index(event.y_root, idx)
         self.move_field_to(idx, target_idx)
         return "break"
+
+    def _set_field_drag_visual(self, idx: int, active: bool) -> None:
+        row = self.field_row_by_index.get(idx)
+        handle = self.field_drag_handle_by_index.get(idx)
+        if row is not None:
+            selected = idx == self.selected_index
+            row.configure(
+                fg_color=THEME.palette.dragging_row if active else (THEME.palette.selected_row if selected else COLOR_SURFACE),
+                border_color=THEME.palette.dragging_border if active else (COLOR_PRIMARY if selected else COLOR_BORDER),
+            )
+        if handle is not None:
+            handle.configure(
+                fg_color=COLOR_PRIMARY if active else "transparent",
+                corner_radius=THEME.layout.control_radius,
+            )
 
     def _field_drop_index(self, y_root: int, source_idx: int) -> int:
         if len(self.fields) <= 1:
