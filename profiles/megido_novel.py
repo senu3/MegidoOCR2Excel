@@ -6,6 +6,13 @@ PROFILE_NAME = "Megido novel screenshot"
 
 DEFAULT_BACKEND = "paddle"
 DEFAULT_LANG = "jpn+eng"
+DEFAULT_COORDINATE_SETTINGS = {
+    "coordinate_space": "content",
+    "black_threshold": 8,
+    "min_nonblack_ratio": 0.01,
+    "stable_run": 6,
+    "aspect_ratio_tolerance": 0.08,
+}
 
 DEFAULT_FIELD_OCR = {
     "ocr_backend": "default",

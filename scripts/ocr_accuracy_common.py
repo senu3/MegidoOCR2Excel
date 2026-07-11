@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
 from ocr_engine import DEFAULT_LANG, OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
 from ocr_models import OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, TemplateField
 from profiles.megido_novel import DEFAULT_BACKEND
-from template_store import fields_from_template, load_template
+from template_store import coordinate_settings_from_template, fields_from_template, load_template
 
 try:
     import pytesseract
@@ -110,6 +110,7 @@ def run_accuracy(
         return 2
 
     template = load_template(args.template)
+    args.coordinate_settings = coordinate_settings_from_template(template)
     fields = fields_from_template(template)
     field = find_field(fields, args.field)
     if field is None:
@@ -179,7 +180,7 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, 
     except Exception as exc:
         return "", f"画像を開けませんでした: {exc}"
 
-    region = scaled_field(field, image)
+    region = scaled_field(field, image, args.coordinate_settings)
     if (region.x2 - region.x1) < 1 or (region.y2 - region.y1) < 1:
         return "", "読み取り範囲が画像外、または小さすぎます。"
 
@@ -219,7 +220,14 @@ def recognize_with_engine(image: Image.Image, field: TemplateField, args: argpar
         ocr_line_detect_min_ratio=args.line_detect_min_ratio,
         ocr_line_detect_gap=args.line_detect_gap,
     )
-    _raw, value, error = engine.recognize_field_detail(image, adjusted, args.lang, args.tesseract, args.backend)
+    _raw, value, error = engine.recognize_field_detail(
+        image,
+        adjusted,
+        args.lang,
+        args.tesseract,
+        args.backend,
+        coordinate_settings=args.coordinate_settings,
+    )
     return value or "", error or ""
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from profiles.megido_novel import DEFAULT_BACKEND, DEFAULT_LANG, PROFILE_ID, PROFILE_NAME
+from profiles.megido_novel import DEFAULT_BACKEND, DEFAULT_COORDINATE_SETTINGS, DEFAULT_LANG, PROFILE_ID, PROFILE_NAME
 
 
 APP_TITLE = "Megido OCR to Excel"

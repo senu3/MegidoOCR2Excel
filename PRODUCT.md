@@ -26,6 +26,7 @@ Focused, sharp, archival. ゲームの黒背景と紫の発光感を手がかり
 - Separate setup from validation: テンプレート作成、認識テスト、Excel出力の3段階を明確に分ける。
 - Borrow atmosphere, not decoration: 黒と紫の緊張感は検査台や選択状態に使い、本文入力や設定は読みやすさを優先する。
 - Make batch work predictable: 保存先、対象枚数、有効項目数、進捗を常に明示する。
+- Normalize letterboxed captures: 画像サイズや黒余白が異なっても、同じゲーム画面パターンはコンテンツ領域基準で同じテンプレートへ揃える。
 - Prefer reproducible batch results: 代表画像で再現可能な認識設定を作り、一括処理後は空結果と失敗を明示する。
 
 ## Accessibility & Inclusion

@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ocr_models import TEMPLATE_VERSION, CorrectionRule, TemplateField, correction_rule_from_dict, field_from_dict
+from ocr_models import CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, TemplateField, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict
 
 
 def build_template_data(
@@ -14,6 +14,7 @@ def build_template_data(
     ocr_backend: str,
     output_settings: dict,
     correction_rules: list[CorrectionRule] | None = None,
+    coordinate_settings: CoordinateSettings | None = None,
     template_name: str = "ocr-template",
     profile_id: str = "",
 ) -> dict:
@@ -27,6 +28,7 @@ def build_template_data(
         "tesseract_path": tesseract_path,
         "ocr_backend": ocr_backend,
         "output_settings": output_settings,
+        "coordinate_settings": (coordinate_settings or CoordinateSettings()).to_dict(),
         "correction_rules": [rule.to_dict() for rule in correction_rules or [] if rule.pattern.strip()],
         "fields": [field.to_dict() for field in fields],
     }
@@ -46,3 +48,7 @@ def fields_from_template(data: dict) -> list[TemplateField]:
 
 def correction_rules_from_template(data: dict) -> list[CorrectionRule]:
     return [correction_rule_from_dict(item) for item in data.get("correction_rules", [])]
+
+
+def coordinate_settings_from_template(data: dict) -> CoordinateSettings:
+    return coordinate_settings_from_dict(data.get("coordinate_settings"))

@@ -9,20 +9,23 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from excel_exporter import ExcelExporter, ExportSettings, validate_export_settings
-from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID, natural_image_sort_key
+from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_COORDINATE_SETTINGS, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID, natural_image_sort_key
 from megido_ui_theme import THEME
-from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
+from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_content_rect, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
 from ocr_models import (
+    COORDINATE_SPACE_CONTENT,
+    COORDINATE_SPACE_IMAGE,
     CORRECTION_ALL_TARGET,
     EXPORT_LAYOUT_DIALOGUE_PAIR,
     EXPORT_LAYOUT_IMAGE_ROW,
     EXPORT_LAYOUT_OPTIONS,
     OCR_BACKEND_OPTIONS,
+    CoordinateSettings,
     CorrectionRule,
     TemplateField,
 )
 from profiles.megido_novel import field_ocr_preset, has_field_ocr_preset
-from template_store import build_template_data, correction_rules_from_template, fields_from_template, load_template, save_template
+from template_store import build_template_data, coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, save_template
 
 
 UI_FONT_FAMILY = THEME.fonts.family
@@ -83,6 +86,8 @@ class ImageOcrExcelApp:
         self.preview_cache_key: tuple[int, float] | None = None
         self.image_item: int | None = None
         self.zoom = 1.0
+        self.coordinate_settings = CoordinateSettings(**DEFAULT_COORDINATE_SETTINGS).normalized()
+        self.current_content_rect: tuple[int, int, int, int] | None = None
 
         self.fields: list[TemplateField] = []
         self.current_results: list[str] = []
@@ -385,7 +390,7 @@ class ImageOcrExcelApp:
 
         ctk.CTkLabel(
             body,
-            text="現在の画像で認識精度を試します。上部の ‹ › で代表画像を切り替えてください。\nExcel出力時は、対象画像を改めて一括OCRします。",
+            text=self._recognition_test_help_text(),
             anchor="w",
             justify="left",
             font=UI_FONT_SMALL,
@@ -414,6 +419,16 @@ class ImageOcrExcelApp:
         self.review_detail_host = ctk.CTkFrame(body, corner_radius=0, fg_color=COLOR_SURFACE)
         self.review_detail_host.pack(fill="x")
         self._render_postprocess_panel(self.review_detail_host)
+
+    def _recognition_test_help_text(self) -> str:
+        if self.coordinate_settings.coordinate_space == COORDINATE_SPACE_CONTENT:
+            coordinate_status = "黒余白補正: 適用" if self.current_content_rect else "黒余白補正: 検出できないため画像全体で補正"
+        else:
+            coordinate_status = "座標補正: 画像全体"
+        return (
+            "現在の画像で認識精度を試します。上部の ‹ › で代表画像を切り替えてください。\n"
+            f"Excel出力時は、対象画像を改めて一括OCRします。 / {coordinate_status}"
+        )
 
     def _review_result_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
@@ -474,7 +489,7 @@ class ImageOcrExcelApp:
         if self.original_image is None or self.selected_index is None or not (0 <= self.selected_index < len(self.fields)):
             self.review_crop_preview = None
             return None
-        region = scaled_field(self.fields[self.selected_index], self.original_image).normalized()
+        region = self._scaled_field(self.fields[self.selected_index]).normalized()
         if region.x2 <= region.x1 or region.y2 <= region.y1:
             self.review_crop_preview = None
             return None
@@ -836,6 +851,7 @@ class ImageOcrExcelApp:
         except Exception as exc:
             messagebox.showerror("画像エラー", f"画像を開けませんでした。\n{exc}")
             return
+        self._refresh_content_mapping()
         fill_missing_field_source_size(self.fields, self.original_image.size)
         self.zoom = self._initial_zoom()
         self.current_results = [""] * len(self.fields)
@@ -856,6 +872,43 @@ class ImageOcrExcelApp:
             self.status_var.set("画像を読み込みました。認識テストの結果を確認できます。")
         else:
             self.status_var.set("画像を読み込みました。認識テストで代表画像を試せます。")
+
+    def _refresh_content_mapping(self) -> None:
+        self.current_content_rect = None
+        if self.original_image is None or self.coordinate_settings.coordinate_space != COORDINATE_SPACE_CONTENT:
+            return
+        detected = detect_content_rect(self.original_image, self.coordinate_settings)
+        if detected is None:
+            return
+        self.current_content_rect = detected
+        if self.coordinate_settings.source_content_rect is None or not self.fields:
+            self.coordinate_settings = replace(self.coordinate_settings, source_content_rect=detected)
+
+    def _scaled_field(self, field: TemplateField) -> TemplateField:
+        return scaled_field(field, self.original_image, self.coordinate_settings, self.current_content_rect)
+
+    def _adopt_current_image_as_coordinate_source(self) -> None:
+        if self.original_image is None:
+            return
+        target_width, target_height = self.original_image.size
+        source_rect_matches = (
+            self.coordinate_settings.coordinate_space != COORDINATE_SPACE_CONTENT
+            or self.coordinate_settings.source_content_rect == self.current_content_rect
+        )
+        if all(field.source_width == target_width and field.source_height == target_height for field in self.fields) and source_rect_matches:
+            return
+        mapped_fields = [self._scaled_field(field).normalized() for field in self.fields]
+        for field, mapped in zip(self.fields, mapped_fields):
+            field.x1, field.y1, field.x2, field.y2 = mapped.x1, mapped.y1, mapped.x2, mapped.y2
+            field.source_width, field.source_height = target_width, target_height
+        if self.coordinate_settings.coordinate_space == COORDINATE_SPACE_CONTENT and self.current_content_rect:
+            self.coordinate_settings = replace(self.coordinate_settings, source_content_rect=self.current_content_rect)
+        elif self.coordinate_settings.coordinate_space == COORDINATE_SPACE_CONTENT:
+            self.coordinate_settings = replace(
+                self.coordinate_settings,
+                coordinate_space=COORDINATE_SPACE_IMAGE,
+                source_content_rect=None,
+            )
 
     def _image_status_text(self) -> str:
         if not self.image_path:
@@ -902,6 +955,7 @@ class ImageOcrExcelApp:
             ocr_backend=self.backend_var.get(),
             output_settings=self._export_settings_dict(),
             correction_rules=self.correction_rules,
+            coordinate_settings=self.coordinate_settings,
             template_name=path.stem,
             profile_id=PROFILE_ID,
         )
@@ -930,6 +984,8 @@ class ImageOcrExcelApp:
             return
         self.fields = fields
         self.correction_rules = correction_rules_from_template(data)
+        self.coordinate_settings = coordinate_settings_from_template(data)
+        self._refresh_content_mapping()
         self.current_results = [""] * len(self.fields)
         self.current_raw_results = [""] * len(self.fields)
         self.selected_index = 0
@@ -1513,7 +1569,7 @@ class ImageOcrExcelApp:
         self._sync_canvas_scrollbars()
 
     def _draw_field(self, idx: int) -> None:
-        field = scaled_field(self.fields[idx], self.original_image)
+        field = self._scaled_field(self.fields[idx])
         x1, y1, x2, y2 = [value * self.zoom for value in (field.x1, field.y1, field.x2, field.y2)]
         selected = idx == self.selected_index
         selection_active = self._active_canvas_selection() is not None
@@ -1557,7 +1613,7 @@ class ImageOcrExcelApp:
         for pair_position, indexes in enumerate(self._dialogue_pair_field_indexes(), start=1):
             rects = {}
             for idx in indexes:
-                field = scaled_field(self.fields[idx], self.original_image).normalized()
+                field = self._scaled_field(self.fields[idx]).normalized()
                 rects[idx] = (field.x1, field.y1, field.x2, field.y2)
             self._draw_pair_handle(pair_position, indexes, rects)
 
@@ -1687,7 +1743,7 @@ class ImageOcrExcelApp:
     def _hit_test_field(self, x: int, y: int) -> tuple[int | None, str | None]:
         tolerance = max(6.0, 10.0 / max(self.zoom, 0.1))
         for idx in reversed(self._canvas_draw_order()):
-            field = scaled_field(self.fields[idx], self.original_image).normalized()
+            field = self._scaled_field(self.fields[idx]).normalized()
             x1, y1, x2, y2 = field.x1, field.y1, field.x2, field.y2
             width = max(1, x2 - x1)
             height = max(1, y2 - y1)
@@ -1849,12 +1905,13 @@ class ImageOcrExcelApp:
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
         if pair_hit is not None:
+            self._adopt_current_image_as_coordinate_source()
             handle_state = self.canvas_pair_handles.get(pair_hit) or {}
             indexes = tuple(handle_state.get("fields") or ())
             if len(indexes) == 2:
                 origs = {}
                 for idx in indexes:
-                    field = scaled_field(self.fields[idx], self.original_image).normalized()
+                    field = self._scaled_field(self.fields[idx]).normalized()
                     origs[idx] = (field.x1, field.y1, field.x2, field.y2)
                 self.canvas_edit_state = {
                     "pair_position": pair_hit,
@@ -1875,7 +1932,8 @@ class ImageOcrExcelApp:
         else:
             hit_idx, mode = field_hit_idx, field_mode
         if hit_idx is not None and mode is not None:
-            field = scaled_field(self.fields[hit_idx], self.original_image).normalized()
+            self._adopt_current_image_as_coordinate_source()
+            field = self._scaled_field(self.fields[hit_idx]).normalized()
             self._select_field_index(hit_idx, update_review_detail=True, redraw_canvas=False)
             self.canvas_edit_state = {
                 "idx": hit_idx,
@@ -1894,6 +1952,7 @@ class ImageOcrExcelApp:
             self._render_side_body()
             self.redraw()
 
+        self._adopt_current_image_as_coordinate_source()
         self.drag_start = (x, y)
         x = self.drag_start[0] * self.zoom
         y = self.drag_start[1] * self.zoom
@@ -2042,7 +2101,9 @@ class ImageOcrExcelApp:
             for idx, field in fields:
                 if not field.enabled:
                     continue
-                raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules)
+                raw_text, text, error = self.ocr_engine.recognize_field_detail(
+                    image, field, lang, tesseract_path, backend, correction_rules, self.coordinate_settings
+                )
                 if error or text is None:
                     raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
                 raw_results[idx] = raw_text or ""
@@ -2074,7 +2135,9 @@ class ImageOcrExcelApp:
         correction_rules = [replace(rule) for rule in self.correction_rules]
 
         def work() -> tuple[int, str, str]:
-            raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules)
+            raw_text, text, error = self.ocr_engine.recognize_field_detail(
+                image, field, lang, tesseract_path, backend, correction_rules, self.coordinate_settings
+            )
             if error or text is None:
                 raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
             return idx, raw_text or "", text
@@ -2111,7 +2174,15 @@ class ImageOcrExcelApp:
         return True
 
     def _ocr_field_detail(self, image: Image.Image, field: TemplateField, show_errors: bool) -> tuple[str | None, str | None]:
-        raw_text, text, error = self.ocr_engine.recognize_field_detail(image, field, self.lang_var.get(), self.tesseract_var.get().strip(), self.backend_var.get(), self.correction_rules)
+        raw_text, text, error = self.ocr_engine.recognize_field_detail(
+            image,
+            field,
+            self.lang_var.get(),
+            self.tesseract_var.get().strip(),
+            self.backend_var.get(),
+            self.correction_rules,
+            self.coordinate_settings,
+        )
         if error and show_errors:
             messagebox.showerror("OCRエラー", error)
         return raw_text, text
@@ -2194,7 +2265,9 @@ class ImageOcrExcelApp:
                 image_files,
                 export_fields,
                 settings,
-                lambda image, field: self.ocr_engine.recognize_field(image, field, lang, tesseract_path, backend, correction_rules),
+                lambda image, field: self.ocr_engine.recognize_field(
+                    image, field, lang, tesseract_path, backend, correction_rules, self.coordinate_settings
+                ),
                 update_progress,
             )
 

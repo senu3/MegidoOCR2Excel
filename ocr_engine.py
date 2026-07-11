@@ -9,7 +9,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
-from ocr_models import CORRECTION_ALL_TARGET, CorrectionRule, TemplateField
+from ocr_models import COORDINATE_SPACE_CONTENT, CORRECTION_ALL_TARGET, CoordinateSettings, CorrectionRule, TemplateField
 
 try:
     import pytesseract
@@ -47,17 +47,77 @@ def fill_missing_field_source_size(fields: list[TemplateField], image_size: tupl
             field.source_height = height
 
 
-def scaled_field(field: TemplateField, image: Image.Image | None) -> TemplateField:
+def _stable_edge(values: list[int], cutoff: int, stable_run: int, reverse: bool = False) -> int | None:
+    indexes = range(len(values) - stable_run, -1, -1) if reverse else range(0, len(values) - stable_run + 1)
+    for index in indexes:
+        if all(values[index + offset] >= cutoff for offset in range(stable_run)):
+            return index + stable_run if reverse else index
+    return None
+
+
+def _pixel_values(image: Image.Image) -> list[int]:
+    flattened = getattr(image, "get_flattened_data", None)
+    return list(flattened() if callable(flattened) else image.getdata())
+
+
+def detect_content_rect(image: Image.Image, settings: CoordinateSettings) -> tuple[int, int, int, int] | None:
+    """Detect stable non-black edges around a letterboxed game viewport."""
+    normalized = settings.normalized()
+    gray = ImageOps.grayscale(image)
+    mask = gray.point([0 if value <= normalized.black_threshold else 255 for value in range(256)])
+    row_values = _pixel_values(mask.resize((1, image.height), Image.Resampling.BOX))
+    col_values = _pixel_values(mask.resize((image.width, 1), Image.Resampling.BOX))
+    cutoff = max(1, round(255 * normalized.min_nonblack_ratio))
+    top = _stable_edge(row_values, cutoff, normalized.stable_run)
+    bottom = _stable_edge(row_values, cutoff, normalized.stable_run, reverse=True)
+    left = _stable_edge(col_values, cutoff, normalized.stable_run)
+    right = _stable_edge(col_values, cutoff, normalized.stable_run, reverse=True)
+    if None in {left, top, right, bottom}:
+        return None
+    rect = (int(left), int(top), int(right), int(bottom))
+    if rect[2] - rect[0] < image.width * 0.5 or rect[3] - rect[1] < image.height * 0.5:
+        return None
+    source_rect = normalized.source_content_rect
+    if source_rect:
+        source_ratio = (source_rect[2] - source_rect[0]) / max(1, source_rect[3] - source_rect[1])
+        target_ratio = (rect[2] - rect[0]) / max(1, rect[3] - rect[1])
+        if abs(target_ratio / source_ratio - 1.0) > normalized.aspect_ratio_tolerance:
+            return None
+    return rect
+
+
+def scaled_field(
+    field: TemplateField,
+    image: Image.Image | None,
+    coordinate_settings: CoordinateSettings | None = None,
+    target_content_rect: tuple[int, int, int, int] | None = None,
+) -> TemplateField:
     region = field.normalized()
     if image is None or not region.source_width or not region.source_height:
         return region
     target_width, target_height = image.size
-    scale_x = target_width / region.source_width
-    scale_y = target_height / region.source_height
-    x1 = round(region.x1 * scale_x)
-    y1 = round(region.y1 * scale_y)
-    x2 = round(region.x2 * scale_x)
-    y2 = round(region.y2 * scale_y)
+    settings = (coordinate_settings or CoordinateSettings()).normalized()
+    source_rect = settings.source_content_rect
+    if settings.coordinate_space == COORDINATE_SPACE_CONTENT and source_rect:
+        target_rect = target_content_rect or detect_content_rect(image, settings)
+    else:
+        target_rect = None
+    if target_rect:
+        source_x1, source_y1, source_x2, source_y2 = source_rect
+        target_x1, target_y1, target_x2, target_y2 = target_rect
+        scale_x = (target_x2 - target_x1) / (source_x2 - source_x1)
+        scale_y = (target_y2 - target_y1) / (source_y2 - source_y1)
+        x1 = round(target_x1 + (region.x1 - source_x1) * scale_x)
+        y1 = round(target_y1 + (region.y1 - source_y1) * scale_y)
+        x2 = round(target_x1 + (region.x2 - source_x1) * scale_x)
+        y2 = round(target_y1 + (region.y2 - source_y1) * scale_y)
+    else:
+        scale_x = target_width / region.source_width
+        scale_y = target_height / region.source_height
+        x1 = round(region.x1 * scale_x)
+        y1 = round(region.y1 * scale_y)
+        x2 = round(region.x2 * scale_x)
+        y2 = round(region.y2 * scale_y)
     x1, x2 = sorted((max(0, min(target_width, x1)), max(0, min(target_width, x2))))
     y1, y2 = sorted((max(0, min(target_height, y1)), max(0, min(target_height, y2))))
     return TemplateField(
@@ -421,6 +481,20 @@ class PaddleBackend:
 class OcrEngine:
     def __init__(self) -> None:
         self.paddle_backend: PaddleBackend | None = None
+        self._content_rect_image: Image.Image | None = None
+        self._content_rect_settings: CoordinateSettings | None = None
+        self._content_rect_value: tuple[int, int, int, int] | None = None
+
+    def content_rect_for(self, image: Image.Image, settings: CoordinateSettings | None) -> tuple[int, int, int, int] | None:
+        normalized = (settings or CoordinateSettings()).normalized()
+        if normalized.coordinate_space != COORDINATE_SPACE_CONTENT:
+            return None
+        if self._content_rect_image is image and self._content_rect_settings == normalized:
+            return self._content_rect_value
+        self._content_rect_image = image
+        self._content_rect_settings = normalized
+        self._content_rect_value = detect_content_rect(image, normalized)
+        return self._content_rect_value
 
     def recognize_field_detail(
         self,
@@ -430,6 +504,7 @@ class OcrEngine:
         tesseract_path: str = "",
         backend: str = DEFAULT_BACKEND,
         correction_rules: list[CorrectionRule] | None = None,
+        coordinate_settings: CoordinateSettings | None = None,
     ) -> tuple[str | None, str | None, str | None]:
         backend_name = resolve_backend(field, backend)
         if backend_name == "tesseract" and pytesseract is None:
@@ -438,7 +513,8 @@ class OcrEngine:
         if backend_name == "tesseract" and tesseract_path:
             pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
-        region = scaled_field(field, image)
+        target_content_rect = self.content_rect_for(image, coordinate_settings)
+        region = scaled_field(field, image, coordinate_settings, target_content_rect)
         if (region.x2 - region.x1) < 1 or (region.y2 - region.y1) < 1:
             return None, None, "読み取り範囲が画像外、または小さすぎます。"
 
@@ -509,6 +585,7 @@ class OcrEngine:
         tesseract_path: str = "",
         backend: str = DEFAULT_BACKEND,
         correction_rules: list[CorrectionRule] | None = None,
+        coordinate_settings: CoordinateSettings | None = None,
     ) -> tuple[str | None, str | None]:
-        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules)
+        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules, coordinate_settings)
         return value, error

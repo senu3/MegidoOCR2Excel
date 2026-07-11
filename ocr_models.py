@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 
-TEMPLATE_VERSION = 4
+TEMPLATE_VERSION = 5
 POSTPROCESS_OPTIONS = ["そのまま", "数字のみ", "数値抽出", "英数字のみ"]
 OCR_BACKEND_OPTIONS = ["default", "tesseract", "paddle"]
 OCR_PREPROCESS_OPTIONS = ["default", "gray", "threshold", "invert-threshold", "outline-threshold", "white-glyph"]
@@ -13,6 +13,59 @@ CORRECTION_ALL_TARGET = "すべて"
 EXPORT_LAYOUT_IMAGE_ROW = "画像ごとに1行"
 EXPORT_LAYOUT_DIALOGUE_PAIR = "会話ペアごとに1行"
 EXPORT_LAYOUT_OPTIONS = [EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_DIALOGUE_PAIR]
+COORDINATE_SPACE_IMAGE = "image"
+COORDINATE_SPACE_CONTENT = "content"
+COORDINATE_SPACE_OPTIONS = [COORDINATE_SPACE_IMAGE, COORDINATE_SPACE_CONTENT]
+
+
+@dataclass(frozen=True)
+class CoordinateSettings:
+    coordinate_space: str = COORDINATE_SPACE_IMAGE
+    source_content_rect: tuple[int, int, int, int] | None = None
+    black_threshold: int = 8
+    min_nonblack_ratio: float = 0.01
+    stable_run: int = 6
+    aspect_ratio_tolerance: float = 0.08
+
+    def normalized(self) -> "CoordinateSettings":
+        coordinate_space = self.coordinate_space if self.coordinate_space in COORDINATE_SPACE_OPTIONS else COORDINATE_SPACE_IMAGE
+        rect = self.source_content_rect
+        if rect is not None:
+            x1, y1, x2, y2 = (int(value) for value in rect)
+            rect = (x1, y1, x2, y2) if x2 > x1 and y2 > y1 else None
+        return CoordinateSettings(
+            coordinate_space=coordinate_space,
+            source_content_rect=rect,
+            black_threshold=max(0, min(254, int(self.black_threshold))),
+            min_nonblack_ratio=max(0.001, min(0.5, float(self.min_nonblack_ratio))),
+            stable_run=max(1, min(50, int(self.stable_run))),
+            aspect_ratio_tolerance=max(0.0, min(1.0, float(self.aspect_ratio_tolerance))),
+        )
+
+    def to_dict(self) -> dict:
+        normalized = self.normalized()
+        return {
+            "coordinate_space": normalized.coordinate_space,
+            "source_content_rect": list(normalized.source_content_rect) if normalized.source_content_rect else None,
+            "black_threshold": normalized.black_threshold,
+            "min_nonblack_ratio": normalized.min_nonblack_ratio,
+            "stable_run": normalized.stable_run,
+            "aspect_ratio_tolerance": normalized.aspect_ratio_tolerance,
+        }
+
+
+def coordinate_settings_from_dict(item: dict | None) -> CoordinateSettings:
+    data = item or {}
+    rect_data = data.get("source_content_rect")
+    rect = tuple(rect_data) if isinstance(rect_data, (list, tuple)) and len(rect_data) == 4 else None
+    return CoordinateSettings(
+        coordinate_space=str(data.get("coordinate_space") or COORDINATE_SPACE_IMAGE),
+        source_content_rect=rect,
+        black_threshold=int(data.get("black_threshold", 8)),
+        min_nonblack_ratio=float(data.get("min_nonblack_ratio", 0.01)),
+        stable_run=int(data.get("stable_run", 6)),
+        aspect_ratio_tolerance=float(data.get("aspect_ratio_tolerance", 0.08)),
+    ).normalized()
 
 
 @dataclass

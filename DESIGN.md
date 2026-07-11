@@ -9,6 +9,7 @@
 ## Visual Policy
 
 - Screenshot first: 画面左のプレビューを主役にする。背景は黒に近い無彩色で、画像の端と選択範囲が読みやすいことを優先する。
+- Content-relative coordinates: 黒余白を除いたゲーム画面領域を検出し、その領域を基準にCanvas表示とOCR範囲を変換する。検出状態は認識テストに短く表示する。
 - Dark control panel: 右側の操作パネルも黒紫に統一する。ただし本文・OCR結果・保存先の可読性を落とさないよう、面の明度差を十分に取る。
 - Purple as structure: 紫は主操作、選択中、現在の作業状態、最終実行に使う。装飾ではなく状態の語彙として扱う。
 - Layered dark surfaces: 背景、キャンバス、パネル、入力欄、行はそれぞれ少しずつ明度を変え、黒一色に潰さない。
@@ -75,6 +76,7 @@ The three modes are the product structure:
 - Selecting a field should update existing row chrome and the active detail panel only. Avoid rebuilding the whole side panel or resizing the preview image for selection-only changes.
 - Recognition-test rows are selection controls. The detail panel shows the selected crop, the full processed result, raw OCR when it differs, and the OCR mode.
 - Recognition testing is sample-based rather than a per-image correction queue. Users switch representative images with the global previous/next controls and can test either one field or every enabled field.
+- Recognition testing reports whether content-relative coordinate correction is active or whether the app fell back to full-image scaling.
 - Empty OCR output is a batch warning and is written to the Errors sheet even when the OCR backend itself did not raise an error.
 - Correction-rule UI is currently hidden because per-image editing is outside the batch-first workflow. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation for a bulk-correction workflow.
 - Export panel keeps folder, output file, summary, and final action close together.
