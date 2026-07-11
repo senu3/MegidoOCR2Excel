@@ -254,6 +254,37 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertIsNone(app.canvas_pair_handles[1]["handle"])
         app.canvas.create_text.assert_not_called()
 
+    def test_dragging_to_another_dialogue_pair_swaps_the_same_role(self) -> None:
+        app = self._logic_only_app()
+        app.fields = [
+            TemplateField(
+                "話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
+            ),
+            TemplateField(
+                "話者2", 0, 10, 10, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_SPEAKER
+            ),
+        ]
+
+        app.move_field_to_dialogue_pair(0, 2)
+
+        self.assertEqual(app.fields[0].pair_id, 2)
+        self.assertEqual(app.fields[1].pair_id, 1)
+        app._mark_dirty.assert_called_once()
+        self.assertIn("入れ替え", app.status_var.set.call_args.args[0])
+
+    def test_dragging_to_unassigned_removes_the_pair_membership(self) -> None:
+        app = self._logic_only_app()
+        app.fields = [
+            TemplateField(
+                "セリフ1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT
+            )
+        ]
+
+        app.move_field_to_dialogue_pair(0, 0)
+
+        self.assertEqual(app.fields[0].pair_id, 0)
+        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_TEXT)
+
 
 if __name__ == "__main__":
     unittest.main()
