@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from ocr_accuracy_common import run_accuracy
-from profiles.megido_novel import field_ocr_preset
+from megido_app_config import APP_PROFILE
 
 
 if __name__ == "__main__":
-    preset = field_ocr_preset("話者")
+    preset = APP_PROFILE.field_ocr_preset("話者")
     raise SystemExit(
         run_accuracy(
             "話者",

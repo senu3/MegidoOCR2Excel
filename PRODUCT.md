@@ -30,6 +30,8 @@ Focused, sharp, archival. ゲームの黒背景と紫の発光感を手がかり
 - Protect long setup work: 未保存状態、終了確認、処理中終了の防止、アトミック保存によりテンプレートとExcelを失わない。
 - Prefer reproducible batch results: 代表画像で再現可能な認識設定を作り、一括処理後は空結果と失敗を明示する。
 - Recover without duplicating work: 自然順キューで対象を除外でき、失敗画像だけを元のExcel行へ安全に再実行できるようにする。
+- Keep specialization replaceable: UI・OCR・Excelの共通基盤はゲームを知らず、プロファイルがゲーム固有の既定値と項目規則を提供する。
+- Fail clearly at template boundaries: 正式なv1形式と対象プロファイルを読み込み時に検証し、別形式を推測して適用しない。
 
 ## Accessibility & Inclusion
 

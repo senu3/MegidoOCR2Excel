@@ -83,6 +83,8 @@ The three modes are the product structure:
 - Failed-image retry overwrites the exact row range reserved by the preceding export. It is session-scoped and disabled when the output path or structural Excel settings no longer match.
 - Unsaved template state is visible as `*` in both the window title and template filename. Loading another template or closing offers save, discard, and cancel; closing is blocked while OCR/export is active.
 - Template and Excel writes use same-directory temporary files followed by atomic replacement so a failed save does not damage the previous file.
+- The app receives an `OcrProfile`; game identity, OCR defaults, coordinate defaults, and field-name preset matching stay outside the UI and OCR engine.
+- Release templates use schema version 1 and are validated at the file boundary. Format, version, required structure, and profile ID must match; prerelease legacy formats are intentionally rejected instead of guessed or silently normalized.
 - Template load/save lives with range and column design, not in the global toolbar.
 - OCR run actions live at the bottom of the selected field detail panel, close to the raw OCR preview and OCR mode.
 
@@ -91,6 +93,8 @@ The three modes are the product structure:
 UI direction should be changed in these files first:
 
 - `megido_ui_theme.py`: colors, fonts, dimensions, visible UI copy.
+- `profiles/base.py`: profile interface shared by every game.
+- `profiles/<game>.py`: game-specific defaults and field preset rules.
 - `DESIGN.md`: rationale and product-level design rules.
 - `PRODUCT.md`: audience, purpose, anti-references, and strategic principles.
 

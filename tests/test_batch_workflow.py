@@ -40,15 +40,15 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual((mapped.x1, mapped.y1, mapped.x2, mapped.y2), (10, 40, 90, 60))
 
     def test_sample_template_enables_content_coordinates(self) -> None:
-        template = load_template(Path(".samples/megido_novel_template.json"))
+        template = load_template(Path(".samples/megido_novel_template.json"), expected_profile_id="megido_novel")
 
         settings = coordinate_settings_from_template(template)
 
         self.assertEqual(settings.coordinate_space, COORDINATE_SPACE_CONTENT)
         self.assertEqual(settings.source_content_rect, (0, 219, 1080, 2087))
 
-    def test_legacy_template_keeps_full_image_coordinates(self) -> None:
-        settings = coordinate_settings_from_template({"version": 4})
+    def test_missing_coordinate_settings_use_full_image_default(self) -> None:
+        settings = coordinate_settings_from_template({})
 
         self.assertEqual(settings.coordinate_space, COORDINATE_SPACE_IMAGE)
         self.assertIsNone(settings.source_content_rect)

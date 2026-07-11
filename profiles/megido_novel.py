@@ -1,12 +1,8 @@
 from __future__ import annotations
 
+from profiles.base import FieldPreset, OcrProfile
 
-PROFILE_ID = "megido_novel"
-PROFILE_NAME = "Megido novel screenshot"
-
-DEFAULT_BACKEND = "paddle"
-DEFAULT_LANG = "jpn+eng"
-DEFAULT_COORDINATE_SETTINGS = {
+COORDINATE_DEFAULTS = {
     "coordinate_space": "content",
     "black_threshold": 8,
     "min_nonblack_ratio": 0.01,
@@ -14,7 +10,7 @@ DEFAULT_COORDINATE_SETTINGS = {
     "aspect_ratio_tolerance": 0.08,
 }
 
-DEFAULT_FIELD_OCR = {
+FIELD_OCR_DEFAULTS = {
     "ocr_backend": "default",
     "ocr_preprocess": "default",
     "ocr_scale": "auto",
@@ -28,36 +24,35 @@ DEFAULT_FIELD_OCR = {
     "ocr_line_detect_gap": 10,
 }
 
-FIELD_OCR_PRESETS = {
-    "話者": {
-        **DEFAULT_FIELD_OCR,
-        "ocr_preprocess": "default",
-        "ocr_scale": "auto",
-        "ocr_threshold": 180,
-        "ocr_lang": "jpn",
-    },
-    "セリフ本文": {
-        **DEFAULT_FIELD_OCR,
-        "ocr_preprocess": "default",
-        "ocr_scale": "auto",
-        "ocr_threshold": 180,
-        "ocr_lang": "jpn",
-        "ocr_line_split": "detected",
-    },
-}
-
-
-def field_family(field_name: str) -> str:
-    if field_name.startswith("話者"):
-        return "話者"
-    if field_name.startswith("セリフ本文") or field_name.startswith("セリフ"):
-        return "セリフ本文"
-    return field_name
-
-
-def field_ocr_preset(field_name: str) -> dict:
-    return FIELD_OCR_PRESETS.get(field_family(field_name), DEFAULT_FIELD_OCR).copy()
-
-
-def has_field_ocr_preset(field_name: str) -> bool:
-    return field_family(field_name) in FIELD_OCR_PRESETS
+PROFILE = OcrProfile(
+    profile_id="megido_novel",
+    name="Megido novel screenshot",
+    app_title="Megido OCR to Excel",
+    default_backend="paddle",
+    default_lang="jpn+eng",
+    coordinate_defaults=COORDINATE_DEFAULTS,
+    default_field_ocr=FIELD_OCR_DEFAULTS,
+    field_presets=(
+        FieldPreset(
+            family="話者",
+            prefixes=("話者",),
+            ocr={
+                "ocr_preprocess": "default",
+                "ocr_scale": "auto",
+                "ocr_threshold": 180,
+                "ocr_lang": "jpn",
+            },
+        ),
+        FieldPreset(
+            family="セリフ本文",
+            prefixes=("セリフ本文", "セリフ"),
+            ocr={
+                "ocr_preprocess": "default",
+                "ocr_scale": "auto",
+                "ocr_threshold": 180,
+                "ocr_lang": "jpn",
+                "ocr_line_split": "detected",
+            },
+        ),
+    ),
+)

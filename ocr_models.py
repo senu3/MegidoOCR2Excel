@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 
 
-TEMPLATE_VERSION = 5
+TEMPLATE_VERSION = 1
 POSTPROCESS_OPTIONS = ["そのまま", "数字のみ", "数値抽出", "英数字のみ"]
 OCR_BACKEND_OPTIONS = ["default", "tesseract", "paddle"]
 OCR_PREPROCESS_OPTIONS = ["default", "gray", "threshold", "invert-threshold", "outline-threshold", "white-glyph"]
@@ -164,10 +164,7 @@ def field_from_dict(item: dict) -> TemplateField:
     if ocr_line_split not in OCR_LINE_SPLIT_OPTIONS:
         ocr_line_split = "none"
 
-    if "cell" in item:
-        name = str(item.get("name") or item.get("cell") or "項目")
-    else:
-        name = str(item["name"])
+    name = str(item["name"])
 
     return TemplateField(
         name,
@@ -198,8 +195,8 @@ def field_from_dict(item: dict) -> TemplateField:
 
 def correction_rule_from_dict(item: dict) -> CorrectionRule:
     return CorrectionRule(
-        str(item.get("pattern") or item.get("from") or ""),
-        str(item.get("replacement") or item.get("to") or ""),
+        str(item.get("pattern") or ""),
+        str(item.get("replacement") or ""),
         str(item.get("target") or CORRECTION_ALL_TARGET),
         bool(item.get("enabled", True)),
     ).normalized()

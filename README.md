@@ -79,7 +79,15 @@ uv run megido_ocr_excel_app.py
 
 ## 特化設定
 
-このアプリのゲーム特化設定は `profiles/megido_novel.py` に集約しています。通常UIでは範囲、項目名、項目順、後処理、Excel出力を調整し、OCR前処理や行分割などの詳細値はテンプレートJSONまたはプロファイル側で調整します。
+ゲーム固有設定は共通の `OcrProfile` モデルから分離して定義します。現在のゲーム向け設定は `profiles/megido_novel.py` にあり、アプリ本体とOCRエンジンはこのモジュールを直接参照しません。通常UIでは範囲、項目名、項目順、後処理、Excel出力を調整し、OCR前処理や行分割などの初期値はプロファイル側で定義します。
+
+別ゲームへ対応する場合は、次の単位でプロファイルを追加します。
+
+- ID、表示名、アプリ名
+- 既定OCRバックエンドと言語
+- 座標変換の既定値
+- 項目名の接頭辞と項目別OCRプリセット
+- `profiles/__init__.py` のレジストリ登録と `megido_app_config.py` の有効プロファイル指定
 
 プロファイルにはサンプル画像や `.samples` のパスは含めていません。共有しない検証用サンプルは、精度測定スクリプトの `--samples-dir` と `--template` で指定してください。
 
@@ -88,6 +96,7 @@ uv run megido_ocr_excel_app.py
 - `megido_ocr_excel_app.py`: CustomTkinter UI
 - `megido_ui_theme.py`: 黒紫ダークテーマ、寸法、主要文言
 - `profiles/megido_novel.py`: このゲーム向けの既定OCRバックエンド、言語、項目別OCRプリセット
+- `profiles/base.py`: ゲーム共通のプロファイルモデル
 - `ocr_models.py`: テンプレート項目モデル
 - `ocr_engine.py`: OCR、画像前処理、後処理、範囲スケーリング
 - `excel_exporter.py`: Excel出力、エラーシート生成
@@ -131,6 +140,14 @@ uv run megido_ocr_excel_app.py
 - 上部の前後ボタンで先頭・中央・末尾などの代表画像へ移動して再テスト
 - 選択項目ごとにOCR方式を調整し、設定変更後に再テスト
 - 認識テストの結果はプレビューであり、Excel出力時には対象画像を改めて一括OCR
+
+## テンプレート形式
+
+- リリース用の正式形式は `format: image-ocr-to-excel-template`, `version: 1`
+- 読み込み時に形式、バージョン、必須項目、対象プロファイルを検証
+- 現在のプロファイルと `profile_id` が異なるテンプレートは読み込まない
+- リリース前の旧バージョンや旧キー名に対する移行・互換読み込みは行わない
+- 今後形式を変更する場合は `version` を更新し、必要になった時点で明示的な移行処理を設計
 
 ## Excel出力タブ
 

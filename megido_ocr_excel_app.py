@@ -11,7 +11,7 @@ from PIL import Image, ImageTk
 
 from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_PENDING, STATUS_PROCESSING, STATUS_SUCCESS, ImageQueue, ImageQueueItem
 from excel_exporter import ExcelExporter, ExportResult, ExportSettings, validate_export_settings
-from megido_app_config import APP_TITLE, DEFAULT_BACKEND, DEFAULT_COORDINATE_SETTINGS, DEFAULT_LANG, IMAGE_EXTENSIONS, PROFILE_ID, natural_image_sort_key
+from megido_app_config import APP_PROFILE, APP_TITLE, IMAGE_EXTENSIONS, natural_image_sort_key
 from megido_ui_theme import THEME
 from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, detect_content_rect, detect_line_bands, detect_tesseract, fill_missing_field_source_size, scaled_field
 from ocr_models import (
@@ -26,7 +26,7 @@ from ocr_models import (
     CorrectionRule,
     TemplateField,
 )
-from profiles.megido_novel import field_ocr_preset, has_field_ocr_preset
+from profiles.base import OcrProfile
 from template_store import build_template_data, coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, save_template
 
 
@@ -69,9 +69,10 @@ ICON_EXCEL = "▦"
 
 
 class ImageOcrExcelApp:
-    def __init__(self, root: ctk.CTk) -> None:
+    def __init__(self, root: ctk.CTk, profile: OcrProfile = APP_PROFILE) -> None:
         self.root = root
-        self.root.title(APP_TITLE)
+        self.profile = profile
+        self.root.title(self.profile.app_title)
         self.root.geometry(THEME.layout.window_size)
         self.root.minsize(*THEME.layout.min_window_size)
         self.root.option_add("*Font", f"{UI_FONT_FAMILY} 10")
@@ -91,7 +92,7 @@ class ImageOcrExcelApp:
         self.preview_cache_key: tuple[int, float] | None = None
         self.image_item: int | None = None
         self.zoom = 1.0
-        self.coordinate_settings = CoordinateSettings(**DEFAULT_COORDINATE_SETTINGS).normalized()
+        self.coordinate_settings = self.profile.coordinate_settings()
         self.current_content_rect: tuple[int, int, int, int] | None = None
 
         self.fields: list[TemplateField] = []
@@ -132,9 +133,9 @@ class ImageOcrExcelApp:
         self.status_var = StringVar(value=THEME.copy.initial_status)
         self.progress_var = StringVar(value="")
         self.loading_var = StringVar(value="")
-        self.lang_var = StringVar(value=DEFAULT_LANG)
-        self.lang_display_var = StringVar(value=self._lang_display(DEFAULT_LANG))
-        self.backend_var = StringVar(value=DEFAULT_BACKEND)
+        self.lang_var = StringVar(value=self.profile.default_lang)
+        self.lang_display_var = StringVar(value=self._lang_display(self.profile.default_lang))
+        self.backend_var = StringVar(value=self.profile.default_backend)
         self.tesseract_var = StringVar(value=detect_tesseract())
         self.export_sheet_var = StringVar(value="OCR")
         self.export_write_mode_var = StringVar(value="上書き")
@@ -377,7 +378,7 @@ class ImageOcrExcelApp:
 
     def _update_dirty_indicators(self) -> None:
         suffix = " *" if self.dirty else ""
-        self.root.title(f"{APP_TITLE}{suffix}")
+        self.root.title(f"{self.profile.app_title}{suffix}")
         template_name = self.template_path.name if self.template_path else "未保存"
         self.template_var.set(f"{template_name}{suffix}")
 
@@ -1206,7 +1207,7 @@ class ImageOcrExcelApp:
             correction_rules=self.correction_rules,
             coordinate_settings=self.coordinate_settings,
             template_name=path.stem,
-            profile_id=PROFILE_ID,
+            profile_id=self.profile.profile_id,
         )
         try:
             save_template(path, data)
@@ -1231,7 +1232,7 @@ class ImageOcrExcelApp:
             return
         path = Path(file_name)
         try:
-            data = load_template(path)
+            data = load_template(path, expected_profile_id=self.profile.profile_id)
             fields = fields_from_template(data)
         except Exception as exc:
             messagebox.showerror("テンプレートエラー", f"テンプレートを読み込めませんでした。\n{exc}")
@@ -1251,10 +1252,10 @@ class ImageOcrExcelApp:
             self.selected_index = 0
             self.undo_action = None
             self.template_path = path
-            self.lang_var.set(data.get("lang") or DEFAULT_LANG)
+            self.lang_var.set(data.get("lang") or self.profile.default_lang)
             self.lang_display_var.set(self._lang_display(self.lang_var.get()))
-            backend = str(data.get("ocr_backend") or DEFAULT_BACKEND)
-            self.backend_var.set(backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else DEFAULT_BACKEND)
+            backend = str(data.get("ocr_backend") or self.profile.default_backend)
+            self.backend_var.set(backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else self.profile.default_backend)
             self._apply_output_settings(data.get("output_settings") or {})
             if data.get("tesseract_path"):
                 self.tesseract_var.set(data["tesseract_path"])
@@ -1315,7 +1316,7 @@ class ImageOcrExcelApp:
         ctk.CTkButton(buttons, text="保存", command=lambda: self._apply_settings(window, dialog_lang_display.get(), dialog_backend.get(), dialog_tesseract.get()), height=THEME.layout.row_button_height, font=UI_FONT, fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
     def _apply_settings(self, window: ctk.CTkToplevel, lang_display: str, backend: str, tesseract_path: str) -> None:
-        backend = backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else DEFAULT_BACKEND
+        backend = backend if backend in OCR_BACKEND_OPTIONS and backend != "default" else self.profile.default_backend
         lang = self._lang_value(lang_display)
         changed = (lang, backend, tesseract_path) != (self.lang_var.get(), self.backend_var.get(), self.tesseract_var.get())
         with self._without_dirty_tracking():
@@ -1526,9 +1527,9 @@ class ImageOcrExcelApp:
 
     def _apply_profile_preset_after_rename(self, idx: int, previous_name: str) -> bool:
         field = self.fields[idx]
-        if not previous_name.startswith("項目") or not has_field_ocr_preset(field.name):
+        if not previous_name.startswith("項目") or not self.profile.has_field_ocr_preset(field.name):
             return False
-        preset = field_ocr_preset(field.name)
+        preset = self.profile.field_ocr_preset(field.name)
         for key, value in preset.items():
             setattr(field, key, value)
         return True
@@ -2755,7 +2756,7 @@ class ImageOcrExcelApp:
             "jpn": "日本語のみ",
             "eng": "English のみ",
         }
-        return labels.get(value, value or self._lang_display(DEFAULT_LANG))
+        return labels.get(value, value or self._lang_display(self.profile.default_lang))
 
     def _lang_value(self, display: str) -> str:
         values = {
@@ -2763,7 +2764,7 @@ class ImageOcrExcelApp:
             "日本語のみ": "jpn",
             "English のみ": "eng",
         }
-        return values.get(display, display or DEFAULT_LANG)
+        return values.get(display, display or self.profile.default_lang)
 
 def main() -> None:
     root = ctk.CTk()

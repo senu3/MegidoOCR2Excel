@@ -15,9 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ocr_engine import DEFAULT_LANG, OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
+from megido_app_config import APP_PROFILE
+from ocr_engine import OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
 from ocr_models import OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, TemplateField
-from profiles.megido_novel import DEFAULT_BACKEND
 from template_store import coordinate_settings_from_template, fields_from_template, load_template
 
 try:
@@ -55,7 +55,7 @@ def build_parser(
     parser.add_argument("--template", type=Path, default=ROOT / ".samples" / "megido_novel_template.json")
     parser.add_argument("--field", default=field_name)
     parser.add_argument("--lang", default=default_lang)
-    parser.add_argument("--backend", choices=["tesseract", "paddle"], default=DEFAULT_BACKEND)
+    parser.add_argument("--backend", choices=["tesseract", "paddle"], default=APP_PROFILE.default_backend)
     parser.add_argument("--tesseract", default="")
     parser.add_argument("--tessdata-dir", type=Path, default=None)
     parser.add_argument("--psm", type=int, default=default_psm)
@@ -109,7 +109,7 @@ def run_accuracy(
         print("pytesseract がインストールされていません。", file=sys.stderr)
         return 2
 
-    template = load_template(args.template)
+    template = load_template(args.template, expected_profile_id=APP_PROFILE.profile_id)
     args.coordinate_settings = coordinate_settings_from_template(template)
     fields = fields_from_template(template)
     field = find_field(fields, args.field)
@@ -122,7 +122,7 @@ def run_accuracy(
     if args.backend == "tesseract" and tesseract:
         pytesseract.pytesseract.tesseract_cmd = tesseract
 
-    lang = args.lang or str(template.get("lang") or "") or DEFAULT_LANG
+    lang = args.lang or str(template.get("lang") or "") or APP_PROFILE.default_lang
     args.lang = lang
     pairs = sample_pairs(args.samples_dir, args.limit)
     if not pairs:
@@ -196,7 +196,7 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, 
         prepared.save(args.save_crops / f"{image_path.stem}_{field.name}.png")
 
     try:
-        raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or DEFAULT_LANG, config=ocr_config(args))
+        raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or APP_PROFILE.default_lang, config=ocr_config(args))
     except pytesseract.TesseractNotFoundError:
         return "", "Tesseractが見つかりません。"
     except pytesseract.TesseractError as exc:
@@ -242,7 +242,7 @@ def recognize_lines(crop: Image.Image, field: TemplateField, args: argparse.Name
         if args.save_crops:
             prepared.save(args.save_crops / f"{image_stem}_{field.name}_line{index + 1}.png")
         try:
-            raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or DEFAULT_LANG, config=ocr_config(args))
+            raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or APP_PROFILE.default_lang, config=ocr_config(args))
         except pytesseract.TesseractNotFoundError:
             return "", "Tesseractが見つかりません。"
         except pytesseract.TesseractError as exc:
@@ -345,7 +345,7 @@ def print_report(field_name: str, args: argparse.Namespace, rows: list[AccuracyR
         line_split += f" line_padding={args.line_padding}"
     if args.line_split == "detected":
         line_split += f" line_detect_threshold={args.line_detect_threshold} line_detect_min_ratio={args.line_detect_min_ratio} line_detect_gap={args.line_detect_gap}"
-    print(f"settings: backend={args.backend} preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or DEFAULT_LANG}{tessdata}{line_split}")
+    print(f"settings: backend={args.backend} preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or APP_PROFILE.default_lang}{tessdata}{line_split}")
     if args.match_space_normalized:
         print(f"samples: {len(rows)}  avg_similarity: {avg:.3f}  {match_label}: {matched}/{len(rows)}  exact_match: {exact}/{len(rows)}")
     else:

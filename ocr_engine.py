@@ -27,8 +27,8 @@ else:
         pass
 
 
-DEFAULT_LANG = "jpn+eng"
-DEFAULT_BACKEND = "paddle"
+FALLBACK_LANG = "eng"
+FALLBACK_BACKEND = "tesseract"
 
 
 def detect_tesseract() -> str:
@@ -301,11 +301,11 @@ def apply_correction_rules(text: str, field: TemplateField, correction_rules: li
     return value
 
 
-def resolve_backend(field: TemplateField, backend: str = DEFAULT_BACKEND) -> str:
+def resolve_backend(field: TemplateField, backend: str = FALLBACK_BACKEND) -> str:
     field_backend = getattr(field, "ocr_backend", "default") or "default"
     if field_backend != "default":
         return field_backend
-    return backend if backend in {"tesseract", "paddle"} else DEFAULT_BACKEND
+    return backend if backend in {"tesseract", "paddle"} else FALLBACK_BACKEND
 
 
 def paddle_lang(lang: str) -> str:
@@ -500,9 +500,9 @@ class OcrEngine:
         self,
         image: Image.Image,
         field: TemplateField,
-        lang: str = DEFAULT_LANG,
+        lang: str = FALLBACK_LANG,
         tesseract_path: str = "",
-        backend: str = DEFAULT_BACKEND,
+        backend: str = FALLBACK_BACKEND,
         correction_rules: list[CorrectionRule] | None = None,
         coordinate_settings: CoordinateSettings | None = None,
     ) -> tuple[str | None, str | None, str | None]:
@@ -519,7 +519,7 @@ class OcrEngine:
             return None, None, "読み取り範囲が画像外、または小さすぎます。"
 
         crop = image.crop((region.x1, region.y1, region.x2, region.y2))
-        ocr_lang = field.ocr_lang.strip() or lang.strip() or DEFAULT_LANG
+        ocr_lang = field.ocr_lang.strip() or lang.strip() or FALLBACK_LANG
         psm = field.ocr_psm or 6
         config = f"--oem 3 --psm {psm}"
         try:
@@ -581,9 +581,9 @@ class OcrEngine:
         self,
         image: Image.Image,
         field: TemplateField,
-        lang: str = DEFAULT_LANG,
+        lang: str = FALLBACK_LANG,
         tesseract_path: str = "",
-        backend: str = DEFAULT_BACKEND,
+        backend: str = FALLBACK_BACKEND,
         correction_rules: list[CorrectionRule] | None = None,
         coordinate_settings: CoordinateSettings | None = None,
     ) -> tuple[str | None, str | None]:

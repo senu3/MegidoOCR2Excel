@@ -3,10 +3,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from profiles.megido_novel import DEFAULT_BACKEND, DEFAULT_COORDINATE_SETTINGS, DEFAULT_LANG, PROFILE_ID, PROFILE_NAME
+from profiles import get_profile
 
 
-APP_TITLE = "Megido OCR to Excel"
+APP_PROFILE = get_profile("megido_novel")
+APP_TITLE = APP_PROFILE.app_title
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
 
 
