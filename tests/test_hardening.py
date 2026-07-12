@@ -6,10 +6,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import customtkinter as ctk
+from PIL import Image
 
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
-from megido_ocr_excel_app import APP_TITLE, AutoHideScrollableFrame, ImageOcrExcelApp
+from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, AutoHideScrollableFrame, ImageOcrExcelApp
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, TemplateField
 
 
@@ -120,6 +121,41 @@ class WorkflowChoiceTests(unittest.TestCase):
         self.assertFalse(app.auto_detection_enabled)
         self.assertEqual(app.fields, [])
         app.open_image_folder.assert_called_once()
+
+    def test_supplement_candidate_panel_renders_and_does_not_dirty_the_app(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        closed = False
+        try:
+            app.original_image = Image.open(".samples/e.png").convert("RGB")
+            app.fields = [
+                TemplateField(
+                    "補助テキスト候補",
+                    154,
+                    1084,
+                    870,
+                    1208,
+                    pair_id=0,
+                    dialogue_role="",
+                    ocr_line_split="detected",
+                )
+            ]
+            app.current_results = ["候補結果"]
+            app.current_raw_results = ["候補結果"]
+            app.selected_index = 0
+            app.mode_var.set(MODE_REVIEW)
+
+            app._render_side_body()
+            app.select_review_field(0)
+
+            self.assertTrue(app.side_body.winfo_children())
+            self.assertFalse(app.dirty)
+            app.request_close()
+            closed = True
+        finally:
+            if not closed:
+                root.destroy()
 
 
 class DirtyStateTests(unittest.TestCase):

@@ -1256,7 +1256,6 @@ class ImageOcrExcelApp:
                 font=UI_FONT_SMALL,
                 fg_color=THEME.palette.success if approved else COLOR_PRIMARY,
                 hover_color=COLOR_PRIMARY_HOVER,
-                disabled_fg_color=THEME.palette.success,
                 text_color=THEME.palette.on_color,
             ).grid(
                 row=3,
