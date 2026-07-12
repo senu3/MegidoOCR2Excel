@@ -242,6 +242,17 @@ class FieldNameInteractionTests(unittest.TestCase):
             0, update_review_detail=True
         )
 
+    def test_supplement_candidate_can_be_approved_as_the_next_dialogue(self) -> None:
+        app = self._logic_only_app()
+        app.supplement_candidates_approved = False
+        app.current_detection_reason = ""
+
+        app.approve_supplement_candidate()
+
+        self.assertTrue(app.supplement_candidates_approved)
+        self.assertIn("次の会話", app.current_detection_reason)
+        app._render_side_body.assert_called_once()
+
     def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
         app = self._logic_only_app()
         app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR

@@ -32,7 +32,10 @@ from batch_queue import (
     ImageQueue,
     ImageQueueItem,
 )
-from dialogue_log_detector import detect_complete_dialogue_pairs
+from dialogue_log_detector import (
+    approve_supplement_candidates,
+    detect_complete_dialogue_pairs,
+)
 from excel_exporter import (
     ExcelExporter,
     ExportResult,
@@ -184,6 +187,7 @@ class ImageOcrExcelApp:
         self.auto_detection_base_fields: list[TemplateField] = []
         self.current_detection_layout = ""
         self.current_detection_reason = ""
+        self.supplement_candidates_approved = False
 
         self.original_image: Image.Image | None = None
         self.preview_image: ImageTk.PhotoImage | None = None
@@ -1140,6 +1144,9 @@ class ImageOcrExcelApp:
             fg_color=(
                 COLOR_PRIMARY
                 if selected
+                else THEME.palette.success
+                if self._is_review_candidate(field)
+                and self.supplement_candidates_approved
                 else THEME.palette.warning
                 if self._is_review_candidate(field)
                 else COLOR_SECONDARY
@@ -1223,6 +1230,32 @@ class ImageOcrExcelApp:
             border_width=1,
             border_color=COLOR_BORDER,
         ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
+        if self._is_review_candidate(self.fields[idx]):
+            approved = self.supplement_candidates_approved
+            ctk.CTkButton(
+                panel,
+                text=(
+                    "次の会話として承認済み"
+                    if approved
+                    else "同じ話者の次の会話として承認"
+                ),
+                command=self.approve_supplement_candidate,
+                state="disabled" if approved else "normal",
+                height=THEME.layout.entry_height,
+                corner_radius=THEME.layout.control_radius,
+                font=UI_FONT_SMALL,
+                fg_color=THEME.palette.success if approved else COLOR_PRIMARY,
+                hover_color=COLOR_PRIMARY_HOVER,
+                disabled_fg_color=THEME.palette.success,
+                text_color=THEME.palette.on_color,
+            ).grid(
+                row=3,
+                column=0,
+                columnspan=2,
+                sticky="ew",
+                padx=12,
+                pady=(0, 12),
+            )
 
     def _result_preview(self, parent) -> None:
         preview = ctk.CTkFrame(
@@ -1628,13 +1661,24 @@ class ImageOcrExcelApp:
     def _postprocess_summary(self, field: TemplateField) -> str:
         parts = [self._line_split_display(field.ocr_line_split)]
         if self._is_review_candidate(field):
-            parts.insert(0, "要確認")
+            parts.insert(
+                0,
+                "承認済み" if self.supplement_candidates_approved else "要確認",
+            )
         if self._has_legacy_postprocess(field):
             parts.append("補正あり")
         return " / ".join(parts)
 
     def _is_review_candidate(self, field: TemplateField) -> bool:
         return field.name == "補助テキスト候補" and field.pair_id == 0
+
+    def approve_supplement_candidate(self) -> None:
+        self.supplement_candidates_approved = True
+        self.current_detection_reason = (
+            "補助テキスト候補を承認しました。同じ話者の次の会話として出力します。"
+        )
+        self.status_var.set(self.current_detection_reason)
+        self._render_side_body()
 
     def _has_legacy_postprocess(self, field: TemplateField) -> bool:
         return bool(
@@ -2561,6 +2605,7 @@ class ImageOcrExcelApp:
     def start_auto_detection_workflow(self) -> None:
         self.workflow_started = True
         self.auto_detection_enabled = True
+        self.supplement_candidates_approved = False
         speaker = TemplateField(
             "話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
         )
@@ -2742,7 +2787,11 @@ class ImageOcrExcelApp:
             self.profile.dialogue_log_detection,
         )
         self.current_detection_layout = detection.layout
-        self.current_detection_reason = detection.review_reason
+        self.current_detection_reason = (
+            "補助テキスト候補は承認済みです。同じ話者の次の会話として出力します。"
+            if detection.candidate_fields and self.supplement_candidates_approved
+            else detection.review_reason
+        )
         if not detection.groups:
             self.fields = prototypes
             self.selected_index = None
@@ -3164,6 +3213,9 @@ class ImageOcrExcelApp:
                 fg_color=(
                     COLOR_PRIMARY
                     if idx == self.selected_index
+                    else THEME.palette.success
+                    if self._is_review_candidate(self.fields[idx])
+                    and self.supplement_candidates_approved
                     else THEME.palette.warning
                     if self._is_review_candidate(self.fields[idx])
                     else COLOR_SECONDARY
@@ -5037,6 +5089,7 @@ class ImageOcrExcelApp:
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
+        supplement_candidates_approved = self.supplement_candidates_approved
         export_signature = self._export_structure_signature(export_fields, settings)
         self._clear_retry_context()
         self.image_queue.prepare(image_files)
@@ -5073,11 +5126,22 @@ class ImageOcrExcelApp:
                 update_progress,
                 dialogue_pair_resolver=(
                     (
-                        lambda image, detection_fields: detect_complete_dialogue_pairs(
-                            image,
-                            detection_fields,
-                            coordinate_settings,
-                            dialogue_detection,
+                        lambda image, detection_fields: (
+                            approve_supplement_candidates(
+                                detect_complete_dialogue_pairs(
+                                    image,
+                                    detection_fields,
+                                    coordinate_settings,
+                                    dialogue_detection,
+                                )
+                            )
+                            if supplement_candidates_approved
+                            else detect_complete_dialogue_pairs(
+                                image,
+                                detection_fields,
+                                coordinate_settings,
+                                dialogue_detection,
+                            )
                         )
                     )
                     if dialogue_detection is not None
@@ -5177,6 +5241,7 @@ class ImageOcrExcelApp:
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
+        supplement_candidates_approved = self.supplement_candidates_approved
         total = len(retry_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set(f"失敗した {total} 画像を再実行します。")
@@ -5213,11 +5278,22 @@ class ImageOcrExcelApp:
                 progress_callback=update_progress,
                 dialogue_pair_resolver=(
                     (
-                        lambda image, detection_fields: detect_complete_dialogue_pairs(
-                            image,
-                            detection_fields,
-                            coordinate_settings,
-                            dialogue_detection,
+                        lambda image, detection_fields: (
+                            approve_supplement_candidates(
+                                detect_complete_dialogue_pairs(
+                                    image,
+                                    detection_fields,
+                                    coordinate_settings,
+                                    dialogue_detection,
+                                )
+                            )
+                            if supplement_candidates_approved
+                            else detect_complete_dialogue_pairs(
+                                image,
+                                detection_fields,
+                                coordinate_settings,
+                                dialogue_detection,
+                            )
                         )
                     )
                     if dialogue_detection is not None

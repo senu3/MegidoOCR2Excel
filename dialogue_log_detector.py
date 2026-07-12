@@ -42,6 +42,44 @@ class DialoguePairDetectionResult:
         return messages
 
 
+def approve_supplement_candidates(
+    result: DialoguePairDetectionResult,
+) -> DialoguePairDetectionResult:
+    if not result.candidate_fields:
+        return result
+    approved_groups: list[tuple[int, TemplateField, TemplateField]] = []
+    next_pair_id = 1
+    for group_index, (_pair_id, speaker, dialogue) in enumerate(result.groups):
+        approved_groups.append(
+            (
+                next_pair_id,
+                replace(speaker, pair_id=next_pair_id),
+                replace(dialogue, pair_id=next_pair_id),
+            )
+        )
+        next_pair_id += 1
+        if group_index == 0:
+            for candidate in result.candidate_fields:
+                approved_groups.append(
+                    (
+                        next_pair_id,
+                        replace(speaker, pair_id=next_pair_id),
+                        replace(
+                            candidate,
+                            pair_id=next_pair_id,
+                            dialogue_role="dialogue",
+                        ),
+                    )
+                )
+                next_pair_id += 1
+    return replace(
+        result,
+        groups=approved_groups,
+        layout="supplement",
+        review_reason="",
+    )
+
+
 def detect_complete_dialogue_pairs(
     image: Image.Image,
     fields: list[TemplateField],

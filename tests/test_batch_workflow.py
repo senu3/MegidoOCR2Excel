@@ -9,7 +9,7 @@ from openpyxl import load_workbook
 from PIL import Image
 
 from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
-from dialogue_log_detector import detect_complete_dialogue_pairs
+from dialogue_log_detector import approve_supplement_candidates, detect_complete_dialogue_pairs
 from excel_exporter import ExcelExporter, ExportSettings
 from megido_app_config import natural_image_sort_key
 from ocr_engine import detect_content_rect, scaled_field
@@ -200,6 +200,42 @@ class BatchWorkflowTests(unittest.TestCase):
 
         self.assertEqual(result.layout, "log")
         self.assertEqual(len(result.groups), 5)
+
+    def test_approved_supplement_is_written_as_the_same_speakers_next_dialogue(self) -> None:
+        fields = [
+            TemplateField("話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+            TemplateField("セリフ本文", 0, 0, 1, 1, ocr_line_split="detected", pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+        ]
+        settings = PROFILE.coordinate_settings()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "supplement.xlsx"
+            result = ExcelExporter().export(
+                output,
+                [Path(".samples/e.png")],
+                fields,
+                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                lambda _image, field: (field.name, None),
+                dialogue_pair_resolver=lambda image, detection_fields: approve_supplement_candidates(
+                    detect_complete_dialogue_pairs(
+                        image,
+                        detection_fields,
+                        settings,
+                        PROFILE.dialogue_log_detection,
+                    )
+                ),
+            )
+            sheet = load_workbook(output)["OCR"]
+
+            self.assertEqual(result.errors, [])
+            self.assertEqual(result.records[0].row_count, 2)
+            self.assertEqual(
+                [sheet.cell(2, column).value for column in range(2, 5)],
+                ["1", "話者", "セリフ本文"],
+            )
+            self.assertEqual(
+                [sheet.cell(3, column).value for column in range(2, 5)],
+                ["2", "話者", "補助テキスト候補"],
+            )
 
     def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:
         template = load_template(
