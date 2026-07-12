@@ -48,6 +48,10 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(b2.skipped_leading, 1)
         self.assertEqual(b2.skipped_trailing, 0)
         self.assertGreater(b2.groups[0][1].y1, b1.groups[0][1].y1)
+        self.assertLess(b1.groups[0][1].y1, 375)
+        self.assertGreater(b1.groups[0][1].y2, 409)
+        self.assertGreater(b1.groups[0][1].x2 - b1.groups[0][1].x1, 200)
+        self.assertGreater(b1.groups[0][2].x2 - b1.groups[0][2].x1, 700)
 
     def test_dynamic_log_export_writes_only_complete_pairs_and_notices(self) -> None:
         template = load_template(
@@ -78,6 +82,58 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual([record.row_count for record in result.records], [5, 5])
             self.assertEqual(len(result.notices), 2)
             self.assertIn("Notices", load_workbook(output).sheetnames)
+
+    def test_mixed_normal_speakerless_narration_and_log_images_export_together(self) -> None:
+        fields = [
+            TemplateField(
+                "話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
+            ),
+            TemplateField(
+                "セリフ本文",
+                0,
+                0,
+                1,
+                1,
+                ocr_line_split="detected",
+                pair_id=1,
+                dialogue_role=DIALOGUE_ROLE_TEXT,
+            ),
+        ]
+        coordinate_settings = PROFILE.coordinate_settings()
+        assert PROFILE.dialogue_log_detection is not None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "mixed.xlsx"
+            result = ExcelExporter().export(
+                output,
+                [
+                    Path(".samples/9.png"),
+                    Path(".samples/c.png"),
+                    Path(".samples/d.png"),
+                    Path(".samples/b1.png"),
+                ],
+                fields,
+                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                lambda _image, field: (
+                    (
+                        ""
+                        if field.dialogue_role == DIALOGUE_ROLE_SPEAKER
+                        and field.x2 - field.x1 <= 1
+                        else "話者"
+                        if field.dialogue_role == DIALOGUE_ROLE_SPEAKER
+                        else "本文"
+                    ),
+                    None,
+                ),
+                dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
+                    image,
+                    detection_fields,
+                    coordinate_settings,
+                    PROFILE.dialogue_log_detection,
+                ),
+            )
+
+            self.assertEqual([record.row_count for record in result.records], [1, 1, 1, 5])
+            self.assertEqual(result.errors, [])
 
     def test_single_screen_patterns_are_classified_safely(self) -> None:
         template = load_template(

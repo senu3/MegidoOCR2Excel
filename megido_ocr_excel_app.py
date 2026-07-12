@@ -1049,14 +1049,15 @@ class ImageOcrExcelApp:
         body = ctk.CTkFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
         body.pack(fill=BOTH, expand=True)
 
-        scroller = ctk.CTkFrame(
+        scroller = AutoHideScrollableFrame(
             body,
+            height=220,
             corner_radius=THEME.layout.panel_radius,
             fg_color=COLOR_SURFACE_ALT,
             border_width=1,
             border_color=COLOR_BORDER,
         )
-        scroller.pack(side=TOP, fill="x", padx=16, pady=(2, 10))
+        scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(2, 10))
         if not self.fields:
             self._empty_state(
                 scroller, "テンプレートがありません", "先に読み取り項目を作成"
@@ -1074,7 +1075,7 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
             wraplength=350,
-        ).pack(fill="x", padx=18, pady=(0, 8), before=scroller)
+        ).pack(fill="x", padx=18, pady=(0, 8), before=scroller._parent_frame)
 
         ctk.CTkButton(
             body,
@@ -1086,7 +1087,7 @@ class ImageOcrExcelApp:
             font=UI_FONT_BOLD,
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
-        ).pack(fill="x", padx=16, pady=(0, 10), before=scroller)
+        ).pack(fill="x", padx=16, pady=(0, 10), before=scroller._parent_frame)
 
         self._ensure_result_buffers()
         self._ensure_review_selection()
@@ -1099,7 +1100,7 @@ class ImageOcrExcelApp:
         self.review_detail_host = ctk.CTkFrame(
             body, corner_radius=0, fg_color=COLOR_SURFACE
         )
-        self.review_detail_host.pack(fill="x")
+        self.review_detail_host.pack(side=BOTTOM, fill="x")
         self._render_postprocess_panel(self.review_detail_host)
 
     def _recognition_test_help_text(self) -> str:
@@ -4811,7 +4812,6 @@ class ImageOcrExcelApp:
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
-        dialogue_detection = self.profile.dialogue_log_detection
 
         def work() -> tuple[list[str], list[str]]:
             raw_results = [""] * len(fields)
@@ -5016,6 +5016,7 @@ class ImageOcrExcelApp:
         tesseract_path = self.tesseract_var.get().strip()
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
+        dialogue_detection = self.profile.dialogue_log_detection
         export_signature = self._export_structure_signature(export_fields, settings)
         self._clear_retry_context()
         self.image_queue.prepare(image_files)

@@ -109,18 +109,25 @@ def detect_complete_dialogue_pairs(
         dialogue_prototype, image, coordinate_settings, content_rect
     )
     groups: list[tuple[int, TemplateField, TemplateField]] = []
+    speaker_padding = max(
+        2, round(content_height * config.speaker_vertical_padding_ratio)
+    )
     for pair_id, (anchor_top, anchor_bottom) in enumerate(complete, start=1):
         pair_bottom = min(image.height, anchor_top + pair_height)
         speaker = replace(
             speaker_base,
-            y1=max(0, anchor_top),
-            y2=min(image.height, anchor_bottom + 1),
+            x1=round(left + content_width * config.log_speaker_x1_ratio),
+            x2=round(left + content_width * config.log_speaker_x2_ratio),
+            y1=max(0, anchor_top - speaker_padding),
+            y2=min(image.height, anchor_bottom + 1 + speaker_padding),
             source_width=0,
             source_height=0,
             pair_id=pair_id,
         )
         dialogue = replace(
             dialogue_base,
+            x1=round(left + content_width * config.log_dialogue_x1_ratio),
+            x2=round(left + content_width * config.log_dialogue_x2_ratio),
             y1=min(pair_bottom, anchor_bottom + 1),
             y2=pair_bottom,
             source_width=0,
@@ -192,8 +199,17 @@ def _detect_single_screen(
             speaker_base,
             x1=round(left + width * config.normal_speaker_x1_ratio),
             x2=round(left + width * config.normal_speaker_x2_ratio),
-            y1=anchor_top,
-            y2=anchor_bottom + 1,
+            y1=max(
+                0,
+                anchor_top
+                - max(2, round(height * config.speaker_vertical_padding_ratio)),
+            ),
+            y2=min(
+                image.height,
+                anchor_bottom
+                + 1
+                + max(2, round(height * config.speaker_vertical_padding_ratio)),
+            ),
             source_width=0,
             source_height=0,
             pair_id=1,
@@ -208,7 +224,10 @@ def _detect_single_screen(
             source_height=0,
             pair_id=1,
         )
-        speakerless = not _bar_has_text(image, speaker)
+        speakerless = not _bar_has_text(
+            image,
+            replace(speaker, y1=anchor_top, y2=anchor_bottom + 1),
+        )
         blank_dialogue = not _region_has_bright_or_dark_text(image, dialogue)
         return DialoguePairDetectionResult(
             [(1, speaker, dialogue)],
