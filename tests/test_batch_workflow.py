@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -174,11 +175,29 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(speakerless.layout, "speakerless")
         self.assertTrue(speakerless.allow_empty_speaker)
         self.assertTrue(speakerless.allow_empty_dialogue)
+        self.assertTrue(speakerless.groups[0][2].known_empty)
         self.assertEqual(narration.layout, "narration")
         self.assertTrue(narration.allow_empty_speaker)
         self.assertEqual(supplement.layout, "needs_review")
         self.assertEqual(len(supplement.groups), 1)
         self.assertIn("補助テキスト", supplement.review_reason)
+
+    def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
+        fields = [
+            TemplateField("話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+            TemplateField("セリフ本文", 0, 0, 1, 1, ocr_line_split="detected", pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+        ]
+        settings = PROFILE.coordinate_settings()
+        settings = replace(settings, source_content_rect=(0, 219, 1080, 2087))
+        result = detect_complete_dialogue_pairs(
+            Image.open(".samples/b2.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(result.layout, "log")
+        self.assertEqual(len(result.groups), 5)
 
     def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:
         template = load_template(

@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 import warnings
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -146,30 +147,14 @@ def scaled_field(
         y2 = round(region.y2 * scale_y)
     x1, x2 = sorted((max(0, min(target_width, x1)), max(0, min(target_width, x2))))
     y1, y2 = sorted((max(0, min(target_height, y1)), max(0, min(target_height, y2))))
-    return TemplateField(
-        region.name,
-        x1,
-        y1,
-        x2,
-        y2,
-        region.enabled,
-        target_width,
-        target_height,
-        region.postprocess,
-        region.replace_from,
-        region.replace_to,
-        region.remove_text,
-        region.ocr_backend,
-        region.ocr_preprocess,
-        region.ocr_scale,
-        region.ocr_threshold,
-        region.ocr_psm,
-        region.ocr_lang,
-        region.ocr_line_split,
-        region.ocr_line_padding,
-        region.ocr_line_detect_threshold,
-        region.ocr_line_detect_min_ratio,
-        region.ocr_line_detect_gap,
+    return replace(
+        region,
+        x1=x1,
+        y1=y1,
+        x2=x2,
+        y2=y2,
+        source_width=target_width,
+        source_height=target_height,
     )
 
 
@@ -549,6 +534,8 @@ class OcrEngine:
             return None, None, "読み取り範囲が画像外、または小さすぎます。"
 
         crop = image.crop((region.x1, region.y1, region.x2, region.y2))
+        if region.known_empty:
+            return "", "", None
         ocr_lang = field.ocr_lang.strip() or lang.strip() or FALLBACK_LANG
         psm = field.ocr_psm or 6
         config = f"--oem 3 --psm {psm}"

@@ -144,6 +144,7 @@ class TemplateField:
     ocr_line_detect_gap: int = 10
     pair_id: int = 0
     dialogue_role: str = ""
+    known_empty: bool = False
 
     def normalized(self) -> "TemplateField":
         x1, x2 = sorted((self.x1, self.x2))
@@ -174,6 +175,7 @@ class TemplateField:
             self.ocr_line_detect_gap,
             max(0, int(self.pair_id)),
             self.dialogue_role if self.dialogue_role in DIALOGUE_ROLE_OPTIONS else "",
+            bool(self.known_empty),
         )
 
     def to_dict(self) -> dict:
@@ -225,6 +227,7 @@ def field_from_dict(item: dict) -> TemplateField:
         int(item.get("ocr_line_detect_gap") or 10),
         int(item.get("pair_id") or 0),
         str(item.get("dialogue_role") or ""),
+        bool(item.get("known_empty", False)),
     ).normalized()
 
 

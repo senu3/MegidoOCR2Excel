@@ -224,6 +224,8 @@ def _detect_single_screen(
             replace(speaker, y1=anchor_top, y2=anchor_bottom + 1),
         )
         blank_dialogue = not _region_has_bright_or_dark_text(image, dialogue)
+        if speakerless and blank_dialogue:
+            dialogue = replace(dialogue, known_empty=True)
         return DialoguePairDetectionResult(
             [(1, speaker, dialogue)],
             layout="needs_review" if supplement_candidate else ("speakerless" if speakerless else "normal"),
@@ -272,10 +274,13 @@ def _target_content_rect(
     fields: list[TemplateField],
     settings: CoordinateSettings,
 ) -> tuple[int, int, int, int]:
-    detected = detect_content_rect(image, settings)
+    normalized = settings.normalized()
+    if normalized.coordinate_space != "content":
+        return (0, 0, image.width, image.height)
+    detected = detect_content_rect(image, normalized)
     if detected is not None:
         return detected
-    source = settings.normalized().source_content_rect
+    source = normalized.source_content_rect
     source_width = next((field.source_width for field in fields if field.source_width), 0)
     source_height = next((field.source_height for field in fields if field.source_height), 0)
     if source and source_width and source_height:
@@ -287,6 +292,8 @@ def _target_content_rect(
             round(source[2] * scale_x),
             round(source[3] * scale_y),
         )
+    if source and source[2] <= image.width and source[3] <= image.height:
+        return source
     return (0, 0, image.width, image.height)
 
 
