@@ -279,6 +279,7 @@ class ImageOcrExcelApp:
         self.vbar: ctk.CTkScrollbar | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
         self.loading_progress: ctk.CTkProgressBar | None = None
+        self._side_render_job: str | None = None
         self.busy = False
 
         self._build_ui()
@@ -723,10 +724,11 @@ class ImageOcrExcelApp:
         self.root.destroy()
 
     def _on_mode_change(self, _value: str | None = None) -> None:
-        self._render_side_body()
+        self._schedule_side_body_render()
         self.redraw()
 
     def _render_side_body(self) -> None:
+        self._side_render_job = None
         if self.side_body is None:
             return
         for child in self.side_body.winfo_children():
@@ -747,6 +749,14 @@ class ImageOcrExcelApp:
             self._render_review_mode()
         else:
             self._render_export_mode()
+
+    def _schedule_side_body_render(self) -> None:
+        if self._side_render_job is not None:
+            try:
+                self.root.after_cancel(self._side_render_job)
+            except Exception:
+                pass
+        self._side_render_job = self.root.after_idle(self._render_side_body)
 
     def _render_template_mode(self) -> None:
         body = self.side_body
@@ -4631,7 +4641,7 @@ class ImageOcrExcelApp:
 
         if self.selected_index is not None:
             self.selected_index = None
-            self._render_side_body()
+            self._schedule_side_body_render()
             self.redraw()
 
         self._adopt_current_image_as_coordinate_source()
@@ -4728,7 +4738,7 @@ class ImageOcrExcelApp:
                 self.status_var.set(
                     f"会話 {pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。"
                 )
-                self._render_side_body()
+                self._schedule_side_body_render()
                 self.redraw()
                 return
             idx = int(self.canvas_edit_state["idx"])
@@ -4768,7 +4778,7 @@ class ImageOcrExcelApp:
             self.status_var.set(
                 f"{field.name} の範囲を更新しました。Esc / Ctrl+Z で戻せます。"
             )
-            self._render_side_body()
+            self._schedule_side_body_render()
             self.redraw()
             return
 
@@ -4848,7 +4858,7 @@ class ImageOcrExcelApp:
             self.status_var.set(
                 "項目名を入力してください。Enterで確定、Escで元の名前に戻します。"
             )
-        self._render_side_body()
+        self._schedule_side_body_render()
         self.redraw()
 
     def on_mouse_wheel(self, event) -> None:

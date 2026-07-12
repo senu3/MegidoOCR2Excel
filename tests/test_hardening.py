@@ -253,6 +253,18 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertIn("次の会話", app.current_detection_reason)
         app._render_side_body.assert_called_once()
 
+    def test_canvas_side_panel_render_is_deferred_and_coalesced(self) -> None:
+        app = self._logic_only_app()
+        app.root = MagicMock()
+        app.root.after_idle.return_value = "render-job"
+        app._side_render_job = None
+
+        app._schedule_side_body_render()
+        app._schedule_side_body_render()
+
+        app.root.after_idle.assert_called_with(app._render_side_body)
+        app.root.after_cancel.assert_called_once_with("render-job")
+
     def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
         app = self._logic_only_app()
         app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR
