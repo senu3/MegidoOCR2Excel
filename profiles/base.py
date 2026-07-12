@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-from ocr_models import CoordinateSettings, DialogueLogDetectionConfig
+from ocr_models import CoordinateSettings, DialogueLogDetectionConfig, TextFormattingSettings, text_formatting_settings_from_dict
 
 
 @dataclass(frozen=True)
@@ -25,11 +25,15 @@ class OcrProfile:
     default_lang: str
     coordinate_defaults: Mapping[str, object]
     default_field_ocr: Mapping[str, object]
+    text_format_defaults: Mapping[str, object] = field(default_factory=dict)
     field_presets: tuple[FieldPreset, ...] = field(default_factory=tuple)
     dialogue_log_detection: DialogueLogDetectionConfig | None = None
 
     def coordinate_settings(self) -> CoordinateSettings:
         return CoordinateSettings(**self.coordinate_defaults).normalized()
+
+    def text_formatting_settings(self) -> TextFormattingSettings:
+        return text_formatting_settings_from_dict(dict(self.text_format_defaults))
 
     def field_family(self, field_name: str) -> str:
         preset = self._matching_preset(field_name)

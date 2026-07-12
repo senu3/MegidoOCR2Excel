@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from atomic_io import atomic_write_text
-from ocr_models import CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, TemplateField, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict
+from ocr_models import DIALOGUE_ROLE_OPTIONS, LINE_JOIN_OPTIONS, CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, TemplateField, TextFormattingSettings, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict, text_formatting_settings_from_dict
 
 
 TEMPLATE_FORMAT = "image-ocr-to-excel-template"
@@ -50,6 +50,14 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
         if key not in output_settings:
             raise TemplateValidationError(f"output_settings.{key} がありません。")
     _require_mapping(data, "coordinate_settings")
+    text_formatting = data.get("text_formatting")
+    if text_formatting is not None:
+        if not isinstance(text_formatting, dict):
+            raise TemplateValidationError("text_formatting はオブジェクトで指定してください。")
+        if text_formatting.get("line_join") not in LINE_JOIN_OPTIONS:
+            raise TemplateValidationError("text_formatting.line_join が不正です。")
+        if type(text_formatting.get("fullwidth_ascii")) is not bool:
+            raise TemplateValidationError("text_formatting.fullwidth_ascii は真偽値で指定してください。")
 
     correction_rules = data.get("correction_rules", [])
     if not isinstance(correction_rules, list) or any(not isinstance(item, dict) for item in correction_rules):
@@ -70,8 +78,8 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
             raise TemplateValidationError(f"fields[{index}] の座標は整数で指定してください。")
         if "pair_id" in item and (type(item["pair_id"]) is not int or item["pair_id"] < 0):
             raise TemplateValidationError(f"fields[{index}].pair_id は0以上の整数で指定してください。")
-        if "dialogue_role" in item and item["dialogue_role"] not in {"", "speaker", "dialogue"}:
-            raise TemplateValidationError(f"fields[{index}].dialogue_role は speaker または dialogue を指定してください。")
+        if "dialogue_role" in item and item["dialogue_role"] not in {"", *DIALOGUE_ROLE_OPTIONS}:
+            raise TemplateValidationError(f"fields[{index}].dialogue_role が不正です。")
     return data
 
 
@@ -83,6 +91,7 @@ def build_template_data(
     output_settings: dict,
     correction_rules: list[CorrectionRule] | None = None,
     coordinate_settings: CoordinateSettings | None = None,
+    text_formatting: TextFormattingSettings | None = None,
     template_name: str = "ocr-template",
     profile_id: str = "",
 ) -> dict:
@@ -97,6 +106,7 @@ def build_template_data(
         "ocr_backend": ocr_backend,
         "output_settings": output_settings,
         "coordinate_settings": (coordinate_settings or CoordinateSettings()).to_dict(),
+        "text_formatting": (text_formatting or TextFormattingSettings()).to_dict(),
         "correction_rules": [rule.to_dict() for rule in correction_rules or [] if rule.pattern.strip()],
         "fields": [field.to_dict() for field in fields],
     }
@@ -125,3 +135,10 @@ def correction_rules_from_template(data: dict) -> list[CorrectionRule]:
 
 def coordinate_settings_from_template(data: dict) -> CoordinateSettings:
     return coordinate_settings_from_dict(data.get("coordinate_settings"))
+
+
+def text_formatting_from_template(
+    data: dict,
+    fallback: TextFormattingSettings | None = None,
+) -> TextFormattingSettings:
+    return text_formatting_settings_from_dict(data.get("text_formatting"), fallback)

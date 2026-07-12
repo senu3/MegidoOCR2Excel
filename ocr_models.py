@@ -9,6 +9,10 @@ OCR_BACKEND_OPTIONS = ["default", "tesseract", "paddle"]
 OCR_PREPROCESS_OPTIONS = ["default", "gray", "threshold", "invert-threshold", "outline-threshold", "white-glyph"]
 OCR_SCALE_OPTIONS = ["auto", "2", "3", "4"]
 OCR_LINE_SPLIT_OPTIONS = ["none", "detected"]
+LINE_JOIN_NONE = "none"
+LINE_JOIN_FULLWIDTH_SPACE = "fullwidth_space"
+LINE_JOIN_NEWLINE = "newline"
+LINE_JOIN_OPTIONS = [LINE_JOIN_NONE, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE]
 CORRECTION_ALL_TARGET = "すべて"
 EXPORT_LAYOUT_IMAGE_ROW = "画像ごとに1行"
 EXPORT_LAYOUT_DIALOGUE_PAIR = "会話ペアごとに1行"
@@ -86,6 +90,43 @@ class CoordinateSettings:
             "stable_run": normalized.stable_run,
             "aspect_ratio_tolerance": normalized.aspect_ratio_tolerance,
         }
+
+
+@dataclass(frozen=True)
+class TextFormattingSettings:
+    line_join: str = LINE_JOIN_FULLWIDTH_SPACE
+    fullwidth_ascii: bool = False
+
+    def normalized(self) -> "TextFormattingSettings":
+        return TextFormattingSettings(
+            line_join=(
+                self.line_join
+                if self.line_join in LINE_JOIN_OPTIONS
+                else LINE_JOIN_FULLWIDTH_SPACE
+            ),
+            fullwidth_ascii=bool(self.fullwidth_ascii),
+        )
+
+    def to_dict(self) -> dict:
+        normalized = self.normalized()
+        return {
+            "line_join": normalized.line_join,
+            "fullwidth_ascii": normalized.fullwidth_ascii,
+        }
+
+
+def text_formatting_settings_from_dict(
+    item: dict | None,
+    fallback: TextFormattingSettings | None = None,
+) -> TextFormattingSettings:
+    default = (fallback or TextFormattingSettings()).normalized()
+    data = item or {}
+    return TextFormattingSettings(
+        line_join=str(data.get("line_join") or default.line_join),
+        fullwidth_ascii=bool(
+            data.get("fullwidth_ascii", default.fullwidth_ascii)
+        ),
+    ).normalized()
 
 
 def coordinate_settings_from_dict(item: dict | None) -> CoordinateSettings:

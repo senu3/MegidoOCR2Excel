@@ -81,7 +81,7 @@ class Layout:
     export_button_height: int = 40
     toolbar_height: int = 54
     status_bar_height: int = 34
-    settings_size: str = "420x300"
+    settings_size: str = "440x500"
 
 
 @dataclass(frozen=True)

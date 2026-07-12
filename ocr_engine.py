@@ -13,7 +13,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
-from ocr_models import COORDINATE_SPACE_CONTENT, CORRECTION_ALL_TARGET, CoordinateSettings, CorrectionRule, TemplateField
+from ocr_models import COORDINATE_SPACE_CONTENT, CORRECTION_ALL_TARGET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, CoordinateSettings, CorrectionRule, TemplateField, TextFormattingSettings
 
 try:
     import pytesseract
@@ -242,6 +242,33 @@ def clean_text(text: str) -> str:
     return " ".join(line for line in lines if line).strip()
 
 
+def fullwidth_ascii(text: str) -> str:
+    converted: list[str] = []
+    for char in text:
+        codepoint = ord(char)
+        if char == " ":
+            converted.append("　")
+        elif 0x21 <= codepoint <= 0x7E:
+            converted.append(chr(codepoint + 0xFEE0))
+        else:
+            converted.append(char)
+    return "".join(converted)
+
+
+def format_detected_text(
+    text: str,
+    settings: TextFormattingSettings | None,
+) -> str:
+    normalized = (settings or TextFormattingSettings()).normalized()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    separator = {
+        LINE_JOIN_FULLWIDTH_SPACE: "　",
+        LINE_JOIN_NEWLINE: "\n",
+    }.get(normalized.line_join, "")
+    value = separator.join(lines)
+    return fullwidth_ascii(value) if normalized.fullwidth_ascii else value
+
+
 def detect_line_bands(
     image: Image.Image,
     threshold: int = 90,
@@ -282,13 +309,17 @@ def add_detected_band(bands: list[tuple[int, int]], height: int, start: int, end
     bands.append((max(0, start - padding), min(height, end + padding)))
 
 
-def apply_postprocess(text: str, field: TemplateField) -> str:
+def apply_postprocess(
+    text: str,
+    field: TemplateField,
+    preserve_whitespace: bool = False,
+) -> str:
     value = text
     if field.replace_from:
         value = value.replace(field.replace_from, field.replace_to)
     for token in [part.strip() for part in field.remove_text.split(",") if part.strip()]:
         value = value.replace(token, "")
-    value = " ".join(value.split()).strip()
+    value = value.strip() if preserve_whitespace else " ".join(value.split()).strip()
 
     if field.postprocess == "数字のみ":
         return re.sub(r"\D+", "", value)
@@ -371,7 +402,7 @@ class PaddleBackend:
     def recognize(self, image: Image.Image, lang: str) -> str:
         ocr = self._instance(lang)
         result = self._run_ocr(ocr, image)
-        return " ".join(extract_paddle_texts(result)).strip()
+        return "\n".join(extract_paddle_texts(result)).strip()
 
     def recognize_lines(self, images: list[Image.Image], lang: str) -> str:
         if not images:
@@ -520,6 +551,7 @@ class OcrEngine:
         backend: str = FALLBACK_BACKEND,
         correction_rules: list[CorrectionRule] | None = None,
         coordinate_settings: CoordinateSettings | None = None,
+        text_formatting: TextFormattingSettings | None = None,
     ) -> tuple[str | None, str | None, str | None]:
         backend_name = resolve_backend(field, backend)
         if backend_name == "tesseract" and pytesseract is None:
@@ -557,8 +589,18 @@ class OcrEngine:
             raise
 
         cleaned = clean_text(raw_text)
-        corrected = apply_correction_rules(cleaned, field, correction_rules)
-        return cleaned, apply_postprocess(corrected, field), None
+        formatted = (
+            format_detected_text(raw_text, text_formatting)
+            if field.ocr_line_split == "detected"
+            else cleaned
+        )
+        corrected = apply_correction_rules(formatted, field, correction_rules)
+        raw_display = raw_text.strip() if field.ocr_line_split == "detected" else cleaned
+        return raw_display, apply_postprocess(
+            corrected,
+            field,
+            preserve_whitespace=field.ocr_line_split == "detected",
+        ), None
 
     def recognize_prepared(self, image: Image.Image, lang: str, config: str, backend: str) -> str:
         if backend == "paddle":
@@ -593,7 +635,7 @@ class OcrEngine:
             cleaned = clean_text(text)
             if cleaned:
                 parts.append(cleaned)
-        return " ".join(parts)
+        return "\n".join(parts)
 
     def recognize_field(
         self,
@@ -604,6 +646,7 @@ class OcrEngine:
         backend: str = FALLBACK_BACKEND,
         correction_rules: list[CorrectionRule] | None = None,
         coordinate_settings: CoordinateSettings | None = None,
+        text_formatting: TextFormattingSettings | None = None,
     ) -> tuple[str | None, str | None]:
-        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules, coordinate_settings)
+        _raw_text, value, error = self.recognize_field_detail(image, field, lang, tesseract_path, backend, correction_rules, coordinate_settings, text_formatting)
         return value, error

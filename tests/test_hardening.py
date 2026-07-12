@@ -11,7 +11,7 @@ from PIL import Image
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, AutoHideScrollableFrame, ImageOcrExcelApp
-from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, TemplateField
+from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, LINE_JOIN_NEWLINE, TemplateField
 
 
 class _FailingWorkbook:
@@ -185,6 +185,27 @@ class DirtyStateTests(unittest.TestCase):
         app = ImageOcrExcelApp(root)
         try:
             self.assertFalse(app.dirty)
+
+            settings_window = MagicMock()
+            app.fields = [TemplateField("本文", 0, 0, 10, 10)]
+            app.current_results = ["変更前"]
+            app.current_raw_results = ["raw"]
+            app._apply_settings(
+                settings_window,
+                app._lang_display(app.lang_var.get()),
+                app.backend_var.get(),
+                app.tesseract_var.get(),
+                "改行",
+                True,
+            )
+
+            self.assertEqual(app.text_formatting.line_join, LINE_JOIN_NEWLINE)
+            self.assertTrue(app.text_formatting.fullwidth_ascii)
+            self.assertEqual(app.current_results, [""])
+            self.assertEqual(app.current_raw_results, [""])
+            self.assertTrue(app.dirty)
+            settings_window.destroy.assert_called_once()
+            app._mark_clean()
 
             app.export_sheet_var.set("Changed")
 

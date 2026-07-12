@@ -12,14 +12,58 @@ from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQue
 from dialogue_log_detector import detect_complete_dialogue_pairs, include_supplement_candidates
 from excel_exporter import ExcelExporter, ExportSettings
 from megido_app_config import natural_image_sort_key
-from ocr_engine import detect_content_rect, scaled_field
-from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, CoordinateSettings, TemplateField, dialogue_pair_validation_error
+from ocr_engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
+from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error
 from template_store import coordinate_settings_from_template, load_template
 from template_store import fields_from_template
 from profiles.megido_novel import PROFILE
 
 
 class BatchWorkflowTests(unittest.TestCase):
+    def test_detected_lines_support_shared_join_and_fullwidth_settings(self) -> None:
+        source = "ABC!? ()\n次の行"
+
+        self.assertEqual(
+            format_detected_text(
+                source, TextFormattingSettings(LINE_JOIN_NONE, False)
+            ),
+            "ABC!? ()次の行",
+        )
+        self.assertEqual(
+            format_detected_text(
+                source, TextFormattingSettings(LINE_JOIN_FULLWIDTH_SPACE, True)
+            ),
+            "ＡＢＣ！？　（）　次の行",
+        )
+        self.assertEqual(
+            format_detected_text(
+                source, TextFormattingSettings(LINE_JOIN_NEWLINE, True)
+            ),
+            "ＡＢＣ！？　（）\n次の行",
+        )
+        field = TemplateField("本文", 0, 0, 10, 10, ocr_line_split="detected")
+        self.assertEqual(
+            apply_postprocess("一行目\n二行目", field, preserve_whitespace=True),
+            "一行目\n二行目",
+        )
+
+    def test_excel_wraps_and_expands_multiline_results(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "sample.png"
+            Image.new("RGB", (20, 20), "white").save(image_path)
+            output = Path(temp_dir) / "multiline.xlsx"
+            ExcelExporter().export(
+                output,
+                [image_path],
+                [TemplateField("本文", 0, 0, 20, 20)],
+                ExportSettings(),
+                lambda _image, _field: ("一行目\n二行目", None),
+            )
+            sheet = load_workbook(output)["OCR"]
+
+            self.assertTrue(sheet.cell(2, 2).alignment.wrap_text)
+            self.assertGreaterEqual(sheet.row_dimensions[2].height or 0, 30)
+
     def test_log_detector_tracks_shifted_complete_pairs_and_skips_fragments(self) -> None:
         template = load_template(
             Path(".samples/megido_novellog_template.json"),

@@ -5,10 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ocr_models import DIALOGUE_ROLE_SPEAKER, CoordinateSettings, TEMPLATE_VERSION, TemplateField
+from ocr_models import DIALOGUE_ROLE_SPEAKER, LINE_JOIN_NEWLINE, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
 from profiles import get_profile, registered_profiles
 from profiles.base import FieldPreset, OcrProfile
-from template_store import TemplateValidationError, build_template_data, load_template, save_template
+from template_store import TemplateValidationError, build_template_data, load_template, save_template, text_formatting_from_template
 
 
 def valid_template(profile_id: str = "megido_novel") -> dict:
@@ -39,6 +39,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(profile.field_family("セリフ本文3"), "セリフ本文")
         self.assertEqual(profile.field_ocr_preset("セリフ3")["ocr_line_split"], "detected")
         self.assertFalse(profile.has_field_ocr_preset("選択肢"))
+        self.assertTrue(profile.text_formatting_settings().fullwidth_ascii)
 
     def test_profile_model_can_define_an_independent_game(self) -> None:
         profile = OcrProfile(
@@ -111,6 +112,20 @@ class TemplateV1Tests(unittest.TestCase):
 
             self.assertEqual(loaded["fields"][0]["pair_id"], 3)
             self.assertEqual(loaded["fields"][0]["dialogue_role"], DIALOGUE_ROLE_SPEAKER)
+
+    def test_shared_text_formatting_is_preserved_in_template(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "formatting.json"
+            data = valid_template()
+            data["text_formatting"] = TextFormattingSettings(
+                LINE_JOIN_NEWLINE, True
+            ).to_dict()
+
+            save_template(path, data)
+            settings = text_formatting_from_template(load_template(path))
+
+            self.assertEqual(settings.line_join, LINE_JOIN_NEWLINE)
+            self.assertTrue(settings.fullwidth_ascii)
 
 
 if __name__ == "__main__":

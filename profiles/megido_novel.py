@@ -33,6 +33,10 @@ PROFILE = OcrProfile(
     default_lang="jpn+eng",
     coordinate_defaults=COORDINATE_DEFAULTS,
     default_field_ocr=FIELD_OCR_DEFAULTS,
+    text_format_defaults={
+        "line_join": "fullwidth_space",
+        "fullwidth_ascii": True,
+    },
     field_presets=(
         FieldPreset(
             family="話者",

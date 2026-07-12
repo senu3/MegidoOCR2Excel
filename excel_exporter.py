@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment
 from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image
 
@@ -374,8 +375,15 @@ class ExcelExporter:
         return headers
 
     def _write_excel_row(self, sheet, row_index: int, start_col: int, values: list[str]) -> None:
+        max_lines = 1
         for offset, value in enumerate(values):
-            sheet.cell(row=row_index, column=start_col + offset, value=value)
+            cell = sheet.cell(row=row_index, column=start_col + offset, value=value)
+            line_count = str(value).count("\n") + 1
+            max_lines = max(max_lines, line_count)
+            if line_count > 1:
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+        if max_lines > 1:
+            sheet.row_dimensions[row_index].height = max(15, 15 * max_lines)
 
     def _fit_output_columns(self, sheet) -> None:
         for column_cells in sheet.columns:

@@ -70,10 +70,14 @@ from ocr_models import (
     EXPORT_LAYOUT_DIALOGUE_PAIR,
     EXPORT_LAYOUT_IMAGE_ROW,
     EXPORT_LAYOUT_OPTIONS,
+    LINE_JOIN_FULLWIDTH_SPACE,
+    LINE_JOIN_NEWLINE,
+    LINE_JOIN_NONE,
     OCR_BACKEND_OPTIONS,
     CoordinateSettings,
     CorrectionRule,
     TemplateField,
+    TextFormattingSettings,
     dialogue_pair_validation_error,
 )
 from profiles.base import OcrProfile
@@ -84,6 +88,7 @@ from template_store import (
     fields_from_template,
     load_template,
     save_template,
+    text_formatting_from_template,
 )
 
 
@@ -160,6 +165,11 @@ COLOR_CANVAS_PANEL = THEME.palette.canvas_panel
 COLOR_CANVAS_TOOLBAR = THEME.palette.canvas_toolbar
 
 OCR_MODE_OPTIONS = ["範囲全体", "行切り出し"]
+LINE_JOIN_DISPLAY = {
+    LINE_JOIN_NONE: "スペースなし",
+    LINE_JOIN_FULLWIDTH_SPACE: "全角スペース",
+    LINE_JOIN_NEWLINE: "改行",
+}
 MODE_TEMPLATE = "1. 範囲・列"
 MODE_REVIEW = "2. 認識テスト"
 MODE_EXPORT = "3. Excel出力"
@@ -195,6 +205,7 @@ class ImageOcrExcelApp:
         self.image_item: int | None = None
         self.zoom = 1.0
         self.coordinate_settings = self.profile.coordinate_settings()
+        self.text_formatting = self.profile.text_formatting_settings()
         self.current_content_rect: tuple[int, int, int, int] | None = None
 
         self.fields: list[TemplateField] = []
@@ -1654,7 +1665,11 @@ class ImageOcrExcelApp:
                 corrected = apply_correction_rules(
                     raw_text, field, self.correction_rules
                 )
-                self.current_results[idx] = apply_postprocess(corrected, field)
+                self.current_results[idx] = apply_postprocess(
+                    corrected,
+                    field,
+                    preserve_whitespace=field.ocr_line_split == "detected",
+                )
             self._refresh_review_row(idx)
         self._update_review_detail_values()
 
@@ -1664,6 +1679,16 @@ class ImageOcrExcelApp:
 
     def _postprocess_summary(self, field: TemplateField) -> str:
         parts = [self._line_split_display(field.ocr_line_split)]
+        if field.ocr_line_split == "detected":
+            parts.append(
+                {
+                    LINE_JOIN_NONE: "空白なし",
+                    LINE_JOIN_FULLWIDTH_SPACE: "全角空白",
+                    LINE_JOIN_NEWLINE: "改行",
+                }[self.text_formatting.line_join]
+            )
+            if self.text_formatting.fullwidth_ascii:
+                parts.append("全角化")
         if self._is_review_candidate(field):
             parts.insert(0, "自動検出")
         if self._has_legacy_postprocess(field):
@@ -2940,6 +2965,7 @@ class ImageOcrExcelApp:
             output_settings=self._export_settings_dict(),
             correction_rules=self.correction_rules,
             coordinate_settings=self.coordinate_settings,
+            text_formatting=self.text_formatting,
             template_name=path.stem,
             profile_id=self.profile.profile_id,
         )
@@ -2987,6 +3013,9 @@ class ImageOcrExcelApp:
             self.pending_dialogue_role = ""
             self.correction_rules = correction_rules_from_template(data)
             self.coordinate_settings = coordinate_settings_from_template(data)
+            self.text_formatting = text_formatting_from_template(
+                data, self.profile.text_formatting_settings()
+            )
             self._refresh_content_mapping()
             self.current_results = [""] * len(self.fields)
             self.current_raw_results = [""] * len(self.fields)
@@ -3023,6 +3052,12 @@ class ImageOcrExcelApp:
         )
         dialog_backend = StringVar(window, value=self.backend_var.get())
         dialog_tesseract = StringVar(window, value=self.tesseract_var.get())
+        dialog_line_join = StringVar(
+            window, value=LINE_JOIN_DISPLAY[self.text_formatting.line_join]
+        )
+        dialog_fullwidth_ascii = BooleanVar(
+            window, value=self.text_formatting.fullwidth_ascii
+        )
 
         panel = ctk.CTkFrame(
             window,
@@ -3034,7 +3069,7 @@ class ImageOcrExcelApp:
         panel.pack(fill=BOTH, expand=True, padx=18, pady=18)
         panel.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
-            panel, text="OCR設定", anchor="w", font=UI_FONT_TITLE, text_color=COLOR_TEXT
+            panel, text="基本設定", anchor="w", font=UI_FONT_TITLE, text_color=COLOR_TEXT
         ).grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 14))
         ctk.CTkLabel(
             panel, text="OCR言語", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT
@@ -3102,8 +3137,46 @@ class ImageOcrExcelApp:
             text_color=COLOR_TEXT,
         ).grid(row=1, column=0, sticky="ew")
         sync_backend_fields()
+        ctk.CTkLabel(
+            panel,
+            text="テキスト整形（行切り出し共通）",
+            anchor="w",
+            font=UI_FONT_BOLD,
+            text_color=COLOR_TEXT,
+        ).grid(row=6, column=0, sticky="ew", padx=16, pady=(18, 8))
+        ctk.CTkLabel(
+            panel,
+            text="行のつなぎ方",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_TEXT,
+        ).grid(row=7, column=0, sticky="ew", padx=16, pady=(0, 6))
+        ctk.CTkOptionMenu(
+            panel,
+            variable=dialog_line_join,
+            values=list(LINE_JOIN_DISPLAY.values()),
+            height=THEME.layout.entry_height,
+            font=UI_FONT,
+            fg_color=COLOR_SECONDARY,
+            button_color=COLOR_PRIMARY,
+            button_hover_color=COLOR_PRIMARY_HOVER,
+            dropdown_fg_color=COLOR_SURFACE_ALT,
+            dropdown_hover_color=COLOR_SECONDARY_HOVER,
+            text_color=COLOR_TEXT,
+        ).grid(row=8, column=0, sticky="ew", padx=16)
+        ctk.CTkCheckBox(
+            panel,
+            text="半角の英数字・記号を全角に統一",
+            variable=dialog_fullwidth_ascii,
+            font=UI_FONT_SMALL,
+            text_color=COLOR_TEXT,
+            checkbox_width=18,
+            checkbox_height=18,
+            corner_radius=4,
+            border_width=1,
+        ).grid(row=9, column=0, sticky="w", padx=16, pady=(14, 0))
         buttons = ctk.CTkFrame(panel, fg_color="transparent")
-        buttons.grid(row=7, column=0, sticky="ew", padx=16, pady=(20, 16))
+        buttons.grid(row=10, column=0, sticky="ew", padx=16, pady=(20, 16))
         buttons.grid_columnconfigure(0, weight=1)
         buttons.grid_columnconfigure(1, weight=1)
         ctk.CTkButton(
@@ -3131,6 +3204,8 @@ class ImageOcrExcelApp:
                 dialog_lang_display.get(),
                 dialog_backend.get(),
                 dialog_tesseract.get(),
+                dialog_line_join.get(),
+                dialog_fullwidth_ascii.get(),
             ),
             height=THEME.layout.row_button_height,
             corner_radius=THEME.layout.control_radius,
@@ -3145,6 +3220,8 @@ class ImageOcrExcelApp:
         lang_display: str,
         backend: str,
         tesseract_path: str,
+        line_join_display: str,
+        fullwidth_ascii_enabled: bool,
     ) -> None:
         backend = (
             backend
@@ -3152,24 +3229,42 @@ class ImageOcrExcelApp:
             else self.profile.default_backend
         )
         lang = self._lang_value(lang_display)
-        changed = (lang, backend, tesseract_path) != (
+        line_join = next(
+            (
+                value
+                for value, display in LINE_JOIN_DISPLAY.items()
+                if display == line_join_display
+            ),
+            LINE_JOIN_FULLWIDTH_SPACE,
+        )
+        text_formatting = TextFormattingSettings(
+            line_join=line_join,
+            fullwidth_ascii=fullwidth_ascii_enabled,
+        ).normalized()
+        changed = (lang, backend, tesseract_path, text_formatting) != (
             self.lang_var.get(),
             self.backend_var.get(),
             self.tesseract_var.get(),
+            self.text_formatting,
         )
         with self._without_dirty_tracking():
             self.lang_var.set(lang)
             self.lang_display_var.set(self._lang_display(lang))
             self.backend_var.set(backend)
             self.tesseract_var.set(tesseract_path)
+            self.text_formatting = text_formatting
         if changed:
+            self.current_results = [""] * len(self.fields)
+            self.current_raw_results = [""] * len(self.fields)
             self._mark_dirty()
             self.status_var.set(
-                "OCR設定を更新しました。テンプレートを保存してください。"
+                "基本設定を更新しました。認識テストを再実行し、テンプレートを保存してください。"
             )
         else:
-            self.status_var.set("OCR設定は変更されていません。")
+            self.status_var.set("基本設定は変更されていません。")
         window.destroy()
+        if changed:
+            self._render_side_body()
 
     def select_field(self, idx: int) -> None:
         if not (0 <= idx < len(self.fields)):
@@ -4903,6 +4998,7 @@ class ImageOcrExcelApp:
                     backend,
                     correction_rules,
                     self.coordinate_settings,
+                    self.text_formatting,
                 )
                 if error or text is None:
                     raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
@@ -4948,6 +5044,7 @@ class ImageOcrExcelApp:
                 backend,
                 correction_rules,
                 self.coordinate_settings,
+                self.text_formatting,
             )
             if error or text is None:
                 raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
@@ -5001,6 +5098,7 @@ class ImageOcrExcelApp:
             self.backend_var.get(),
             self.correction_rules,
             self.coordinate_settings,
+            self.text_formatting,
         )
         if error and show_errors:
             messagebox.showerror("OCRエラー", error)
@@ -5093,6 +5191,7 @@ class ImageOcrExcelApp:
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
+        text_formatting = self.text_formatting
         export_signature = self._export_structure_signature(export_fields, settings)
         self._clear_retry_context()
         self.image_queue.prepare(image_files)
@@ -5125,6 +5224,7 @@ class ImageOcrExcelApp:
                     backend,
                     correction_rules,
                     coordinate_settings,
+                    text_formatting,
                 ),
                 update_progress,
                 dialogue_pair_resolver=(
@@ -5235,6 +5335,7 @@ class ImageOcrExcelApp:
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
+        text_formatting = self.text_formatting
         total = len(retry_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set(f"失敗した {total} 画像を再実行します。")
@@ -5266,6 +5367,7 @@ class ImageOcrExcelApp:
                     backend,
                     correction_rules,
                     coordinate_settings,
+                    text_formatting,
                 ),
                 retry_files=retry_files,
                 progress_callback=update_progress,
