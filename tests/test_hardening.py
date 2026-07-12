@@ -130,6 +130,15 @@ class WorkflowChoiceTests(unittest.TestCase):
             app.original_image = Image.open(".samples/e.png").convert("RGB")
             app.fields = [
                 TemplateField(
+                    "話者",
+                    60,
+                    1260,
+                    760,
+                    1320,
+                    pair_id=1,
+                    dialogue_role=DIALOGUE_ROLE_SPEAKER,
+                ),
+                TemplateField(
                     "補助テキスト候補",
                     154,
                     1084,
@@ -140,15 +149,27 @@ class WorkflowChoiceTests(unittest.TestCase):
                     ocr_line_split="detected",
                 )
             ]
-            app.current_results = ["候補結果"]
-            app.current_raw_results = ["候補結果"]
+            app.current_results = ["話者結果", "候補結果"]
+            app.current_raw_results = ["話者結果", "候補結果"]
             app.selected_index = 0
             app.mode_var.set(MODE_REVIEW)
 
             app._render_side_body()
-            app.select_review_field(0)
+            app.select_review_field(1)
+
+            descendants = []
+            pending = list(app.review_detail_host.winfo_children())
+            while pending:
+                widget = pending.pop()
+                descendants.append(widget)
+                pending.extend(widget.winfo_children())
+            textboxes = [
+                widget for widget in descendants if isinstance(widget, ctk.CTkTextbox)
+            ]
 
             self.assertTrue(app.side_body.winfo_children())
+            self.assertEqual(app.selected_index, 1)
+            self.assertEqual(textboxes[0].get("1.0", "end-1c"), "候補結果")
             self.assertFalse(app.dirty)
             with patch.object(root, "destroy") as destroy:
                 app.request_close()

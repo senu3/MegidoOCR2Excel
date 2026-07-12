@@ -3237,7 +3237,9 @@ class ImageOcrExcelApp:
             or not self.review_detail_host.winfo_exists()
         ):
             return
-        self._update_review_detail_values()
+        for child in self.review_detail_host.winfo_children():
+            child.destroy()
+        self._render_postprocess_panel(self.review_detail_host)
 
     def _update_review_detail_values(self) -> None:
         idx = self.selected_index
