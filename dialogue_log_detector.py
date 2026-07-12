@@ -7,6 +7,7 @@ from PIL import Image
 from ocr_engine import detect_content_rect, scaled_field
 from ocr_models import (
     CoordinateSettings,
+    DIALOGUE_ROLE_SUPPLEMENT,
     DialogueLogDetectionConfig,
     TemplateField,
     dialogue_pair_groups,
@@ -42,7 +43,7 @@ class DialoguePairDetectionResult:
         return messages
 
 
-def approve_supplement_candidates(
+def include_supplement_candidates(
     result: DialoguePairDetectionResult,
 ) -> DialoguePairDetectionResult:
     if not result.candidate_fields:
@@ -282,19 +283,19 @@ def _detect_single_screen(
                     y2=supplement_region[3],
                     source_width=0,
                     source_height=0,
-                    pair_id=0,
-                    dialogue_role="",
+                    pair_id=1,
+                    dialogue_role=DIALOGUE_ROLE_SUPPLEMENT,
                     ocr_line_split="detected",
                 )
             )
         return DialoguePairDetectionResult(
             [(1, speaker, dialogue)],
             candidate_fields=candidate_fields,
-            layout="needs_review" if supplement_candidate else ("speakerless" if speakerless else "normal"),
+            layout="supplement_candidate" if supplement_candidate else ("speakerless" if speakerless else "normal"),
             allow_empty_speaker=speakerless,
             allow_empty_dialogue=speakerless and blank_dialogue,
             review_reason=(
-                "補助テキスト候補を検出しました。候補項目を選択して読み取り結果を確認してください。"
+                "補助テキスト候補を検出しました。必要に応じて候補項目の範囲を修正してください。"
                 if supplement_candidate
                 else ""
             ),

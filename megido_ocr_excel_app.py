@@ -33,8 +33,8 @@ from batch_queue import (
     ImageQueueItem,
 )
 from dialogue_log_detector import (
-    approve_supplement_candidates,
     detect_complete_dialogue_pairs,
+    include_supplement_candidates,
 )
 from excel_exporter import (
     ExcelExporter,
@@ -65,6 +65,7 @@ from ocr_models import (
     COORDINATE_SPACE_IMAGE,
     CORRECTION_ALL_TARGET,
     DIALOGUE_ROLE_SPEAKER,
+    DIALOGUE_ROLE_SUPPLEMENT,
     DIALOGUE_ROLE_TEXT,
     EXPORT_LAYOUT_DIALOGUE_PAIR,
     EXPORT_LAYOUT_IMAGE_ROW,
@@ -187,7 +188,6 @@ class ImageOcrExcelApp:
         self.auto_detection_base_fields: list[TemplateField] = []
         self.current_detection_layout = ""
         self.current_detection_reason = ""
-        self.supplement_candidates_approved = False
 
         self.original_image: Image.Image | None = None
         self.preview_image: ImageTk.PhotoImage | None = None
@@ -996,7 +996,11 @@ class ImageOcrExcelApp:
             ]
             indexes.sort(
                 key=lambda idx: (
-                    0 if self.fields[idx].dialogue_role == DIALOGUE_ROLE_SPEAKER else 1,
+                    {
+                        DIALOGUE_ROLE_SPEAKER: 0,
+                        DIALOGUE_ROLE_TEXT: 1,
+                        DIALOGUE_ROLE_SUPPLEMENT: 2,
+                    }.get(self.fields[idx].dialogue_role, 3),
                     idx,
                 )
             )
@@ -1154,10 +1158,7 @@ class ImageOcrExcelApp:
             fg_color=(
                 COLOR_PRIMARY
                 if selected
-                else THEME.palette.success
-                if self._is_review_candidate(field)
-                and self.supplement_candidates_approved
-                else THEME.palette.warning
+                else THEME.palette.info
                 if self._is_review_candidate(field)
                 else COLOR_SECONDARY
             ),
@@ -1241,20 +1242,14 @@ class ImageOcrExcelApp:
             border_color=COLOR_BORDER,
         ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
         if self._is_review_candidate(self.fields[idx]):
-            approved = self.supplement_candidates_approved
             ctk.CTkButton(
                 panel,
-                text=(
-                    "次の会話として承認済み"
-                    if approved
-                    else "同じ話者の次の会話として承認"
-                ),
-                command=self.approve_supplement_candidate,
-                state="disabled" if approved else "normal",
+                text="範囲を修正する",
+                command=self.edit_selected_field_range,
                 height=THEME.layout.entry_height,
                 corner_radius=THEME.layout.control_radius,
                 font=UI_FONT_SMALL,
-                fg_color=THEME.palette.success if approved else COLOR_PRIMARY,
+                fg_color=COLOR_PRIMARY,
                 hover_color=COLOR_PRIMARY_HOVER,
                 text_color=THEME.palette.on_color,
             ).grid(
@@ -1670,24 +1665,23 @@ class ImageOcrExcelApp:
     def _postprocess_summary(self, field: TemplateField) -> str:
         parts = [self._line_split_display(field.ocr_line_split)]
         if self._is_review_candidate(field):
-            parts.insert(
-                0,
-                "承認済み" if self.supplement_candidates_approved else "要確認",
-            )
+            parts.insert(0, "自動検出")
         if self._has_legacy_postprocess(field):
             parts.append("補正あり")
         return " / ".join(parts)
 
     def _is_review_candidate(self, field: TemplateField) -> bool:
-        return field.name == "補助テキスト候補" and field.pair_id == 0
+        return field.dialogue_role == DIALOGUE_ROLE_SUPPLEMENT
 
-    def approve_supplement_candidate(self) -> None:
-        self.supplement_candidates_approved = True
-        self.current_detection_reason = (
-            "補助テキスト候補を承認しました。同じ話者の次の会話として出力します。"
+    def edit_selected_field_range(self) -> None:
+        if self.selected_index is None:
+            return
+        self.mode_var.set(MODE_TEMPLATE)
+        self.status_var.set(
+            f"{self.fields[self.selected_index].name} の範囲をCanvasで調整できます。"
         )
-        self.status_var.set(self.current_detection_reason)
-        self._render_side_body()
+        self._schedule_side_body_render()
+        self.redraw()
 
     def _has_legacy_postprocess(self, field: TemplateField) -> bool:
         return bool(
@@ -2418,11 +2412,13 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(
             row,
             text=role_label,
-            width=48,
+            width=84,
             height=22,
             font=UI_FONT_SMALL,
             fg_color=(
-                COLOR_PRIMARY
+                THEME.palette.info
+                if field.enabled and field.dialogue_role == DIALOGUE_ROLE_SUPPLEMENT
+                else COLOR_PRIMARY
                 if field.enabled and field.dialogue_role
                 else THEME.palette.disabled_fill
             ),
@@ -2454,9 +2450,9 @@ class ImageOcrExcelApp:
 
         role_menu = ctk.CTkOptionMenu(
             row,
-            values=["役割なし", "話者", "セリフ"],
+            values=["役割なし", "話者", "セリフ", "補助テキスト"],
             command=lambda value, i=idx: self.set_field_dialogue_role(i, value),
-            width=92,
+            width=116,
             height=26,
             font=UI_FONT_SMALL,
             fg_color=COLOR_SECONDARY,
@@ -2524,20 +2520,25 @@ class ImageOcrExcelApp:
         )
 
     def _dialogue_role_display(self, role: str) -> str:
-        return {DIALOGUE_ROLE_SPEAKER: "話者", DIALOGUE_ROLE_TEXT: "セリフ"}.get(
-            role, "役割なし"
-        )
+        return {
+            DIALOGUE_ROLE_SPEAKER: "話者",
+            DIALOGUE_ROLE_TEXT: "セリフ",
+            DIALOGUE_ROLE_SUPPLEMENT: "補助テキスト",
+        }.get(role, "役割なし")
 
     def set_field_dialogue_role(self, idx: int, display: str) -> None:
         if not (0 <= idx < len(self.fields)):
             return
-        role = {"話者": DIALOGUE_ROLE_SPEAKER, "セリフ": DIALOGUE_ROLE_TEXT}.get(
-            display, ""
-        )
+        role = {
+            "話者": DIALOGUE_ROLE_SPEAKER,
+            "セリフ": DIALOGUE_ROLE_TEXT,
+            "補助テキスト": DIALOGUE_ROLE_SUPPLEMENT,
+        }.get(display, "")
         field = self.fields[idx]
         role_changed = field.dialogue_role != role
         line_split_changed = (
-            role == DIALOGUE_ROLE_TEXT and field.ocr_line_split != "detected"
+            role in {DIALOGUE_ROLE_TEXT, DIALOGUE_ROLE_SUPPLEMENT}
+            and field.ocr_line_split != "detected"
         )
         if not role_changed and not line_split_changed:
             return
@@ -2614,7 +2615,6 @@ class ImageOcrExcelApp:
     def start_auto_detection_workflow(self) -> None:
         self.workflow_started = True
         self.auto_detection_enabled = True
-        self.supplement_candidates_approved = False
         speaker = TemplateField(
             "話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
         )
@@ -2774,7 +2774,7 @@ class ImageOcrExcelApp:
                     "speakerless": "話者なし会話を1件検出しました。",
                     "narration": "中央ナレーションを1件検出しました。",
                     "log": f"会話ログを {len(self.fields) // 2} 件検出しました。",
-                    "needs_review": self.current_detection_reason,
+                    "supplement_candidate": self.current_detection_reason,
                     "unknown": "会話を自動検出できませんでした。読み取り範囲を確認してください。",
                 }
                 self.status_var.set(
@@ -2796,11 +2796,7 @@ class ImageOcrExcelApp:
             self.profile.dialogue_log_detection,
         )
         self.current_detection_layout = detection.layout
-        self.current_detection_reason = (
-            "補助テキスト候補は承認済みです。同じ話者の次の会話として出力します。"
-            if detection.candidate_fields and self.supplement_candidates_approved
-            else detection.review_reason
-        )
+        self.current_detection_reason = detection.review_reason
         if not detection.groups:
             self.fields = prototypes
             self.selected_index = None
@@ -3222,10 +3218,7 @@ class ImageOcrExcelApp:
                 fg_color=(
                     COLOR_PRIMARY
                     if idx == self.selected_index
-                    else THEME.palette.success
-                    if self._is_review_candidate(self.fields[idx])
-                    and self.supplement_candidates_approved
-                    else THEME.palette.warning
+                    else THEME.palette.info
                     if self._is_review_candidate(self.fields[idx])
                     else COLOR_SECONDARY
                 )
@@ -5098,7 +5091,6 @@ class ImageOcrExcelApp:
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
-        supplement_candidates_approved = self.supplement_candidates_approved
         export_signature = self._export_structure_signature(export_fields, settings)
         self._clear_retry_context()
         self.image_queue.prepare(image_files)
@@ -5135,17 +5127,8 @@ class ImageOcrExcelApp:
                 update_progress,
                 dialogue_pair_resolver=(
                     (
-                        lambda image, detection_fields: (
-                            approve_supplement_candidates(
-                                detect_complete_dialogue_pairs(
-                                    image,
-                                    detection_fields,
-                                    coordinate_settings,
-                                    dialogue_detection,
-                                )
-                            )
-                            if supplement_candidates_approved
-                            else detect_complete_dialogue_pairs(
+                        lambda image, detection_fields: include_supplement_candidates(
+                            detect_complete_dialogue_pairs(
                                 image,
                                 detection_fields,
                                 coordinate_settings,
@@ -5250,7 +5233,6 @@ class ImageOcrExcelApp:
         backend = self.backend_var.get()
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
-        supplement_candidates_approved = self.supplement_candidates_approved
         total = len(retry_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set(f"失敗した {total} 画像を再実行します。")
@@ -5287,17 +5269,8 @@ class ImageOcrExcelApp:
                 progress_callback=update_progress,
                 dialogue_pair_resolver=(
                     (
-                        lambda image, detection_fields: (
-                            approve_supplement_candidates(
-                                detect_complete_dialogue_pairs(
-                                    image,
-                                    detection_fields,
-                                    coordinate_settings,
-                                    dialogue_detection,
-                                )
-                            )
-                            if supplement_candidates_approved
-                            else detect_complete_dialogue_pairs(
+                        lambda image, detection_fields: include_supplement_candidates(
+                            detect_complete_dialogue_pairs(
                                 image,
                                 detection_fields,
                                 coordinate_settings,
@@ -5403,11 +5376,14 @@ class ImageOcrExcelApp:
             if field.pair_id > 0 and field.dialogue_role in {
                 DIALOGUE_ROLE_SPEAKER,
                 DIALOGUE_ROLE_TEXT,
+                DIALOGUE_ROLE_SUPPLEMENT,
             }:
-                role = "話" if field.dialogue_role == DIALOGUE_ROLE_SPEAKER else "文"
+                role = {
+                    DIALOGUE_ROLE_SPEAKER: "話",
+                    DIALOGUE_ROLE_TEXT: "文",
+                    DIALOGUE_ROLE_SUPPLEMENT: "補",
+                }[field.dialogue_role]
                 return f"{field.pair_id}{role}"
-            if self._is_review_candidate(field):
-                return "候補"
             return "未割当"
         return f"#{idx + 1}"
 

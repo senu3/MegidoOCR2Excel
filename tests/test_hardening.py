@@ -11,7 +11,7 @@ from PIL import Image
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, AutoHideScrollableFrame, ImageOcrExcelApp
-from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, TemplateField
+from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, TemplateField
 
 
 class _FailingWorkbook:
@@ -126,7 +126,6 @@ class WorkflowChoiceTests(unittest.TestCase):
         root = ctk.CTk()
         root.withdraw()
         app = ImageOcrExcelApp(root)
-        closed = False
         try:
             app.original_image = Image.open(".samples/e.png").convert("RGB")
             app.fields = [
@@ -136,8 +135,8 @@ class WorkflowChoiceTests(unittest.TestCase):
                     1084,
                     870,
                     1208,
-                    pair_id=0,
-                    dialogue_role="",
+                    pair_id=1,
+                    dialogue_role=DIALOGUE_ROLE_SUPPLEMENT,
                     ocr_line_split="detected",
                 )
             ]
@@ -151,11 +150,11 @@ class WorkflowChoiceTests(unittest.TestCase):
 
             self.assertTrue(app.side_body.winfo_children())
             self.assertFalse(app.dirty)
-            app.request_close()
-            closed = True
+            with patch.object(root, "destroy") as destroy:
+                app.request_close()
+            destroy.assert_called_once()
         finally:
-            if not closed:
-                root.destroy()
+            root.destroy()
 
 
 class DirtyStateTests(unittest.TestCase):
@@ -278,16 +277,27 @@ class FieldNameInteractionTests(unittest.TestCase):
             0, update_review_detail=True
         )
 
-    def test_supplement_candidate_can_be_approved_as_the_next_dialogue(self) -> None:
+    def test_supplement_candidate_can_open_range_editing(self) -> None:
         app = self._logic_only_app()
-        app.supplement_candidates_approved = False
-        app.current_detection_reason = ""
+        app.fields = [
+            TemplateField(
+                "補助テキスト候補",
+                0,
+                0,
+                10,
+                10,
+                dialogue_role=DIALOGUE_ROLE_SUPPLEMENT,
+            )
+        ]
+        app.selected_index = 0
+        app.mode_var = MagicMock()
+        app._schedule_side_body_render = MagicMock()
 
-        app.approve_supplement_candidate()
+        app.edit_selected_field_range()
 
-        self.assertTrue(app.supplement_candidates_approved)
-        self.assertIn("次の会話", app.current_detection_reason)
-        app._render_side_body.assert_called_once()
+        app.mode_var.set.assert_called_once_with("1. 範囲・列")
+        app._schedule_side_body_render.assert_called_once()
+        app.redraw.assert_called_once()
 
     def test_canvas_side_panel_render_is_deferred_and_coalesced(self) -> None:
         app = self._logic_only_app()
@@ -349,6 +359,17 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertEqual(app.current_results[0], "")
         self.assertEqual(app.current_raw_results[0], "")
         app._mark_dirty.assert_called_once()
+
+    def test_supplement_role_enables_line_splitting(self) -> None:
+        app = self._logic_only_app()
+        app.fields = [TemplateField("補足", 0, 0, 10, 10, ocr_line_split="none")]
+        app.current_results = ["recognized"]
+        app.current_raw_results = ["raw"]
+
+        app.set_field_dialogue_role(0, "補助テキスト")
+
+        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_SUPPLEMENT)
+        self.assertEqual(app.fields[0].ocr_line_split, "detected")
 
     def test_unselected_dialogue_pair_draws_only_the_outer_outline(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)

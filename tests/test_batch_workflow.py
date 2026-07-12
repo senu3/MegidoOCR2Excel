@@ -9,11 +9,11 @@ from openpyxl import load_workbook
 from PIL import Image
 
 from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
-from dialogue_log_detector import approve_supplement_candidates, detect_complete_dialogue_pairs
+from dialogue_log_detector import detect_complete_dialogue_pairs, include_supplement_candidates
 from excel_exporter import ExcelExporter, ExportSettings
 from megido_app_config import natural_image_sort_key
 from ocr_engine import detect_content_rect, scaled_field
-from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, CoordinateSettings, TemplateField, dialogue_pair_validation_error
+from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, CoordinateSettings, TemplateField, dialogue_pair_validation_error
 from template_store import coordinate_settings_from_template, load_template
 from template_store import fields_from_template
 from profiles.megido_novel import PROFILE
@@ -178,10 +178,14 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertTrue(speakerless.groups[0][2].known_empty)
         self.assertEqual(narration.layout, "narration")
         self.assertTrue(narration.allow_empty_speaker)
-        self.assertEqual(supplement.layout, "needs_review")
+        self.assertEqual(supplement.layout, "supplement_candidate")
         self.assertEqual(len(supplement.groups), 1)
         self.assertEqual(len(supplement.candidate_fields), 1)
         self.assertEqual(supplement.candidate_fields[0].name, "補助テキスト候補")
+        self.assertEqual(
+            supplement.candidate_fields[0].dialogue_role,
+            DIALOGUE_ROLE_SUPPLEMENT,
+        )
         self.assertIn("補助テキスト", supplement.review_reason)
 
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
@@ -201,7 +205,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(result.layout, "log")
         self.assertEqual(len(result.groups), 5)
 
-    def test_approved_supplement_is_written_as_the_same_speakers_next_dialogue(self) -> None:
+    def test_supplement_is_automatically_written_as_the_same_speakers_next_dialogue(self) -> None:
         fields = [
             TemplateField("話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
             TemplateField("セリフ本文", 0, 0, 1, 1, ocr_line_split="detected", pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
@@ -215,7 +219,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 fields,
                 ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
                 lambda _image, field: (field.name, None),
-                dialogue_pair_resolver=lambda image, detection_fields: approve_supplement_candidates(
+                dialogue_pair_resolver=lambda image, detection_fields: include_supplement_candidates(
                     detect_complete_dialogue_pairs(
                         image,
                         detection_fields,
