@@ -231,6 +231,17 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertEqual(app.fields[0].name, "新しい話者")
         self.assertIsNone(app.editing_name_index)
 
+    def test_field_selection_updates_the_recognition_detail_panel(self) -> None:
+        app = self._logic_only_app()
+        app.fields = [TemplateField("話者", 0, 0, 10, 10)]
+        app._select_field_index = MagicMock()
+
+        app.select_field(0)
+
+        app._select_field_index.assert_called_once_with(
+            0, update_review_detail=True
+        )
+
     def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
         app = self._logic_only_app()
         app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR

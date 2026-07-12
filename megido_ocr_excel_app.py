@@ -1137,7 +1137,13 @@ class ImageOcrExcelApp:
             width=42,
             height=22,
             font=UI_FONT_SMALL,
-            fg_color=COLOR_PRIMARY if selected else COLOR_SECONDARY,
+            fg_color=(
+                COLOR_PRIMARY
+                if selected
+                else THEME.palette.warning
+                if self._is_review_candidate(field)
+                else COLOR_SECONDARY
+            ),
             text_color=THEME.palette.on_color,
             corner_radius=4,
         )
@@ -1621,9 +1627,14 @@ class ImageOcrExcelApp:
 
     def _postprocess_summary(self, field: TemplateField) -> str:
         parts = [self._line_split_display(field.ocr_line_split)]
+        if self._is_review_candidate(field):
+            parts.insert(0, "要確認")
         if self._has_legacy_postprocess(field):
             parts.append("補正あり")
         return " / ".join(parts)
+
+    def _is_review_candidate(self, field: TemplateField) -> bool:
+        return field.name == "補助テキスト候補" and field.pair_id == 0
 
     def _has_legacy_postprocess(self, field: TemplateField) -> bool:
         return bool(
@@ -2753,8 +2764,11 @@ class ImageOcrExcelApp:
                     ),
                 ]
             )
+        detected_fields.extend(replace(field) for field in detection.candidate_fields)
         self.fields = detected_fields
-        self.selected_index = 0
+        self.selected_index = (
+            len(detected_fields) - 1 if detection.candidate_fields else 0
+        )
 
     def _refresh_content_mapping(self) -> None:
         self.current_content_rect = None
@@ -3106,7 +3120,7 @@ class ImageOcrExcelApp:
     def select_field(self, idx: int) -> None:
         if not (0 <= idx < len(self.fields)):
             return
-        self._select_field_index(idx, update_review_detail=False)
+        self._select_field_index(idx, update_review_detail=True)
 
     def _select_field_index(
         self, idx: int, update_review_detail: bool, redraw_canvas: bool = True
@@ -3117,6 +3131,8 @@ class ImageOcrExcelApp:
             if not self._commit_active_name_edit():
                 return
         if self.selected_index == idx:
+            if update_review_detail and self.mode_var.get() == MODE_REVIEW:
+                self._refresh_review_detail_panel()
             return
         self.selected_index = idx
         self._refresh_selection_rows()
@@ -3146,7 +3162,11 @@ class ImageOcrExcelApp:
         if order_label is not None and order_label.winfo_exists():
             order_label.configure(
                 fg_color=(
-                    COLOR_PRIMARY if idx == self.selected_index else COLOR_SECONDARY
+                    COLOR_PRIMARY
+                    if idx == self.selected_index
+                    else THEME.palette.warning
+                    if self._is_review_candidate(self.fields[idx])
+                    else COLOR_SECONDARY
                 )
             )
         summary = self.review_summary_label_by_index.get(idx)
@@ -5301,6 +5321,8 @@ class ImageOcrExcelApp:
             }:
                 role = "話" if field.dialogue_role == DIALOGUE_ROLE_SPEAKER else "文"
                 return f"{field.pair_id}{role}"
+            if self._is_review_candidate(field):
+                return "候補"
             return "未割当"
         return f"#{idx + 1}"
 

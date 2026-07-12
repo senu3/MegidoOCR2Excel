@@ -180,6 +180,8 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertTrue(narration.allow_empty_speaker)
         self.assertEqual(supplement.layout, "needs_review")
         self.assertEqual(len(supplement.groups), 1)
+        self.assertEqual(len(supplement.candidate_fields), 1)
+        self.assertEqual(supplement.candidate_fields[0].name, "補助テキスト候補")
         self.assertIn("補助テキスト", supplement.review_reason)
 
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:

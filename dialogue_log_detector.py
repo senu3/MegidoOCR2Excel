@@ -22,6 +22,11 @@ class DialoguePairDetectionResult:
     allow_empty_speaker: bool = False
     allow_empty_dialogue: bool = False
     review_reason: str = ""
+    candidate_fields: list[TemplateField] | None = None
+
+    def __post_init__(self) -> None:
+        if self.candidate_fields is None:
+            object.__setattr__(self, "candidate_fields", [])
 
     @property
     def notices(self) -> list[str]:
@@ -182,7 +187,8 @@ def _detect_single_screen(
     )
     if all_bands:
         anchor_top, anchor_bottom = all_bands[-1]
-        supplement_candidate = _has_supplement_candidate(image, content_rect, anchor_top)
+        supplement_region = _supplement_candidate_region(image, content_rect, anchor_top)
+        supplement_candidate = supplement_region is not None
         panel_bottom = _light_panel_bottom(image, content_rect, anchor_bottom + 1)
         speaker_base = scaled_field(
             speaker_prototype, image, coordinate_settings, content_rect
@@ -226,13 +232,31 @@ def _detect_single_screen(
         blank_dialogue = not _region_has_bright_or_dark_text(image, dialogue)
         if speakerless and blank_dialogue:
             dialogue = replace(dialogue, known_empty=True)
+        candidate_fields = []
+        if supplement_region is not None:
+            candidate_fields.append(
+                replace(
+                    dialogue_prototype,
+                    name="補助テキスト候補",
+                    x1=supplement_region[0],
+                    y1=supplement_region[1],
+                    x2=supplement_region[2],
+                    y2=supplement_region[3],
+                    source_width=0,
+                    source_height=0,
+                    pair_id=0,
+                    dialogue_role="",
+                    ocr_line_split="detected",
+                )
+            )
         return DialoguePairDetectionResult(
             [(1, speaker, dialogue)],
+            candidate_fields=candidate_fields,
             layout="needs_review" if supplement_candidate else ("speakerless" if speakerless else "normal"),
             allow_empty_speaker=speakerless,
             allow_empty_dialogue=speakerless and blank_dialogue,
             review_reason=(
-                "補助テキスト候補があるため、読み取り範囲の確認が必要です。"
+                "補助テキスト候補を検出しました。候補項目を選択して読み取り結果を確認してください。"
                 if supplement_candidate
                 else ""
             ),
@@ -379,11 +403,11 @@ def _region_has_bright_or_dark_text(
     return dark / max(1, len(pixels)) > 0.004
 
 
-def _has_supplement_candidate(
+def _supplement_candidate_region(
     image: Image.Image,
     content_rect: tuple[int, int, int, int],
     anchor_top: int,
-) -> bool:
+) -> tuple[int, int, int, int] | None:
     left, top, right, bottom = content_rect
     width = right - left
     height = bottom - top
@@ -411,11 +435,17 @@ def _has_supplement_candidate(
             clusters.append([y])
         else:
             clusters[-1].append(y)
-    return any(
-        cluster[-1] - cluster[0] + 1 >= max(18, round(height * 0.03))
-        and len(cluster) / (cluster[-1] - cluster[0] + 1) >= 0.45
+    valid = [
+        cluster
         for cluster in clusters
-    )
+        if cluster[-1] - cluster[0] + 1 >= max(18, round(height * 0.03))
+        and len(cluster) / (cluster[-1] - cluster[0] + 1) >= 0.45
+    ]
+    if not valid:
+        return None
+    cluster = max(valid, key=lambda item: item[-1] - item[0])
+    padding = max(8, round(height * 0.012))
+    return (x1, max(top, cluster[0] - padding), x2, min(anchor_top, cluster[-1] + 1 + padding))
 
 
 def _narrator_region(
