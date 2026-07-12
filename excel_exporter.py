@@ -112,7 +112,7 @@ class ExcelExporter:
         progress_callback: Callable[[int, int, Path], None] | None = None,
         dialogue_pair_resolver: DialoguePairResolver | None = None,
     ) -> ExportResult:
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR and dialogue_pair_resolver is None:
             pair_error = dialogue_pair_validation_error(fields)
             if pair_error:
                 raise ValueError(pair_error)
@@ -163,7 +163,7 @@ class ExcelExporter:
         progress_callback: Callable[[int, int, Path], None] | None = None,
         dialogue_pair_resolver: DialoguePairResolver | None = None,
     ) -> ExportResult:
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR and dialogue_pair_resolver is None:
             pair_error = dialogue_pair_validation_error(fields)
             if pair_error:
                 raise ValueError(pair_error)
@@ -265,11 +265,15 @@ class ExcelExporter:
         errors: list[ExportError] = []
         notices: list[ExportNotice] = []
         rows: list[list[str]] = []
+        allow_empty_speaker = False
+        allow_empty_dialogue = False
         if dialogue_pair_resolver is None:
             groups = dialogue_pair_groups(fields)
         else:
             detection = dialogue_pair_resolver(image, fields)
             groups = detection.groups
+            allow_empty_speaker = detection.allow_empty_speaker
+            allow_empty_dialogue = detection.allow_empty_dialogue
             notices.extend(
                 ExportNotice(image_path.name, message)
                 for message in detection.notices
@@ -279,7 +283,8 @@ class ExcelExporter:
                     ExportError(
                         image_path.name,
                         "会話ペア検出",
-                        "完全な話者・セリフの組を検出できませんでした。",
+                        detection.review_reason
+                        or "完全な話者・セリフの組を検出できませんでした。",
                     )
                 )
         for pair_id, speaker_field, dialogue_field in groups:
@@ -293,9 +298,17 @@ class ExcelExporter:
             if dialogue_text is None:
                 errors.append(ExportError(image_path.name, dialogue_field.name, dialogue_error or "OCRに失敗しました。"))
                 dialogue_text = ""
-            if not speaker_failed and not speaker_text.strip():
+            if (
+                not speaker_failed
+                and not speaker_text.strip()
+                and not allow_empty_speaker
+            ):
                 errors.append(ExportError(image_path.name, speaker_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
-            if not dialogue_failed and not dialogue_text.strip():
+            if (
+                not dialogue_failed
+                and not dialogue_text.strip()
+                and not allow_empty_dialogue
+            ):
                 errors.append(ExportError(image_path.name, dialogue_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
             row = [str(pair_id), speaker_text, dialogue_text]
             if settings.include_filename:

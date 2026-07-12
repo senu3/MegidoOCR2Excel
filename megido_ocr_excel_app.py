@@ -5048,6 +5048,8 @@ class ImageOcrExcelApp:
     def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
         if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
             return None
+        if self.profile.dialogue_log_detection is not None and len(fields) >= 2:
+            return None
         return dialogue_pair_validation_error(fields)
 
     def _initial_zoom(self) -> float:

@@ -79,6 +79,77 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual(len(result.notices), 2)
             self.assertIn("Notices", load_workbook(output).sheetnames)
 
+    def test_single_screen_patterns_are_classified_safely(self) -> None:
+        template = load_template(
+            Path(".samples/megido_novel_template.json"),
+            expected_profile_id="megido_novel",
+        )
+        fields = fields_from_template(template)
+        settings = coordinate_settings_from_template(template)
+        assert PROFILE.dialogue_log_detection is not None
+
+        normal = detect_complete_dialogue_pairs(
+            Image.open(".samples/9.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+        speakerless = detect_complete_dialogue_pairs(
+            Image.open(".samples/c.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+        narration = detect_complete_dialogue_pairs(
+            Image.open(".samples/d.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+        supplement = detect_complete_dialogue_pairs(
+            Image.open(".samples/e.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(normal.layout, "normal")
+        self.assertEqual(len(normal.groups), 1)
+        self.assertEqual(speakerless.layout, "speakerless")
+        self.assertTrue(speakerless.allow_empty_speaker)
+        self.assertTrue(speakerless.allow_empty_dialogue)
+        self.assertEqual(narration.layout, "narration")
+        self.assertTrue(narration.allow_empty_speaker)
+        self.assertEqual(supplement.layout, "needs_review")
+        self.assertIn("補助テキスト", supplement.review_reason)
+
+    def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
+        template = load_template(
+            Path(".samples/megido_novellog_template.json"),
+            expected_profile_id="megido_novel",
+        )
+        fields = fields_from_template(template)
+        coordinate_settings = coordinate_settings_from_template(template)
+        assert PROFILE.dialogue_log_detection is not None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "blank.xlsx"
+            result = ExcelExporter().export(
+                output,
+                [Path(".samples/c.png")],
+                fields,
+                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                lambda _image, _field: ("", None),
+                dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
+                    image,
+                    detection_fields,
+                    coordinate_settings,
+                    PROFILE.dialogue_log_detection,
+                ),
+            )
+
+            self.assertEqual(result.errors, [])
+            self.assertEqual(result.records[0].row_count, 1)
+
     def test_black_letterbox_content_rect_is_detected(self) -> None:
         image = Image.new("RGB", (100, 120), "black")
         image.paste(Image.new("RGB", (100, 80), "#303030"), (0, 20))

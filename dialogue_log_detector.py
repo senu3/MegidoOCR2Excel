@@ -18,6 +18,10 @@ class DialoguePairDetectionResult:
     groups: list[tuple[int, TemplateField, TemplateField]]
     skipped_leading: int = 0
     skipped_trailing: int = 0
+    layout: str = "unknown"
+    allow_empty_speaker: bool = False
+    allow_empty_dialogue: bool = False
+    review_reason: str = ""
 
     @property
     def notices(self) -> list[str]:
@@ -28,6 +32,8 @@ class DialoguePairDetectionResult:
             messages.append(
                 f"画面下端で途切れている会話 {self.skipped_trailing} 件を除外しました。"
             )
+        if self.review_reason:
+            messages.append(self.review_reason)
         return messages
 
 
@@ -38,7 +44,22 @@ def detect_complete_dialogue_pairs(
     config: DialogueLogDetectionConfig,
 ) -> DialoguePairDetectionResult:
     prototypes = dialogue_pair_groups(fields)
-    if not prototypes:
+    if prototypes:
+        _pair_id, speaker_prototype, dialogue_prototype = prototypes[0]
+    else:
+        dialogue_prototype = next(
+            (
+                field
+                for field in fields
+                if field.ocr_line_split == "detected"
+                or field.name.startswith(("セリフ", "本文"))
+            ),
+            None,
+        )
+        speaker_prototype = next(
+            (field for field in fields if field is not dialogue_prototype), None
+        )
+    if speaker_prototype is None or dialogue_prototype is None:
         return DialoguePairDetectionResult([])
 
     content_rect = _target_content_rect(image, fields, coordinate_settings)
@@ -64,13 +85,23 @@ def detect_complete_dialogue_pairs(
         max_height,
     )
     pair_height = max(1, round(content_height * config.pair_height_ratio))
-    complete = [band for band in anchors if band[0] + pair_height <= log_bottom]
-    skipped_trailing = len(anchors) - len(complete)
+    log_anchors = _regular_anchor_sequence(anchors, pair_height)
+    if len(log_anchors) < 2:
+        return _detect_single_screen(
+            image,
+            speaker_prototype=speaker_prototype,
+            dialogue_prototype=dialogue_prototype,
+            content_rect=(0, 0, image.width, image.height),
+            coordinate_settings=coordinate_settings,
+            config=config,
+        )
+
+    complete = [band for band in log_anchors if band[0] + pair_height <= log_bottom]
+    skipped_trailing = len(log_anchors) - len(complete)
     skipped_leading = int(
-        bool(anchors) and anchors[0][0] - log_top > pair_height * 0.6
+        bool(log_anchors) and log_anchors[0][0] - log_top > pair_height * 0.6
     )
 
-    _pair_id, speaker_prototype, dialogue_prototype = prototypes[0]
     speaker_base = scaled_field(
         speaker_prototype, image, coordinate_settings, content_rect
     )
@@ -97,7 +128,124 @@ def detect_complete_dialogue_pairs(
             pair_id=pair_id,
         )
         groups.append((pair_id, speaker, dialogue))
-    return DialoguePairDetectionResult(groups, skipped_leading, skipped_trailing)
+    return DialoguePairDetectionResult(
+        groups,
+        skipped_leading,
+        skipped_trailing,
+        layout="log",
+    )
+
+
+def _regular_anchor_sequence(
+    anchors: list[tuple[int, int]], pair_height: int
+) -> list[tuple[int, int]]:
+    best: list[tuple[int, int]] = []
+    for start_index, anchor in enumerate(anchors):
+        sequence = [anchor]
+        for candidate in anchors[start_index + 1 :]:
+            gap = candidate[0] - sequence[-1][0]
+            if pair_height * 0.85 <= gap <= pair_height * 1.5:
+                sequence.append(candidate)
+        if len(sequence) > len(best):
+            best = sequence
+    return best
+
+
+def _detect_single_screen(
+    image: Image.Image,
+    speaker_prototype: TemplateField,
+    dialogue_prototype: TemplateField,
+    content_rect: tuple[int, int, int, int],
+    coordinate_settings: CoordinateSettings,
+    config: DialogueLogDetectionConfig,
+) -> DialoguePairDetectionResult:
+    left, top, right, bottom = content_rect
+    width = right - left
+    height = bottom - top
+    all_bands = _speaker_bar_bands(
+        image,
+        round(left + width * config.anchor_x1_ratio),
+        round(left + width * config.anchor_x2_ratio),
+        round(top + height * config.normal_anchor_top_ratio),
+        round(top + height * config.normal_anchor_bottom_ratio),
+        config.row_match_ratio,
+        config.max_band_gap,
+        max(8, round(height * 0.01)),
+        max(12, round(height * 0.05)),
+    )
+    if all_bands:
+        anchor_top, anchor_bottom = all_bands[-1]
+        if _has_supplement_candidate(image, content_rect, anchor_top):
+            return DialoguePairDetectionResult(
+                [],
+                layout="needs_review",
+                review_reason="補助テキスト候補があるため、読み取り範囲の確認が必要です。",
+            )
+        panel_bottom = _light_panel_bottom(image, content_rect, anchor_bottom + 1)
+        speaker_base = scaled_field(
+            speaker_prototype, image, coordinate_settings, content_rect
+        )
+        dialogue_base = scaled_field(
+            dialogue_prototype, image, coordinate_settings, content_rect
+        )
+        speaker = replace(
+            speaker_base,
+            x1=round(left + width * config.normal_speaker_x1_ratio),
+            x2=round(left + width * config.normal_speaker_x2_ratio),
+            y1=anchor_top,
+            y2=anchor_bottom + 1,
+            source_width=0,
+            source_height=0,
+            pair_id=1,
+        )
+        dialogue = replace(
+            dialogue_base,
+            x1=round(left + width * config.normal_dialogue_x1_ratio),
+            x2=round(left + width * config.normal_dialogue_x2_ratio),
+            y1=anchor_bottom + 1,
+            y2=panel_bottom,
+            source_width=0,
+            source_height=0,
+            pair_id=1,
+        )
+        speakerless = not _bar_has_text(image, speaker)
+        blank_dialogue = not _region_has_bright_or_dark_text(image, dialogue)
+        return DialoguePairDetectionResult(
+            [(1, speaker, dialogue)],
+            layout="speakerless" if speakerless else "normal",
+            allow_empty_speaker=speakerless,
+            allow_empty_dialogue=speakerless and blank_dialogue,
+        )
+
+    narrator = _narrator_region(image, content_rect)
+    if narrator is not None:
+        speaker = replace(
+            speaker_prototype,
+            x1=narrator[0],
+            y1=narrator[1],
+            x2=narrator[0] + 1,
+            y2=narrator[1] + 1,
+            source_width=0,
+            source_height=0,
+            pair_id=1,
+        )
+        dialogue = replace(
+            dialogue_prototype,
+            x1=narrator[0],
+            y1=narrator[1],
+            x2=narrator[2],
+            y2=narrator[3],
+            source_width=0,
+            source_height=0,
+            pair_id=1,
+            ocr_line_split="detected",
+        )
+        return DialoguePairDetectionResult(
+            [(1, speaker, dialogue)],
+            layout="narration",
+            allow_empty_speaker=True,
+        )
+    return DialoguePairDetectionResult([])
 
 
 def _target_content_rect(
@@ -159,3 +307,119 @@ def _speaker_bar_bands(
         for start, end in bands
         if min_height <= end - start + 1 <= max_height
     ]
+
+
+def _light_panel_bottom(
+    image: Image.Image,
+    content_rect: tuple[int, int, int, int],
+    start_y: int,
+) -> int:
+    left, _top, right, bottom = content_rect
+    rgb = image.convert("RGB")
+    x1 = round(left + (right - left) * 0.04)
+    x2 = round(left + (right - left) * 0.96)
+    step = max(1, (x2 - x1) // 120)
+    last_light = start_y
+    dark_run = 0
+    for y in range(start_y, min(image.height, bottom)):
+        pixels = [rgb.getpixel((x, y)) for x in range(x1, x2, step)]
+        light_ratio = sum(sum(pixel) / 3 > 125 for pixel in pixels) / max(
+            1, len(pixels)
+        )
+        if light_ratio >= 0.35:
+            last_light = y
+            dark_run = 0
+        else:
+            dark_run += 1
+            if dark_run >= max(8, round(image.height * 0.008)):
+                break
+    return max(start_y + 1, last_light + 1)
+
+
+def _bar_has_text(image: Image.Image, field: TemplateField) -> bool:
+    text_right = field.x1 + max(1, round((field.x2 - field.x1) * 0.45))
+    crop = image.crop((field.x1, field.y1, text_right, field.y2)).convert("RGB")
+    pixels = list(crop.get_flattened_data())
+    bright = sum(min(pixel) > 175 for pixel in pixels)
+    return bright / max(1, len(pixels)) > 0.008
+
+
+def _region_has_bright_or_dark_text(
+    image: Image.Image, field: TemplateField
+) -> bool:
+    crop = image.crop((field.x1, field.y1, field.x2, field.y2)).convert("L")
+    pixels = list(crop.get_flattened_data())
+    dark = sum(value < 70 for value in pixels)
+    return dark / max(1, len(pixels)) > 0.004
+
+
+def _has_supplement_candidate(
+    image: Image.Image,
+    content_rect: tuple[int, int, int, int],
+    anchor_top: int,
+) -> bool:
+    left, top, right, bottom = content_rect
+    width = right - left
+    height = bottom - top
+    x1 = round(left + width * 0.15)
+    x2 = round(left + width * 0.85)
+    y1 = max(top, round(anchor_top - height * 0.18))
+    y2 = max(y1, round(anchor_top - height * 0.03))
+    rgb = image.convert("RGB")
+    step = max(1, (x2 - x1) // 140)
+    candidate_rows = 0
+    for y in range(y1, y2):
+        pixels = [rgb.getpixel((x, y)) for x in range(x1, x2, step)]
+        blue_ratio = sum(
+            blue > red * 1.18 and blue > green * 1.03 and 40 < blue < 190
+            for red, green, blue in pixels
+        ) / max(1, len(pixels))
+        white_ratio = sum(min(pixel) > 180 for pixel in pixels) / max(
+            1, len(pixels)
+        )
+        if blue_ratio > 0.25 and white_ratio > 0.01:
+            candidate_rows += 1
+    return candidate_rows >= max(10, round(height * 0.02))
+
+
+def _narrator_region(
+    image: Image.Image,
+    content_rect: tuple[int, int, int, int],
+) -> tuple[int, int, int, int] | None:
+    left, top, right, bottom = content_rect
+    width = right - left
+    height = bottom - top
+    rgb = image.convert("RGB")
+    sample_step = max(1, min(width, height) // 180)
+    samples = [
+        rgb.getpixel((x, y))
+        for y in range(top, bottom, sample_step)
+        for x in range(left, right, sample_step)
+    ]
+    black_ratio = sum(max(pixel) < 28 for pixel in samples) / max(1, len(samples))
+    if black_ratio < 0.82:
+        return None
+
+    search_x1 = round(left + width * 0.15)
+    search_x2 = round(left + width * 0.85)
+    search_y1 = round(top + height * 0.22)
+    search_y2 = round(top + height * 0.78)
+    points: list[tuple[int, int]] = []
+    point_step = max(1, width // 540)
+    for y in range(search_y1, search_y2, point_step):
+        for x in range(search_x1, search_x2, point_step):
+            red, green, blue = rgb.getpixel((x, y))
+            if min(red, green, blue) > 165 and max(red, green, blue) - min(
+                red, green, blue
+            ) < 55:
+                points.append((x, y))
+    if len(points) < 30:
+        return None
+    padding_x = max(12, round(width * 0.025))
+    padding_y = max(12, round(height * 0.015))
+    return (
+        max(left, min(x for x, _y in points) - padding_x),
+        max(top, min(y for _x, y in points) - padding_y),
+        min(right, max(x for x, _y in points) + padding_x),
+        min(bottom, max(y for _x, y in points) + padding_y),
+    )

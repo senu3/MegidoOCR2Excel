@@ -34,6 +34,12 @@ class DialogueLogDetectionConfig:
     max_bar_height_ratio: float = 0.03
     row_match_ratio: float = 0.5
     max_band_gap: int = 4
+    normal_anchor_top_ratio: float = 0.62
+    normal_anchor_bottom_ratio: float = 0.82
+    normal_speaker_x1_ratio: float = 0.05
+    normal_speaker_x2_ratio: float = 0.72
+    normal_dialogue_x1_ratio: float = 0.04
+    normal_dialogue_x2_ratio: float = 0.96
 
 
 @dataclass(frozen=True)
