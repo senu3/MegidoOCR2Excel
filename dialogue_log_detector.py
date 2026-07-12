@@ -86,7 +86,7 @@ def detect_complete_dialogue_pairs(
     )
     pair_height = max(1, round(content_height * config.pair_height_ratio))
     log_anchors = _regular_anchor_sequence(anchors, pair_height)
-    if len(log_anchors) < 2:
+    if len(log_anchors) < 3:
         return _detect_single_screen(
             image,
             speaker_prototype=speaker_prototype,
@@ -367,7 +367,7 @@ def _has_supplement_candidate(
     y2 = max(y1, round(anchor_top - height * 0.03))
     rgb = image.convert("RGB")
     step = max(1, (x2 - x1) // 140)
-    candidate_rows = 0
+    candidate_rows: list[int] = []
     for y in range(y1, y2):
         pixels = [rgb.getpixel((x, y)) for x in range(x1, x2, step)]
         blue_ratio = sum(
@@ -377,9 +377,19 @@ def _has_supplement_candidate(
         white_ratio = sum(min(pixel) > 180 for pixel in pixels) / max(
             1, len(pixels)
         )
-        if blue_ratio > 0.25 and white_ratio > 0.01:
-            candidate_rows += 1
-    return candidate_rows >= max(10, round(height * 0.02))
+        if blue_ratio > 0.48 and white_ratio > 0.06:
+            candidate_rows.append(y)
+    clusters: list[list[int]] = []
+    for y in candidate_rows:
+        if not clusters or y - clusters[-1][-1] > 10:
+            clusters.append([y])
+        else:
+            clusters[-1].append(y)
+    return any(
+        cluster[-1] - cluster[0] + 1 >= max(18, round(height * 0.03))
+        and len(cluster) / (cluster[-1] - cluster[0] + 1) >= 0.45
+        for cluster in clusters
+    )
 
 
 def _narrator_region(

@@ -80,6 +80,48 @@ class AutoHideScrollableFrameTests(unittest.TestCase):
         frame._scrollbar.grid.assert_called_once()
 
 
+class WorkflowChoiceTests(unittest.TestCase):
+    def _logic_only_app(self) -> ImageOcrExcelApp:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.profile = APP_PROFILE
+        app._dirty_tracking_suspended = False
+        app.workflow_started = False
+        app.auto_detection_enabled = False
+        app.auto_detection_base_fields = []
+        app.fields = []
+        app.selected_index = None
+        app.export_layout_var = MagicMock()
+        app.mode_var = MagicMock()
+        app.open_image_folder = MagicMock(return_value=True)
+        app._mark_clean = MagicMock()
+        app._show_workflow_choice = MagicMock()
+        app._render_side_body = MagicMock()
+        return app
+
+    def test_auto_detection_choice_creates_internal_conversation_fields(self) -> None:
+        app = self._logic_only_app()
+
+        app.start_auto_detection_workflow()
+
+        self.assertTrue(app.workflow_started)
+        self.assertTrue(app.auto_detection_enabled)
+        self.assertEqual(len(app.fields), 2)
+        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_SPEAKER)
+        self.assertEqual(app.fields[1].dialogue_role, DIALOGUE_ROLE_TEXT)
+        self.assertEqual(app.fields[1].ocr_line_split, "detected")
+        app.open_image_folder.assert_called_once()
+
+    def test_new_template_choice_keeps_the_field_list_empty(self) -> None:
+        app = self._logic_only_app()
+
+        app.start_new_template_workflow()
+
+        self.assertTrue(app.workflow_started)
+        self.assertFalse(app.auto_detection_enabled)
+        self.assertEqual(app.fields, [])
+        app.open_image_folder.assert_called_once()
+
+
 class DirtyStateTests(unittest.TestCase):
     def test_dirty_indicators_unsaved_cancel_and_busy_close_protection(self) -> None:
         root = ctk.CTk()

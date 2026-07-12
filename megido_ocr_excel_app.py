@@ -179,6 +179,11 @@ class ImageOcrExcelApp:
         self.source_folder: Path | None = None
         self.output_path: Path | None = None
         self.template_path: Path | None = None
+        self.workflow_started = False
+        self.auto_detection_enabled = False
+        self.auto_detection_base_fields: list[TemplateField] = []
+        self.current_detection_layout = ""
+        self.current_detection_reason = ""
 
         self.original_image: Image.Image | None = None
         self.preview_image: ImageTk.PhotoImage | None = None
@@ -264,6 +269,8 @@ class ImageOcrExcelApp:
         self.correction_rules_host: ctk.CTkFrame | None = None
         self.template_fields_scroller: AutoHideScrollableFrame | None = None
         self.canvas: Canvas
+        self.canvas_frame: ctk.CTkFrame | None = None
+        self.workflow_choice_overlay: ctk.CTkFrame | None = None
         self.hbar: ctk.CTkScrollbar | None = None
         self.vbar: ctk.CTkScrollbar | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
@@ -364,6 +371,7 @@ class ImageOcrExcelApp:
             canvas_area, corner_radius=0, fg_color=COLOR_CANVAS_PANEL
         )
         canvas_frame.pack(side=TOP, fill=BOTH, expand=True)
+        self.canvas_frame = canvas_frame
         self.canvas = Canvas(canvas_frame, bg=COLOR_CANVAS_BG, highlightthickness=0)
         self.hbar = ctk.CTkScrollbar(
             canvas_frame,
@@ -458,6 +466,7 @@ class ImageOcrExcelApp:
         self.side_body.pack(side=TOP, fill=BOTH, expand=True)
         self._render_side_body()
         self._build_loading_overlay()
+        self._build_workflow_choice_overlay()
 
     def _toolbar_button(
         self, parent, text: str, icon: str, command, fg: str, hover: str, width: int
@@ -506,6 +515,64 @@ class ImageOcrExcelApp:
         self.loading_progress.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 18))
         self.loading_overlay = overlay
         self.loading_overlay.place_forget()
+
+    def _build_workflow_choice_overlay(self) -> None:
+        if self.canvas_frame is None:
+            return
+        overlay = ctk.CTkFrame(
+            self.canvas_frame,
+            width=470,
+            corner_radius=THEME.layout.panel_radius,
+            fg_color=COLOR_SURFACE,
+            border_width=1,
+            border_color=COLOR_BORDER,
+        )
+        overlay.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            overlay,
+            text="OCRを開始",
+            image=ICONS.get("scan", 26, COLOR_PRIMARY),
+            compound="top",
+            font=UI_FONT_TITLE,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 8))
+        ctk.CTkLabel(
+            overlay,
+            text="会話画面なら読み取り範囲を自動で判定できます。\n独自の範囲を作る場合は新規テンプレートを選択してください。",
+            justify="center",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+            wraplength=390,
+        ).grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 20))
+        ctk.CTkButton(
+            overlay,
+            text="会話を自動検出",
+            image=ICONS.get("scan", 18, THEME.palette.on_color),
+            compound="left",
+            command=self.start_auto_detection_workflow,
+            height=THEME.layout.primary_button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_BOLD,
+            fg_color=COLOR_PRIMARY,
+            hover_color=COLOR_PRIMARY_HOVER,
+        ).grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 8))
+        ctk.CTkButton(
+            overlay,
+            text="新規テンプレート",
+            image=ICONS.get("plus", 17, COLOR_TEXT),
+            compound="left",
+            command=self.start_new_template_workflow,
+            height=THEME.layout.primary_button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+        ).grid(row=3, column=0, sticky="ew", padx=28, pady=(0, 26))
+        self.workflow_choice_overlay = overlay
+        overlay.place(relx=0.5, rely=0.5, anchor="center")
+        overlay.lift()
 
     def _show_loading(self, message: str) -> None:
         self.loading_var.set(message)
@@ -2479,10 +2546,79 @@ class ImageOcrExcelApp:
         )
         return editor
 
-    def open_image_folder(self) -> None:
+    def start_auto_detection_workflow(self) -> None:
+        self.workflow_started = True
+        self.auto_detection_enabled = True
+        speaker = TemplateField(
+            "話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
+        )
+        dialogue = TemplateField(
+            "セリフ本文",
+            0,
+            0,
+            1,
+            1,
+            pair_id=1,
+            dialogue_role=DIALOGUE_ROLE_TEXT,
+            ocr_line_split="detected",
+        )
+        for field in (speaker, dialogue):
+            for key, value in self.profile.field_ocr_preset(field.name).items():
+                setattr(field, key, value)
+        self.auto_detection_base_fields = [speaker, dialogue]
+        self.fields = [replace(field) for field in self.auto_detection_base_fields]
+        self.selected_index = 0
+        with self._without_dirty_tracking():
+            self.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            self.mode_var.set(MODE_REVIEW)
+        if not self.open_image_folder():
+            self.workflow_started = False
+            self.auto_detection_enabled = False
+            self.auto_detection_base_fields = []
+            self.fields = []
+            self.selected_index = None
+            with self._without_dirty_tracking():
+                self.export_layout_var.set(EXPORT_LAYOUT_IMAGE_ROW)
+                self.mode_var.set(MODE_TEMPLATE)
+            self._show_workflow_choice()
+            self._render_side_body()
+            return
+        self._mark_clean()
+
+    def start_new_template_workflow(self) -> None:
+        self.workflow_started = True
+        self.auto_detection_enabled = False
+        self.auto_detection_base_fields = []
+        self.fields = []
+        self.selected_index = None
+        with self._without_dirty_tracking():
+            self.export_layout_var.set(EXPORT_LAYOUT_IMAGE_ROW)
+            self.mode_var.set(MODE_TEMPLATE)
+        if not self.open_image_folder():
+            self.workflow_started = False
+            self._show_workflow_choice()
+            return
+        self._mark_clean()
+
+    def _show_workflow_choice(self) -> None:
+        if self.workflow_choice_overlay is not None:
+            self.workflow_choice_overlay.place(
+                relx=0.5, rely=0.5, anchor="center"
+            )
+            self.workflow_choice_overlay.lift()
+
+    def _hide_workflow_choice(self) -> None:
+        if self.workflow_choice_overlay is not None:
+            self.workflow_choice_overlay.place_forget()
+
+    def open_image_folder(self) -> bool:
+        if not self.workflow_started:
+            self._show_workflow_choice()
+            self.status_var.set("最初に処理方法を選択してください。")
+            return False
         folder_name = filedialog.askdirectory(title="画像フォルダを選択")
         if not folder_name:
-            return
+            return False
         folder = Path(folder_name)
         files = sorted(
             (
@@ -2496,7 +2632,7 @@ class ImageOcrExcelApp:
             messagebox.showinfo(
                 "画像なし", "選択したフォルダ内に対応画像がありません。"
             )
-            return
+            return False
         self.source_folder = folder
         self.image_files = files
         self.image_queue.reset(files)
@@ -2506,7 +2642,9 @@ class ImageOcrExcelApp:
         self._load_current_image(auto_ocr=False)
         if self.fields and self.mode_var.get() == MODE_TEMPLATE:
             self.mode_var.set(MODE_REVIEW)
+        self._hide_workflow_choice()
         self._render_side_body()
+        return True
 
     def previous_image(self, _event=None) -> None:
         if len(self.image_files) <= 1:
@@ -2536,7 +2674,10 @@ class ImageOcrExcelApp:
             messagebox.showerror("画像エラー", f"画像を開けませんでした。\n{exc}")
             return
         self._refresh_content_mapping()
-        fill_missing_field_source_size(self.fields, self.original_image.size)
+        if self.auto_detection_enabled:
+            self._apply_auto_detection_preview()
+        else:
+            fill_missing_field_source_size(self.fields, self.original_image.size)
         self.zoom = self._initial_zoom()
         self.current_results = [""] * len(self.fields)
         self.current_raw_results = [""] * len(self.fields)
@@ -2561,9 +2702,58 @@ class ImageOcrExcelApp:
                 "画像を読み込みました。認識テストの結果を確認できます。"
             )
         else:
-            self.status_var.set(
-                "画像を読み込みました。認識テストで代表画像を試せます。"
+            if self.auto_detection_enabled:
+                labels = {
+                    "normal": "通常会話を1件検出しました。",
+                    "speakerless": "話者なし会話を1件検出しました。",
+                    "narration": "中央ナレーションを1件検出しました。",
+                    "log": f"会話ログを {len(self.fields) // 2} 件検出しました。",
+                    "needs_review": self.current_detection_reason,
+                    "unknown": "会話を自動検出できませんでした。読み取り範囲を確認してください。",
+                }
+                self.status_var.set(
+                    labels.get(self.current_detection_layout, "自動検出を確認してください。")
+                )
+            else:
+                self.status_var.set(
+                    "画像を読み込みました。認識テストで代表画像を試せます。"
+                )
+
+    def _apply_auto_detection_preview(self) -> None:
+        if self.original_image is None or self.profile.dialogue_log_detection is None:
+            return
+        prototypes = [replace(field) for field in self.auto_detection_base_fields]
+        detection = detect_complete_dialogue_pairs(
+            self.original_image,
+            prototypes,
+            self.coordinate_settings,
+            self.profile.dialogue_log_detection,
+        )
+        self.current_detection_layout = detection.layout
+        self.current_detection_reason = detection.review_reason
+        if not detection.groups:
+            self.fields = prototypes
+            self.selected_index = None
+            return
+        detected_fields: list[TemplateField] = []
+        multiple = len(detection.groups) > 1
+        for pair_id, speaker, dialogue in detection.groups:
+            detected_fields.extend(
+                [
+                    replace(
+                        speaker,
+                        name=f"話者{pair_id}" if multiple else "話者",
+                    ),
+                    replace(
+                        dialogue,
+                        name=(
+                            f"セリフ本文{pair_id}" if multiple else "セリフ本文"
+                        ),
+                    ),
+                ]
             )
+        self.fields = detected_fields
+        self.selected_index = 0
 
     def _refresh_content_mapping(self) -> None:
         self.current_content_rect = None
@@ -2720,6 +2910,9 @@ class ImageOcrExcelApp:
         if not self._confirm_unsaved_changes("別のテンプレートを読み込む"):
             return
         with self._without_dirty_tracking():
+            self.workflow_started = True
+            self.auto_detection_enabled = False
+            self.auto_detection_base_fields = []
             self.fields = fields
             self.pending_dialogue_pair_id = None
             self.pending_dialogue_role = ""
@@ -2743,6 +2936,7 @@ class ImageOcrExcelApp:
             if data.get("tesseract_path"):
                 self.tesseract_var.set(data["tesseract_path"])
         self._mark_clean()
+        self._hide_workflow_choice()
         self.status_var.set(f"テンプレートを読み込みました: {path.name}")
         self._render_side_body()
         self.redraw()

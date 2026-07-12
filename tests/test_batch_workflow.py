@@ -123,6 +123,27 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(supplement.layout, "needs_review")
         self.assertIn("補助テキスト", supplement.review_reason)
 
+    def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:
+        template = load_template(
+            Path(".samples/megido_novel_template.json"),
+            expected_profile_id="megido_novel",
+        )
+        fields = fields_from_template(template)
+        settings = coordinate_settings_from_template(template)
+        assert PROFILE.dialogue_log_detection is not None
+
+        layouts = [
+            detect_complete_dialogue_pairs(
+                Image.open(f".samples/{index}.png"),
+                fields,
+                settings,
+                PROFILE.dialogue_log_detection,
+            ).layout
+            for index in range(1, 10)
+        ]
+
+        self.assertEqual(layouts, ["normal"] * 9)
+
     def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
         template = load_template(
             Path(".samples/megido_novellog_template.json"),
