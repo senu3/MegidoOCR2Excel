@@ -182,12 +182,7 @@ def _detect_single_screen(
     )
     if all_bands:
         anchor_top, anchor_bottom = all_bands[-1]
-        if _has_supplement_candidate(image, content_rect, anchor_top):
-            return DialoguePairDetectionResult(
-                [],
-                layout="needs_review",
-                review_reason="補助テキスト候補があるため、読み取り範囲の確認が必要です。",
-            )
+        supplement_candidate = _has_supplement_candidate(image, content_rect, anchor_top)
         panel_bottom = _light_panel_bottom(image, content_rect, anchor_bottom + 1)
         speaker_base = scaled_field(
             speaker_prototype, image, coordinate_settings, content_rect
@@ -231,9 +226,14 @@ def _detect_single_screen(
         blank_dialogue = not _region_has_bright_or_dark_text(image, dialogue)
         return DialoguePairDetectionResult(
             [(1, speaker, dialogue)],
-            layout="speakerless" if speakerless else "normal",
+            layout="needs_review" if supplement_candidate else ("speakerless" if speakerless else "normal"),
             allow_empty_speaker=speakerless,
             allow_empty_dialogue=speakerless and blank_dialogue,
+            review_reason=(
+                "補助テキスト候補があるため、読み取り範囲の確認が必要です。"
+                if supplement_candidate
+                else ""
+            ),
         )
 
     narrator = _narrator_region(image, content_rect)

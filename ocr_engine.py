@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
 import tempfile
+import threading
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +32,29 @@ else:
 
 FALLBACK_LANG = "eng"
 FALLBACK_BACKEND = "tesseract"
+_PADDLE_IMPORT_LOCK = threading.Lock()
+
+
+class _quiet_paddle_import:
+    """Hide Windows `where ccache` noise emitted during Paddle's lazy import."""
+
+    def __enter__(self) -> None:
+        _PADDLE_IMPORT_LOCK.acquire()
+        self._check_output = subprocess.check_output
+
+        def quiet_check_output(*args: Any, **kwargs: Any) -> Any:
+            kwargs.setdefault("stderr", subprocess.DEVNULL)
+            return self._check_output(*args, **kwargs)
+
+        subprocess.check_output = quiet_check_output
+        self._warnings = warnings.catch_warnings()
+        self._warnings.__enter__()
+        warnings.filterwarnings("ignore", message="No ccache found.*")
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self._warnings.__exit__(exc_type, exc, traceback)
+        subprocess.check_output = self._check_output
+        _PADDLE_IMPORT_LOCK.release()
 
 
 def detect_tesseract() -> str:
@@ -375,7 +401,8 @@ class PaddleBackend:
             return self.instances[paddle_language]
         try:
             os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
-            from paddleocr import PaddleOCR
+            with _quiet_paddle_import():
+                from paddleocr import PaddleOCR
         except ImportError as exc:
             raise RuntimeError("PaddleOCRがインストールされていません。`uv sync` で依存関係を同期してください。") from exc
 
@@ -393,7 +420,8 @@ class PaddleBackend:
         last_error: Exception | None = None
         for kwargs in candidates:
             try:
-                instance = PaddleOCR(**kwargs)
+                with _quiet_paddle_import():
+                    instance = PaddleOCR(**kwargs)
                 self.instances[paddle_language] = instance
                 return instance
             except Exception as exc:
@@ -406,7 +434,8 @@ class PaddleBackend:
             return self.recognition_instances[key]
         try:
             os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
-            from paddleocr import TextRecognition
+            with _quiet_paddle_import():
+                from paddleocr import TextRecognition
         except ImportError as exc:
             raise RuntimeError("PaddleOCRがインストールされていません。`uv sync` で依存関係を同期してください。") from exc
 
@@ -417,7 +446,8 @@ class PaddleBackend:
         last_error: Exception | None = None
         for kwargs in candidates:
             try:
-                instance = TextRecognition(**kwargs)
+                with _quiet_paddle_import():
+                    instance = TextRecognition(**kwargs)
                 self.recognition_instances[key] = instance
                 return instance
             except Exception as exc:
@@ -551,6 +581,12 @@ class OcrEngine:
         return pytesseract.image_to_string(image, lang=lang, config=config)
 
     def recognize_detected_lines(self, crop: Image.Image, field: TemplateField, lang: str, config: str, backend: str) -> str:
+        # PaddleOCR has its own text detector. The recognition-only model loses
+        # text when the simple dark-pixel row detector sees only part of a line.
+        if backend == "paddle":
+            prepared = prepare_for_ocr(crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
+            return self.recognize_prepared(prepared, lang, config, backend)
+
         bands = detect_line_bands(
             crop,
             field.ocr_line_detect_threshold,
@@ -563,11 +599,6 @@ class OcrEngine:
             line_crop = crop.crop((0, y1, crop.width, y2))
             prepared = prepare_for_ocr(line_crop, field.ocr_preprocess, field.ocr_scale, field.ocr_threshold)
             prepared_lines.append(prepared)
-
-        if backend == "paddle":
-            if self.paddle_backend is None:
-                self.paddle_backend = PaddleBackend()
-            return self.paddle_backend.recognize_lines(prepared_lines, lang)
 
         parts: list[str] = []
         for prepared in prepared_lines:

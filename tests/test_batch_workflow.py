@@ -177,6 +177,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(narration.layout, "narration")
         self.assertTrue(narration.allow_empty_speaker)
         self.assertEqual(supplement.layout, "needs_review")
+        self.assertEqual(len(supplement.groups), 1)
         self.assertIn("補助テキスト", supplement.review_reason)
 
     def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:

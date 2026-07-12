@@ -278,6 +278,11 @@ class ExcelExporter:
                 ExportNotice(image_path.name, message)
                 for message in detection.notices
             )
+            if detection.review_reason:
+                errors.append(
+                    ExportError(image_path.name, "会話ペア確認", detection.review_reason)
+                )
+                return [], errors, notices
             if not groups:
                 errors.append(
                     ExportError(
