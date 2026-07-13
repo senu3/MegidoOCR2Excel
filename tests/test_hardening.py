@@ -155,6 +155,7 @@ class WorkflowChoiceTests(unittest.TestCase):
             app.selected_index = 0
             app.mode_var.set(MODE_REVIEW)
 
+            previous_body = app.side_body
             app._render_side_body()
             app.select_review_field(1)
 
@@ -169,6 +170,8 @@ class WorkflowChoiceTests(unittest.TestCase):
             ]
 
             self.assertTrue(app.side_body.winfo_children())
+            self.assertIsNot(app.side_body, previous_body)
+            self.assertFalse(previous_body.winfo_exists())
             self.assertEqual(app.selected_index, 1)
             self.assertEqual(textboxes[0].get("1.0", "end-1c"), "候補結果")
             self.assertFalse(app.dirty)
@@ -376,6 +379,15 @@ class FieldNameInteractionTests(unittest.TestCase):
 
         app.root.after_idle.assert_called_with(app._render_side_body)
         app.root.after_cancel.assert_called_once_with("render-job")
+
+    def test_mode_change_does_not_redraw_the_unchanged_canvas(self) -> None:
+        app = self._logic_only_app()
+        app._schedule_side_body_render = MagicMock()
+
+        app._on_mode_change()
+
+        app._schedule_side_body_render.assert_called_once()
+        app.redraw.assert_not_called()
 
     def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
         app = self._logic_only_app()

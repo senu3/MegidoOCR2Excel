@@ -66,6 +66,7 @@ The three modes are the product structure:
 - Toolbar buttons are compact controls for global image navigation and OCR settings only. Only `画像を開く` uses the primary fill; navigation and settings use neutral icon buttons.
 - Segmented mode switch is the main workflow navigation.
 - Tabs carry the section label; do not repeat tab headings or explanatory text inside the tab body.
+- Tab changes build the next side-panel surface offscreen and swap it in atomically. They do not clear the visible panel first or redraw the unchanged screenshot Canvas.
 - Persistent path displays should use compact names, not full filesystem paths. Keep full paths for dialogs and transient status messages only.
 - Use icon-plus-short-label buttons for frequent actions, and icon-only buttons for compact global controls when the icon is familiar. Icons come from the local monochrome outline system in `megido_icons.py`: 1.75px-equivalent stroke, gently rounded joins, 16/18/20px sizes, and no emoji or Unicode-symbol mixing.
 - Buttons use three roles: purple Primary for one main action per surface, bordered dark Secondary for supporting actions, and neutral icon-only controls for navigation. Standard controls are 32–34px high with 6px corners; final actions are 40px high.

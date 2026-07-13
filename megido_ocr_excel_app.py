@@ -839,14 +839,16 @@ class ImageOcrExcelApp:
 
     def _on_mode_change(self, _value: str | None = None) -> None:
         self._schedule_side_body_render()
-        self.redraw()
 
     def _render_side_body(self) -> None:
         self._side_render_job = None
         if self.side_body is None:
             return
-        for child in self.side_body.winfo_children():
-            child.destroy()
+        previous_body = self.side_body
+        replacement_body = ctk.CTkFrame(
+            previous_body.master, corner_radius=0, fg_color=COLOR_SURFACE
+        )
+        self.side_body = replacement_body
         self.field_row_by_index = {}
         self.field_drag_handle_by_index = {}
         self.dialogue_drop_section_by_pair = {}
@@ -857,12 +859,20 @@ class ImageOcrExcelApp:
         self.correction_rules_host = None
         self.template_fields_scroller = None
         mode = self.mode_var.get()
-        if mode == MODE_TEMPLATE:
-            self._render_template_mode()
-        elif mode == MODE_REVIEW:
-            self._render_review_mode()
-        else:
-            self._render_export_mode()
+        try:
+            if mode == MODE_TEMPLATE:
+                self._render_template_mode()
+            elif mode == MODE_REVIEW:
+                self._render_review_mode()
+            else:
+                self._render_export_mode()
+        except Exception:
+            replacement_body.destroy()
+            self.side_body = previous_body
+            raise
+        previous_body.pack_forget()
+        replacement_body.pack(side=TOP, fill=BOTH, expand=True)
+        previous_body.destroy()
 
     def _schedule_side_body_render(self) -> None:
         if self._side_render_job is not None:
