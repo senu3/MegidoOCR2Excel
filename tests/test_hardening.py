@@ -180,7 +180,7 @@ class WorkflowChoiceTests(unittest.TestCase):
 
 
 class DirtyStateTests(unittest.TestCase):
-    def test_dirty_indicators_unsaved_cancel_and_busy_close_protection(self) -> None:
+    def test_dirty_indicators_unsaved_cancel_and_busy_close_cancellation(self) -> None:
         root = ctk.CTk()
         root.withdraw()
         app = ImageOcrExcelApp(root)
@@ -221,6 +221,21 @@ class DirtyStateTests(unittest.TestCase):
             self.assertTrue(app.dirty)
 
             app.busy = True
+            app._operation_cancel_event = threading.Event()
+            with patch(
+                "megido_ocr_excel_app.messagebox.askyesno", return_value=False
+            ) as ask_cancel:
+                app.confirm_cancel_current_operation()
+
+            ask_cancel.assert_called_once()
+            self.assertFalse(app._operation_cancel_event.is_set())
+
+            with patch(
+                "megido_ocr_excel_app.messagebox.askyesno", return_value=True
+            ):
+                app.confirm_cancel_current_operation()
+
+            self.assertTrue(app._operation_cancel_event.is_set())
             app._operation_cancel_event = threading.Event()
             with patch(
                 "megido_ocr_excel_app.messagebox.askyesno", return_value=True

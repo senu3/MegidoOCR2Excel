@@ -292,7 +292,7 @@ class ImageOcrExcelApp:
         self.vbar: ctk.CTkScrollbar | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
         self.loading_progress: ctk.CTkProgressBar | None = None
-        self.loading_cancel_button: ctk.CTkButton | None = None
+        self.loading_close_button: ctk.CTkButton | None = None
         self._side_render_job: str | None = None
         self.busy = False
         self._operation_cancel_event: threading.Event | None = None
@@ -510,7 +510,7 @@ class ImageOcrExcelApp:
         overlay = ctk.CTkFrame(
             self.root,
             width=360,
-            height=176,
+            height=138,
             corner_radius=THEME.layout.panel_radius,
             fg_color=COLOR_SURFACE,
             border_width=1,
@@ -520,12 +520,27 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(
             overlay,
             textvariable=self.loading_var,
-            anchor="center",
-            justify="center",
+            anchor="w",
+            justify="left",
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
-            wraplength=300,
-        ).grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 10))
+            wraplength=276,
+        ).grid(row=0, column=0, sticky="ew", padx=(22, 6), pady=(18, 10))
+        self.loading_close_button = ctk.CTkButton(
+            overlay,
+            text="",
+            image=ICONS.get("x", 16, COLOR_MUTED),
+            command=self.confirm_cancel_current_operation,
+            width=28,
+            height=28,
+            corner_radius=THEME.layout.control_radius,
+            fg_color="transparent",
+            hover_color=THEME.palette.modal_button_hover,
+            border_width=0,
+        )
+        self.loading_close_button.grid(
+            row=0, column=1, sticky="ne", padx=(0, 8), pady=(8, 0)
+        )
         self.loading_progress = ctk.CTkProgressBar(
             overlay,
             mode="indeterminate",
@@ -533,7 +548,9 @@ class ImageOcrExcelApp:
             fg_color=COLOR_SECONDARY,
             progress_color=THEME.palette.info,
         )
-        self.loading_progress.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 10))
+        self.loading_progress.grid(
+            row=1, column=0, columnspan=2, sticky="ew", padx=22, pady=(0, 10)
+        )
         ctk.CTkLabel(
             overlay,
             textvariable=self.loading_note_var,
@@ -542,21 +559,13 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
             wraplength=310,
-        ).grid(row=2, column=0, sticky="ew", padx=22, pady=(0, 10))
-        self.loading_cancel_button = ctk.CTkButton(
-            overlay,
-            text="処理をキャンセル",
-            command=self.cancel_current_operation,
-            height=THEME.layout.button_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        self.loading_cancel_button.grid(
-            row=3, column=0, sticky="ew", padx=22, pady=(0, 18)
+        ).grid(
+            row=2,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=22,
+            pady=(0, 18),
         )
         self.loading_overlay = overlay
         self.loading_overlay.place_forget()
@@ -621,11 +630,9 @@ class ImageOcrExcelApp:
 
     def _show_loading(self, message: str) -> None:
         self.loading_var.set(message)
-        self.loading_note_var.set("現在処理中の項目が終わり次第、安全に停止します。")
-        if self.loading_cancel_button is not None:
-            self.loading_cancel_button.configure(
-                state="normal", text="処理をキャンセル"
-            )
+        self.loading_note_var.set("処理中の項目が完了するまでお待ちください。")
+        if self.loading_close_button is not None:
+            self.loading_close_button.configure(state="normal")
         if self.loading_overlay is not None:
             self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
             self.loading_overlay.lift()
@@ -717,6 +724,18 @@ class ImageOcrExcelApp:
     def _raise_if_operation_cancelled(self) -> None:
         raise_if_cancelled(self._is_operation_cancelled)
 
+    def confirm_cancel_current_operation(self) -> None:
+        if not self.busy or self._is_operation_cancelled():
+            return
+        if not messagebox.askyesno(
+            "処理をキャンセル",
+            "現在の処理をキャンセルしますか？\n\n"
+            "現在処理中の項目が終わり次第、安全に停止します。"
+            "Excel出力中の場合、未完了の内容は保存されません。",
+        ):
+            return
+        self.cancel_current_operation()
+
     def cancel_current_operation(self) -> None:
         event = self._operation_cancel_event
         if not self.busy or event is None or event.is_set():
@@ -724,10 +743,8 @@ class ImageOcrExcelApp:
         event.set()
         self.status_var.set("キャンセルを受け付けました。安全に停止しています。")
         self.loading_note_var.set("現在処理中の項目が終わるまでお待ちください。")
-        if self.loading_cancel_button is not None:
-            self.loading_cancel_button.configure(
-                state="disabled", text="キャンセル待機中…"
-            )
+        if self.loading_close_button is not None:
+            self.loading_close_button.configure(state="disabled")
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-Left>", self.previous_image)
