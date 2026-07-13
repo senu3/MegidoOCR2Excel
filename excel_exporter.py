@@ -12,6 +12,7 @@ from PIL import Image
 from atomic_io import atomic_save_workbook
 from dialogue_log_detector import DialoguePairDetectionResult
 from ocr_models import EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, TemplateField, dialogue_pair_groups, dialogue_pair_validation_error
+from operation_control import CancelCheck, raise_if_cancelled
 
 
 @dataclass
@@ -112,7 +113,9 @@ class ExcelExporter:
         ocr_callback: OcrCallback,
         progress_callback: Callable[[int, int, Path], None] | None = None,
         dialogue_pair_resolver: DialoguePairResolver | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> ExportResult:
+        raise_if_cancelled(cancel_check)
         if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR and dialogue_pair_resolver is None:
             pair_error = dialogue_pair_validation_error(fields)
             if pair_error:
@@ -129,8 +132,14 @@ class ExcelExporter:
         total = len(image_files)
 
         for row_index, image_path in enumerate(image_files, start=1):
+            raise_if_cancelled(cancel_check)
             rows, image_errors, image_notices = self._recognize_image_rows(
-                image_path, fields, settings, ocr_callback, dialogue_pair_resolver
+                image_path,
+                fields,
+                settings,
+                ocr_callback,
+                dialogue_pair_resolver,
+                cancel_check,
             )
             start_row = row_cursor
             for row in rows:
@@ -146,10 +155,12 @@ class ExcelExporter:
             if progress_callback:
                 progress_callback(row_index, total, image_path)
 
+        raise_if_cancelled(cancel_check)
         self._fit_output_columns(sheet)
         self._write_error_sheet(workbook, errors)
         self._write_notice_sheet(workbook, notices)
 
+        raise_if_cancelled(cancel_check)
         atomic_save_workbook(workbook, output_path)
         return ExportResult(total, errors, records, notices)
 
@@ -163,7 +174,9 @@ class ExcelExporter:
         retry_files: list[Path] | None = None,
         progress_callback: Callable[[int, int, Path], None] | None = None,
         dialogue_pair_resolver: DialoguePairResolver | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> ExportResult:
+        raise_if_cancelled(cancel_check)
         if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR and dialogue_pair_resolver is None:
             pair_error = dialogue_pair_validation_error(fields)
             if pair_error:
@@ -186,12 +199,14 @@ class ExcelExporter:
         total = len(retry_records)
 
         for row_index, record in enumerate(retry_records, start=1):
+            raise_if_cancelled(cancel_check)
             rows, image_errors, image_notices = self._recognize_image_rows(
                 record.image_path,
                 fields,
                 settings,
                 ocr_callback,
                 dialogue_pair_resolver,
+                cancel_check,
             )
             if len(rows) != record.row_count:
                 raise ValueError("出力レイアウトが前回の一括出力から変更されています。全画像を再出力してください。")
@@ -210,9 +225,11 @@ class ExcelExporter:
             if progress_callback:
                 progress_callback(row_index, total, record.image_path)
 
+        raise_if_cancelled(cancel_check)
         self._fit_output_columns(sheet)
         self._write_error_sheet(workbook, errors)
         self._write_notice_sheet(workbook, notices)
+        raise_if_cancelled(cancel_check)
         atomic_save_workbook(workbook, output_path)
         records = [updated_by_path.get(record.image_path, record) for record in previous_result.records]
         return ExportResult(previous_result.total_images, errors, records, notices)
@@ -224,6 +241,7 @@ class ExcelExporter:
         settings: ExportSettings,
         ocr_callback: OcrCallback,
         dialogue_pair_resolver: DialoguePairResolver | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> tuple[list[list[str]], list[ExportError], list[ExportNotice]]:
         try:
             image = Image.open(image_path).convert("RGB")
@@ -239,12 +257,15 @@ class ExcelExporter:
                 settings,
                 ocr_callback,
                 dialogue_pair_resolver,
+                cancel_check,
             )
 
         errors: list[ExportError] = []
         row = [image_path.name] if settings.include_filename else []
         for field in fields:
+            raise_if_cancelled(cancel_check)
             text, error = ocr_callback(image, field)
+            raise_if_cancelled(cancel_check)
             if text is None:
                 errors.append(ExportError(image_path.name, field.name, error or "OCRに失敗しました。"))
                 row.append("")
@@ -262,6 +283,7 @@ class ExcelExporter:
         settings: ExportSettings,
         ocr_callback: OcrCallback,
         dialogue_pair_resolver: DialoguePairResolver | None = None,
+        cancel_check: CancelCheck | None = None,
     ) -> tuple[list[list[str]], list[ExportError], list[ExportNotice]]:
         errors: list[ExportError] = []
         notices: list[ExportNotice] = []
@@ -271,7 +293,9 @@ class ExcelExporter:
         if dialogue_pair_resolver is None:
             groups = dialogue_pair_groups(fields)
         else:
+            raise_if_cancelled(cancel_check)
             detection = dialogue_pair_resolver(image, fields)
+            raise_if_cancelled(cancel_check)
             groups = detection.groups
             allow_empty_speaker = detection.allow_empty_speaker
             allow_empty_dialogue = detection.allow_empty_dialogue
@@ -294,8 +318,11 @@ class ExcelExporter:
                     )
                 )
         for pair_id, speaker_field, dialogue_field in groups:
+            raise_if_cancelled(cancel_check)
             speaker_text, speaker_error = ocr_callback(image, speaker_field)
+            raise_if_cancelled(cancel_check)
             dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
+            raise_if_cancelled(cancel_check)
             speaker_failed = speaker_text is None
             dialogue_failed = dialogue_text is None
             if speaker_text is None:

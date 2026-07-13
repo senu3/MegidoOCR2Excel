@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -220,11 +221,19 @@ class DirtyStateTests(unittest.TestCase):
             self.assertTrue(app.dirty)
 
             app.busy = True
-            with patch("megido_ocr_excel_app.messagebox.showwarning") as showwarning:
+            app._operation_cancel_event = threading.Event()
+            with patch(
+                "megido_ocr_excel_app.messagebox.askyesno", return_value=True
+            ) as askyesno:
                 app.request_close()
 
-            showwarning.assert_called_once()
+            askyesno.assert_called_once()
+            self.assertTrue(app._operation_cancel_event.is_set())
+            self.assertTrue(app._close_after_cancel)
             self.assertTrue(root.winfo_exists())
+            app.busy = False
+            app._operation_cancel_event = None
+            app._close_after_cancel = False
 
             app._mark_clean()
             self.assertFalse(app.dirty)

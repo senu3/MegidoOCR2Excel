@@ -5,12 +5,13 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from PIL import Image
 
 from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
 from dialogue_log_detector import detect_complete_dialogue_pairs, include_supplement_candidates
 from excel_exporter import ExcelExporter, ExportSettings
+from operation_control import OperationCancelled
 from megido_app_config import natural_image_sort_key
 from ocr_engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
 from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error
@@ -20,6 +21,35 @@ from profiles.megido_novel import PROFILE
 
 
 class BatchWorkflowTests(unittest.TestCase):
+    def test_cancelled_export_does_not_replace_existing_workbook(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "1.png"
+            output = root / "output.xlsx"
+            Image.new("RGB", (10, 10), "white").save(image_path)
+            workbook = Workbook()
+            workbook.active["A1"] = "変更前"
+            workbook.save(output)
+            original_bytes = output.read_bytes()
+            cancelled = False
+
+            def recognize(_image, _field):
+                nonlocal cancelled
+                cancelled = True
+                return "未保存", None
+
+            with self.assertRaises(OperationCancelled):
+                ExcelExporter().export(
+                    output,
+                    [image_path],
+                    [TemplateField("本文", 0, 0, 10, 10)],
+                    ExportSettings(write_mode="追記"),
+                    recognize,
+                    cancel_check=lambda: cancelled,
+                )
+
+            self.assertEqual(output.read_bytes(), original_bytes)
+
     def test_detected_lines_support_shared_join_and_fullwidth_settings(self) -> None:
         source = "ABC!? ()\n次の行"
 

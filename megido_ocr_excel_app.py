@@ -80,6 +80,7 @@ from ocr_models import (
     TextFormattingSettings,
     dialogue_pair_validation_error,
 )
+from operation_control import OperationCancelled, raise_if_cancelled
 from profiles.base import OcrProfile
 from template_store import (
     build_template_data,
@@ -255,6 +256,7 @@ class ImageOcrExcelApp:
         self.status_var = StringVar(value=THEME.copy.initial_status)
         self.progress_var = StringVar(value="")
         self.loading_var = StringVar(value="")
+        self.loading_note_var = StringVar(value="")
         self.lang_var = StringVar(value=self.profile.default_lang)
         self.lang_display_var = StringVar(
             value=self._lang_display(self.profile.default_lang)
@@ -290,8 +292,11 @@ class ImageOcrExcelApp:
         self.vbar: ctk.CTkScrollbar | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
         self.loading_progress: ctk.CTkProgressBar | None = None
+        self.loading_cancel_button: ctk.CTkButton | None = None
         self._side_render_job: str | None = None
         self.busy = False
+        self._operation_cancel_event: threading.Event | None = None
+        self._close_after_cancel = False
 
         self._build_ui()
         self._bind_shortcuts()
@@ -505,7 +510,7 @@ class ImageOcrExcelApp:
         overlay = ctk.CTkFrame(
             self.root,
             width=360,
-            height=116,
+            height=176,
             corner_radius=THEME.layout.panel_radius,
             fg_color=COLOR_SURFACE,
             border_width=1,
@@ -528,7 +533,31 @@ class ImageOcrExcelApp:
             fg_color=COLOR_SECONDARY,
             progress_color=THEME.palette.info,
         )
-        self.loading_progress.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 18))
+        self.loading_progress.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 10))
+        ctk.CTkLabel(
+            overlay,
+            textvariable=self.loading_note_var,
+            anchor="center",
+            justify="center",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+            wraplength=310,
+        ).grid(row=2, column=0, sticky="ew", padx=22, pady=(0, 10))
+        self.loading_cancel_button = ctk.CTkButton(
+            overlay,
+            text="処理をキャンセル",
+            command=self.cancel_current_operation,
+            height=THEME.layout.button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+        )
+        self.loading_cancel_button.grid(
+            row=3, column=0, sticky="ew", padx=22, pady=(0, 18)
+        )
         self.loading_overlay = overlay
         self.loading_overlay.place_forget()
 
@@ -592,6 +621,11 @@ class ImageOcrExcelApp:
 
     def _show_loading(self, message: str) -> None:
         self.loading_var.set(message)
+        self.loading_note_var.set("現在処理中の項目が終わり次第、安全に停止します。")
+        if self.loading_cancel_button is not None:
+            self.loading_cancel_button.configure(
+                state="normal", text="処理をキャンセル"
+            )
         if self.loading_overlay is not None:
             self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
             self.loading_overlay.lift()
@@ -613,12 +647,19 @@ class ImageOcrExcelApp:
         self.root.update_idletasks()
 
     def _run_background(
-        self, loading_message: str, work, on_success, on_error=None, on_finally=None
+        self,
+        loading_message: str,
+        work,
+        on_success,
+        on_error=None,
+        on_finally=None,
+        on_cancel=None,
     ) -> None:
         if self.busy:
             self.status_var.set("処理中です。完了までお待ちください。")
             return
         self.busy = True
+        self._operation_cancel_event = threading.Event()
         self._show_loading(loading_message)
 
         def finish_success(result) -> None:
@@ -636,23 +677,57 @@ class ImageOcrExcelApp:
             finally:
                 finish_common()
 
+        def finish_cancelled() -> None:
+            try:
+                if on_cancel is not None:
+                    on_cancel()
+                else:
+                    self.status_var.set("処理をキャンセルしました。")
+            finally:
+                finish_common()
+
         def finish_common() -> None:
             try:
                 if on_finally is not None:
                     on_finally()
             finally:
                 self.busy = False
+                self._operation_cancel_event = None
                 self._hide_loading()
+                if self._close_after_cancel:
+                    self._close_after_cancel = False
+                    self.request_close()
 
         def worker() -> None:
             try:
                 result = work()
+            except OperationCancelled:
+                self.root.after(0, finish_cancelled)
             except Exception as exc:
                 self.root.after(0, lambda error=exc: finish_error(error))
             else:
                 self.root.after(0, lambda value=result: finish_success(value))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _is_operation_cancelled(self) -> bool:
+        event = self._operation_cancel_event
+        return event is not None and event.is_set()
+
+    def _raise_if_operation_cancelled(self) -> None:
+        raise_if_cancelled(self._is_operation_cancelled)
+
+    def cancel_current_operation(self) -> None:
+        event = self._operation_cancel_event
+        if not self.busy or event is None or event.is_set():
+            return
+        event.set()
+        self.status_var.set("キャンセルを受け付けました。安全に停止しています。")
+        self.loading_note_var.set("現在処理中の項目が終わるまでお待ちください。")
+        if self.loading_cancel_button is not None:
+            self.loading_cancel_button.configure(
+                state="disabled", text="キャンセル待機中…"
+            )
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-Left>", self.previous_image)
@@ -725,10 +800,21 @@ class ImageOcrExcelApp:
 
     def request_close(self) -> None:
         if self.busy:
-            messagebox.showwarning(
+            if self._close_after_cancel:
+                messagebox.showinfo(
+                    "停止待機中",
+                    "現在処理中の項目が終わり次第、終了確認へ進みます。",
+                )
+                return
+            if not messagebox.askyesno(
                 "処理中です",
-                "OCRまたはExcel出力が完了するまで終了できません。\n処理完了後にもう一度閉じてください。",
-            )
+                "処理をキャンセルして終了しますか？\n\n"
+                "現在処理中の項目が終わり次第、安全に停止します。"
+                "Excel出力中の場合、未完了の内容は保存されません。",
+            ):
+                return
+            self._close_after_cancel = True
+            self.cancel_current_operation()
             return
         if not self._confirm_unsaved_changes("終了する"):
             return
@@ -4988,6 +5074,7 @@ class ImageOcrExcelApp:
             raw_results = [""] * len(fields)
             results = [""] * len(fields)
             for idx, field in fields:
+                self._raise_if_operation_cancelled()
                 if not field.enabled:
                     continue
                 raw_text, text, error = self.ocr_engine.recognize_field_detail(
@@ -5002,6 +5089,7 @@ class ImageOcrExcelApp:
                 )
                 if error or text is None:
                     raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
+                self._raise_if_operation_cancelled()
                 raw_results[idx] = raw_text or ""
                 results[idx] = text
             return raw_results, results
@@ -5036,6 +5124,7 @@ class ImageOcrExcelApp:
         correction_rules = [replace(rule) for rule in self.correction_rules]
 
         def work() -> tuple[int, str, str]:
+            self._raise_if_operation_cancelled()
             raw_text, text, error = self.ocr_engine.recognize_field_detail(
                 image,
                 field,
@@ -5048,6 +5137,7 @@ class ImageOcrExcelApp:
             )
             if error or text is None:
                 raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
+            self._raise_if_operation_cancelled()
             return idx, raw_text or "", text
 
         def on_success(result: tuple[int, str, str]) -> None:
@@ -5242,6 +5332,7 @@ class ImageOcrExcelApp:
                     and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
                     else None
                 ),
+                cancel_check=self._is_operation_cancelled,
             )
 
         def on_success(result: ExportResult) -> None:
@@ -5292,8 +5383,18 @@ class ImageOcrExcelApp:
         def on_finally() -> None:
             self.progress_var.set("")
 
+        def on_cancel() -> None:
+            self.image_queue.prepare(image_files)
+            self._render_side_body()
+            self.status_var.set("Excel出力をキャンセルしました。ファイルは変更されていません。")
+
         self._run_background(
-            f"Excel出力中です。0 / {total}", work, on_success, on_error, on_finally
+            f"Excel出力中です。0 / {total}",
+            work,
+            on_success,
+            on_error,
+            on_finally,
+            on_cancel,
         )
 
     def retry_failed_images(self) -> None:
@@ -5386,6 +5487,7 @@ class ImageOcrExcelApp:
                     and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
                     else None
                 ),
+                cancel_check=self._is_operation_cancelled,
             )
 
         def on_success(result: ExportResult) -> None:
@@ -5418,8 +5520,18 @@ class ImageOcrExcelApp:
         def on_finally() -> None:
             self.progress_var.set("")
 
+        def on_cancel() -> None:
+            self.image_queue.apply_result(previous_result)
+            self._render_side_body()
+            self.status_var.set("失敗分の再実行をキャンセルしました。Excelは変更されていません。")
+
         self._run_background(
-            f"失敗分を再実行中です。0 / {total}", work, on_success, on_error, on_finally
+            f"失敗分を再実行中です。0 / {total}",
+            work,
+            on_success,
+            on_error,
+            on_finally,
+            on_cancel,
         )
 
     def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
