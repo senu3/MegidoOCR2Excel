@@ -255,12 +255,12 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(supplement.layout, "supplement_candidate")
         self.assertEqual(len(supplement.groups), 1)
         self.assertEqual(len(supplement.candidate_fields), 1)
-        self.assertEqual(supplement.candidate_fields[0].name, "補助テキスト候補")
+        self.assertEqual(supplement.candidate_fields[0].name, "補足セリフ候補")
         self.assertEqual(
             supplement.candidate_fields[0].dialogue_role,
             DIALOGUE_ROLE_SUPPLEMENT,
         )
-        self.assertIn("補助テキスト", supplement.review_reason)
+        self.assertIn("補足セリフ", supplement.review_reason)
 
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
         fields = [
@@ -312,7 +312,7 @@ class BatchWorkflowTests(unittest.TestCase):
             )
             self.assertEqual(
                 [sheet.cell(3, column).value for column in range(2, 5)],
-                ["2", "話者", "補助テキスト候補"],
+                ["2", "話者", "補足セリフ候補"],
             )
 
     def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:

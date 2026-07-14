@@ -276,7 +276,7 @@ def _detect_single_screen(
             candidate_fields.append(
                 replace(
                     dialogue_prototype,
-                    name="補助テキスト候補",
+                    name="補足セリフ候補",
                     x1=supplement_region[0],
                     y1=supplement_region[1],
                     x2=supplement_region[2],
@@ -295,7 +295,7 @@ def _detect_single_screen(
             allow_empty_speaker=speakerless,
             allow_empty_dialogue=speakerless and blank_dialogue,
             review_reason=(
-                "補助テキスト候補を検出しました。必要に応じて候補項目の範囲を修正してください。"
+                "補足セリフ候補を検出しました。必要に応じて候補項目の範囲を修正してください。"
                 if supplement_candidate
                 else ""
             ),

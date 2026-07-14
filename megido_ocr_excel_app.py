@@ -2432,21 +2432,27 @@ class ImageOcrExcelApp:
             padx=(0, 8 if editing else 6),
             pady=(8, 2),
         )
-        badge_color = (
-            THEME.palette.line_badge
-            if field.ocr_line_split == "detected" and field.enabled
-            else COLOR_SECONDARY
-        )
-        ctk.CTkLabel(
+        ocr_mode_menu = ctk.CTkOptionMenu(
             row,
-            text=self._line_split_display(field.ocr_line_split),
-            width=78,
-            height=22,
+            values=OCR_MODE_OPTIONS,
+            command=lambda value, i=idx: self.set_field_line_split(i, value),
+            width=100,
+            height=26,
+            dynamic_resizing=False,
             font=UI_FONT_SMALL,
-            fg_color=badge_color,
-            text_color=THEME.palette.on_color,
-            corner_radius=4,
-        ).grid(row=1, column=4, sticky="e", padx=(4, 2), pady=(0, 8))
+            fg_color=(
+                THEME.palette.line_badge
+                if field.ocr_line_split == "detected" and field.enabled
+                else COLOR_SECONDARY
+            ),
+            button_color=COLOR_PRIMARY,
+            button_hover_color=COLOR_PRIMARY_HOVER,
+            dropdown_fg_color=COLOR_SURFACE_ALT,
+            dropdown_hover_color=COLOR_SECONDARY_HOVER,
+            text_color=COLOR_TEXT,
+        )
+        ocr_mode_menu.set(self._line_split_display(field.ocr_line_split))
+        ocr_mode_menu.grid(row=1, column=4, sticky="e", padx=(4, 8), pady=(0, 8))
         detail_label = ctk.CTkLabel(
             row,
             text=self._field_size_text(field),
@@ -2497,7 +2503,13 @@ class ImageOcrExcelApp:
             )
         excluded = {
             widget
-            for widget in (name_widget, edit_button, more_button, drag_handle)
+            for widget in (
+                name_widget,
+                ocr_mode_menu,
+                edit_button,
+                more_button,
+                drag_handle,
+            )
             if widget is not None
         }
         interactive_children = [
@@ -2588,7 +2600,7 @@ class ImageOcrExcelApp:
 
         role_menu = ctk.CTkOptionMenu(
             row,
-            values=["役割なし", "話者", "セリフ", "補助テキスト"],
+            values=["役割なし", "話者", "セリフ", "補足セリフ"],
             command=lambda value, i=idx: self.set_field_dialogue_role(i, value),
             width=116,
             height=26,
@@ -2661,7 +2673,7 @@ class ImageOcrExcelApp:
         return {
             DIALOGUE_ROLE_SPEAKER: "話者",
             DIALOGUE_ROLE_TEXT: "セリフ",
-            DIALOGUE_ROLE_SUPPLEMENT: "補助テキスト",
+            DIALOGUE_ROLE_SUPPLEMENT: "補足セリフ",
         }.get(role, "役割なし")
 
     def set_field_dialogue_role(self, idx: int, display: str) -> None:
@@ -2670,7 +2682,7 @@ class ImageOcrExcelApp:
         role = {
             "話者": DIALOGUE_ROLE_SPEAKER,
             "セリフ": DIALOGUE_ROLE_TEXT,
-            "補助テキスト": DIALOGUE_ROLE_SUPPLEMENT,
+            "補足セリフ": DIALOGUE_ROLE_SUPPLEMENT,
         }.get(display, "")
         field = self.fields[idx]
         role_changed = field.dialogue_role != role
@@ -2690,7 +2702,7 @@ class ImageOcrExcelApp:
         self._mark_dirty()
         if line_split_changed:
             self.status_var.set(
-                f"{field.name} をセリフに設定し、OCR方式を行切り出しに変更しました。"
+                f"{field.name} を{display}に設定し、OCR方式を行切り出しに変更しました。"
             )
         else:
             self.status_var.set(f"{field.name} の役割を更新しました。")

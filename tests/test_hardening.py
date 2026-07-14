@@ -11,8 +11,8 @@ from PIL import Image
 
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
-from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, AutoHideScrollableFrame, ImageOcrExcelApp
-from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, LINE_JOIN_NEWLINE, TemplateField
+from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
+from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, LINE_JOIN_NEWLINE, TemplateField
 
 
 class _FailingWorkbook:
@@ -140,7 +140,7 @@ class WorkflowChoiceTests(unittest.TestCase):
                     dialogue_role=DIALOGUE_ROLE_SPEAKER,
                 ),
                 TemplateField(
-                    "補助テキスト候補",
+                    "補足セリフ候補",
                     154,
                     1084,
                     870,
@@ -350,7 +350,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         app = self._logic_only_app()
         app.fields = [
             TemplateField(
-                "補助テキスト候補",
+                "補足セリフ候補",
                 0,
                 0,
                 10,
@@ -444,10 +444,58 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.current_results = ["recognized"]
         app.current_raw_results = ["raw"]
 
-        app.set_field_dialogue_role(0, "補助テキスト")
+        app.set_field_dialogue_role(0, "補足セリフ")
 
         self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_SUPPLEMENT)
         self.assertEqual(app.fields[0].ocr_line_split, "detected")
+
+    def test_field_rows_show_only_the_setting_used_by_the_output_layout(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            field = TemplateField(
+                "本文",
+                0,
+                0,
+                10,
+                10,
+                pair_id=1,
+                dialogue_role=DIALOGUE_ROLE_SPEAKER,
+            )
+            app.fields = [field]
+
+            app.export_layout_var.set(EXPORT_LAYOUT_IMAGE_ROW)
+            app._render_side_body()
+            image_row_menus = [
+                widget
+                for widget in app.field_row_by_index[0].winfo_children()
+                if isinstance(widget, ctk.CTkOptionMenu)
+            ]
+
+            self.assertEqual(len(image_row_menus), 1)
+            self.assertEqual(image_row_menus[0].cget("values"), OCR_MODE_OPTIONS)
+            root.update_idletasks()
+            drag_handle = app.field_drag_handle_by_index[0]
+            menu_right = image_row_menus[0].winfo_x() + image_row_menus[0].winfo_width()
+            self.assertGreaterEqual(drag_handle.winfo_x() - menu_right, 8)
+
+            app.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            app._render_side_body()
+            dialogue_row_menus = [
+                widget
+                for widget in app.field_row_by_index[0].winfo_children()
+                if isinstance(widget, ctk.CTkOptionMenu)
+            ]
+
+            self.assertEqual(len(dialogue_row_menus), 1)
+            self.assertEqual(
+                dialogue_row_menus[0].cget("values"),
+                ["役割なし", "話者", "セリフ", "補足セリフ"],
+            )
+            self.assertEqual(field.dialogue_role, DIALOGUE_ROLE_SPEAKER)
+        finally:
+            root.destroy()
 
     def test_unselected_dialogue_pair_draws_only_the_outer_outline(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
