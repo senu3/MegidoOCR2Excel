@@ -7,10 +7,13 @@ from PIL import Image
 from ocr_engine import detect_content_rect, scaled_field
 from ocr_models import (
     CoordinateSettings,
-    DIALOGUE_ROLE_SUPPLEMENT,
+    SET_SLOT_SPEAKER,
+    SET_SLOT_SUPPLEMENT,
+    SET_SLOT_TEXT,
     DialogueLogDetectionConfig,
     TemplateField,
-    dialogue_pair_groups,
+    set_definition_for_preset,
+    set_groups,
 )
 
 
@@ -54,8 +57,8 @@ def include_supplement_candidates(
         approved_groups.append(
             (
                 next_pair_id,
-                replace(speaker, pair_id=next_pair_id),
-                replace(dialogue, pair_id=next_pair_id),
+                replace(speaker, set_id=next_pair_id),
+                replace(dialogue, set_id=next_pair_id),
             )
         )
         next_pair_id += 1
@@ -64,11 +67,11 @@ def include_supplement_candidates(
                 approved_groups.append(
                     (
                         next_pair_id,
-                        replace(speaker, pair_id=next_pair_id),
+                        replace(speaker, set_id=next_pair_id),
                         replace(
                             candidate,
-                            pair_id=next_pair_id,
-                            dialogue_role="dialogue",
+                            set_id=next_pair_id,
+                            slot_key=SET_SLOT_TEXT,
                         ),
                     )
                 )
@@ -87,9 +90,11 @@ def detect_complete_dialogue_pairs(
     coordinate_settings: CoordinateSettings,
     config: DialogueLogDetectionConfig,
 ) -> DialoguePairDetectionResult:
-    prototypes = dialogue_pair_groups(fields)
+    prototypes = set_groups(fields, set_definition_for_preset("conversation"))
     if prototypes:
-        _pair_id, speaker_prototype, dialogue_prototype = prototypes[0]
+        _set_id, slots = prototypes[0]
+        speaker_prototype = slots[SET_SLOT_SPEAKER]
+        dialogue_prototype = slots[SET_SLOT_TEXT]
     else:
         dialogue_prototype = next(
             (
@@ -166,7 +171,8 @@ def detect_complete_dialogue_pairs(
             y2=min(image.height, anchor_bottom + 1 + speaker_padding),
             source_width=0,
             source_height=0,
-            pair_id=pair_id,
+            set_id=pair_id,
+            slot_key=SET_SLOT_SPEAKER,
         )
         dialogue = replace(
             dialogue_base,
@@ -176,7 +182,8 @@ def detect_complete_dialogue_pairs(
             y2=pair_bottom,
             source_width=0,
             source_height=0,
-            pair_id=pair_id,
+            set_id=pair_id,
+            slot_key=SET_SLOT_TEXT,
         )
         groups.append((pair_id, speaker, dialogue))
     return DialoguePairDetectionResult(
@@ -252,7 +259,8 @@ def _detect_single_screen(
             ),
             source_width=0,
             source_height=0,
-            pair_id=1,
+            set_id=1,
+            slot_key=SET_SLOT_SPEAKER,
         )
         dialogue = replace(
             dialogue_base,
@@ -262,7 +270,8 @@ def _detect_single_screen(
             y2=panel_bottom,
             source_width=0,
             source_height=0,
-            pair_id=1,
+            set_id=1,
+            slot_key=SET_SLOT_TEXT,
         )
         speakerless = not _bar_has_text(
             image,
@@ -283,8 +292,8 @@ def _detect_single_screen(
                     y2=supplement_region[3],
                     source_width=0,
                     source_height=0,
-                    pair_id=1,
-                    dialogue_role=DIALOGUE_ROLE_SUPPLEMENT,
+                    set_id=1,
+                    slot_key=SET_SLOT_SUPPLEMENT,
                     ocr_line_split="detected",
                 )
             )
@@ -311,7 +320,8 @@ def _detect_single_screen(
             y2=narrator[1] + 1,
             source_width=0,
             source_height=0,
-            pair_id=1,
+            set_id=1,
+            slot_key=SET_SLOT_SPEAKER,
         )
         dialogue = replace(
             dialogue_prototype,
@@ -321,7 +331,8 @@ def _detect_single_screen(
             y2=narrator[3],
             source_width=0,
             source_height=0,
-            pair_id=1,
+            set_id=1,
+            slot_key=SET_SLOT_TEXT,
             ocr_line_split="detected",
         )
         return DialoguePairDetectionResult(

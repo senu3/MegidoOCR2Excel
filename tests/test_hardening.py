@@ -12,7 +12,7 @@ from PIL import Image
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
-from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, LINE_JOIN_NEWLINE, TemplateField
+from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, TemplateField, set_definition_for_preset
 
 
 class _FailingWorkbook:
@@ -491,9 +491,21 @@ class FieldNameInteractionTests(unittest.TestCase):
             self.assertEqual(len(dialogue_row_menus), 1)
             self.assertEqual(
                 dialogue_row_menus[0].cget("values"),
-                ["役割なし", "話者", "セリフ", "補足セリフ"],
+                ["未割当", "話者", "セリフ", "補足セリフ"],
             )
             self.assertEqual(field.dialogue_role, DIALOGUE_ROLE_SPEAKER)
+
+            app.set_definition = set_definition_for_preset(SET_PRESET_HEADING_TEXT)
+            app._render_side_body()
+            heading_row_menus = [
+                widget
+                for widget in app.field_row_by_index[0].winfo_children()
+                if isinstance(widget, ctk.CTkOptionMenu)
+            ]
+            self.assertEqual(
+                heading_row_menus[0].cget("values"),
+                ["未割当", "見出し", "本文"],
+            )
         finally:
             root.destroy()
 

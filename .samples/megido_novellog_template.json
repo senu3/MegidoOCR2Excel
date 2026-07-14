@@ -13,7 +13,16 @@
     "start_cell": "A1",
     "include_filename": true,
     "include_header": true,
-    "output_layout": "会話ペアごとに1行"
+    "output_layout": "セットごとに1行"
+  },
+  "set_definition": {
+    "preset": "conversation",
+    "name": "会話",
+    "order_label": "順序",
+    "columns": [
+      {"key": "speaker", "label": "話者", "ocr_line_split": "none"},
+      {"key": "text", "label": "セリフ", "ocr_line_split": "detected"}
+    ]
   },
   "coordinate_settings": {
     "coordinate_space": "content",
@@ -54,8 +63,8 @@
       "ocr_line_detect_threshold": 90,
       "ocr_line_detect_min_ratio": 0.015,
       "ocr_line_detect_gap": 10,
-      "pair_id": 1,
-      "dialogue_role": "speaker"
+      "set_id": 1,
+      "slot_key": "speaker"
     },
     {
       "name": "項目2",
@@ -81,8 +90,8 @@
       "ocr_line_detect_threshold": 90,
       "ocr_line_detect_min_ratio": 0.015,
       "ocr_line_detect_gap": 10,
-      "pair_id": 1,
-      "dialogue_role": "dialogue"
+      "set_id": 1,
+      "slot_key": "text"
     },
     {
       "name": "話者2",
@@ -108,8 +117,8 @@
       "ocr_line_detect_threshold": 90,
       "ocr_line_detect_min_ratio": 0.015,
       "ocr_line_detect_gap": 10,
-      "pair_id": 2,
-      "dialogue_role": "speaker"
+      "set_id": 2,
+      "slot_key": "speaker"
     },
     {
       "name": "セリフ本文2",
@@ -135,8 +144,8 @@
       "ocr_line_detect_threshold": 90,
       "ocr_line_detect_min_ratio": 0.015,
       "ocr_line_detect_gap": 10,
-      "pair_id": 2,
-      "dialogue_role": "dialogue"
+      "set_id": 2,
+      "slot_key": "text"
     }
   ]
 }

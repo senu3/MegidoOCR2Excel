@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ocr_models import DIALOGUE_ROLE_SPEAKER, LINE_JOIN_NEWLINE, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
+from ocr_models import LINE_JOIN_NEWLINE, SET_SLOT_SPEAKER, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
 from profiles import get_profile, registered_profiles
 from profiles.base import FieldPreset, OcrProfile
 from template_store import TemplateValidationError, build_template_data, load_template, save_template, text_formatting_from_template
@@ -100,18 +100,42 @@ class TemplateV1Tests(unittest.TestCase):
             with self.assertRaisesRegex(TemplateValidationError, "name"):
                 load_template(path)
 
-    def test_dialogue_assignment_is_preserved_in_template(self) -> None:
+    def test_set_assignment_is_preserved_in_template(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "dialogue.json"
             data = valid_template()
-            data["fields"][0]["pair_id"] = 3
-            data["fields"][0]["dialogue_role"] = DIALOGUE_ROLE_SPEAKER
+            data["fields"][0]["set_id"] = 3
+            data["fields"][0]["slot_key"] = SET_SLOT_SPEAKER
 
             save_template(path, data)
             loaded = load_template(path)
 
-            self.assertEqual(loaded["fields"][0]["pair_id"], 3)
-            self.assertEqual(loaded["fields"][0]["dialogue_role"], DIALOGUE_ROLE_SPEAKER)
+            self.assertEqual(loaded["fields"][0]["set_id"], 3)
+            self.assertEqual(loaded["fields"][0]["slot_key"], SET_SLOT_SPEAKER)
+
+    def test_pre_set_schema_is_rejected_without_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "old-pair-schema.json"
+            data = valid_template()
+            field = data["fields"][0]
+            field["pair_id"] = field.pop("set_id")
+            field["dialogue_role"] = field.pop("slot_key")
+            path.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaisesRegex(TemplateValidationError, "set_id"):
+                load_template(path)
+
+    def test_duplicate_set_column_keys_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "duplicate-set-columns.json"
+            data = valid_template()
+            data["set_definition"]["columns"].append(
+                dict(data["set_definition"]["columns"][0])
+            )
+            path.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaisesRegex(TemplateValidationError, "key が重複"):
+                load_template(path)
 
     def test_shared_text_formatting_is_preserved_in_template(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

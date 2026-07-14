@@ -12,7 +12,17 @@
     "write_mode": "上書き",
     "start_cell": "A1",
     "include_filename": true,
-    "include_header": true
+    "include_header": true,
+    "output_layout": "セットごとに1行"
+  },
+  "set_definition": {
+    "preset": "conversation",
+    "name": "会話",
+    "order_label": "順序",
+    "columns": [
+      {"key": "speaker", "label": "話者", "ocr_line_split": "none"},
+      {"key": "text", "label": "セリフ", "ocr_line_split": "detected"}
+    ]
   },
   "coordinate_settings": {
     "coordinate_space": "content",
@@ -51,7 +61,9 @@
       "ocr_line_padding": 12,
       "ocr_line_detect_threshold": 90,
       "ocr_line_detect_min_ratio": 0.015,
-      "ocr_line_detect_gap": 10
+      "ocr_line_detect_gap": 10,
+      "set_id": 1,
+      "slot_key": "speaker"
     },
     {
       "name": "セリフ本文",
@@ -76,7 +88,9 @@
       "ocr_line_padding": 12,
       "ocr_line_detect_threshold": 90,
       "ocr_line_detect_min_ratio": 0.015,
-      "ocr_line_detect_gap": 10
+      "ocr_line_detect_gap": 10,
+      "set_id": 1,
+      "slot_key": "text"
     }
   ]
 }

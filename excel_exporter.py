@@ -11,7 +11,7 @@ from PIL import Image
 
 from atomic_io import atomic_save_workbook
 from dialogue_log_detector import DialoguePairDetectionResult
-from ocr_models import EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, TemplateField, dialogue_pair_groups, dialogue_pair_validation_error
+from ocr_models import EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, SET_SLOT_SPEAKER, SET_SLOT_TEXT, SetDefinition, TemplateField, set_definition_for_preset, set_groups, set_validation_error
 from operation_control import CancelCheck, raise_if_cancelled
 
 
@@ -61,7 +61,7 @@ class ExportNotice:
 
 
 OcrCallback = Callable[[Image.Image, TemplateField], tuple[str | None, str | None]]
-DialoguePairResolver = Callable[
+SetResolver = Callable[
     [Image.Image, list[TemplateField]], DialoguePairDetectionResult
 ]
 
@@ -112,16 +112,20 @@ class ExcelExporter:
         settings: ExportSettings,
         ocr_callback: OcrCallback,
         progress_callback: Callable[[int, int, Path], None] | None = None,
-        dialogue_pair_resolver: DialoguePairResolver | None = None,
+        set_definition: SetDefinition | None = None,
+        set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
+        dialogue_pair_resolver: SetResolver | None = None,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR and dialogue_pair_resolver is None:
-            pair_error = dialogue_pair_validation_error(fields)
-            if pair_error:
-                raise ValueError(pair_error)
+        set_resolver = set_resolver or dialogue_pair_resolver
+        definition = (set_definition or set_definition_for_preset("conversation")).normalized()
+        if settings.output_layout == EXPORT_LAYOUT_SET and set_resolver is None:
+            set_error = set_validation_error(fields, definition)
+            if set_error:
+                raise ValueError(set_error)
         workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
-        headers = self._headers(fields, settings)
+        headers = self._headers(fields, settings, definition)
         if settings.include_header and row_cursor == settings.start_row:
             self._write_excel_row(sheet, row_cursor, settings.start_col, headers)
             row_cursor += 1
@@ -138,7 +142,8 @@ class ExcelExporter:
                 fields,
                 settings,
                 ocr_callback,
-                dialogue_pair_resolver,
+                definition,
+                set_resolver,
                 cancel_check,
             )
             start_row = row_cursor
@@ -173,14 +178,18 @@ class ExcelExporter:
         ocr_callback: OcrCallback,
         retry_files: list[Path] | None = None,
         progress_callback: Callable[[int, int, Path], None] | None = None,
-        dialogue_pair_resolver: DialoguePairResolver | None = None,
+        set_definition: SetDefinition | None = None,
+        set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
+        dialogue_pair_resolver: SetResolver | None = None,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR and dialogue_pair_resolver is None:
-            pair_error = dialogue_pair_validation_error(fields)
-            if pair_error:
-                raise ValueError(pair_error)
+        set_resolver = set_resolver or dialogue_pair_resolver
+        definition = (set_definition or set_definition_for_preset("conversation")).normalized()
+        if settings.output_layout == EXPORT_LAYOUT_SET and set_resolver is None:
+            set_error = set_validation_error(fields, definition)
+            if set_error:
+                raise ValueError(set_error)
         if not output_path.exists():
             raise FileNotFoundError(f"再実行するExcelファイルがありません: {output_path}")
         workbook = load_workbook(output_path)
@@ -205,12 +214,18 @@ class ExcelExporter:
                 fields,
                 settings,
                 ocr_callback,
-                dialogue_pair_resolver,
+                definition,
+                set_resolver,
                 cancel_check,
             )
             if len(rows) != record.row_count:
                 raise ValueError("出力レイアウトが前回の一括出力から変更されています。全画像を再出力してください。")
-            self._clear_record_rows(sheet, record, settings.start_col, len(self._headers(fields, settings)))
+            self._clear_record_rows(
+                sheet,
+                record,
+                settings.start_col,
+                len(self._headers(fields, settings, definition)),
+            )
             for offset, row in enumerate(rows):
                 self._write_excel_row(sheet, record.start_row + offset, settings.start_col, row)
             errors.extend(image_errors)
@@ -240,23 +255,30 @@ class ExcelExporter:
         fields: list[TemplateField],
         settings: ExportSettings,
         ocr_callback: OcrCallback,
-        dialogue_pair_resolver: DialoguePairResolver | None = None,
+        set_definition: SetDefinition | None = None,
+        set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> tuple[list[list[str]], list[ExportError], list[ExportNotice]]:
         try:
             image = Image.open(image_path).convert("RGB")
         except Exception as exc:
             error = ExportError(image_path.name, "", f"画像を開けませんでした: {exc}")
-            return self._blank_rows(image_path, fields, settings), [error], []
+            return self._blank_rows(
+                image_path,
+                fields,
+                settings,
+                set_definition or set_definition_for_preset("conversation"),
+            ), [error], []
 
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            return self._recognize_dialogue_pair_rows(
+        if settings.output_layout == EXPORT_LAYOUT_SET:
+            return self._recognize_set_rows(
                 image_path,
                 image,
                 fields,
                 settings,
                 ocr_callback,
-                dialogue_pair_resolver,
+                set_definition or set_definition_for_preset("conversation"),
+                set_resolver,
                 cancel_check,
             )
 
@@ -275,94 +297,104 @@ class ExcelExporter:
             row.append(text)
         return [row], errors, []
 
-    def _recognize_dialogue_pair_rows(
+    def _recognize_set_rows(
         self,
         image_path: Path,
         image: Image.Image,
         fields: list[TemplateField],
         settings: ExportSettings,
         ocr_callback: OcrCallback,
-        dialogue_pair_resolver: DialoguePairResolver | None = None,
+        set_definition: SetDefinition,
+        set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
     ) -> tuple[list[list[str]], list[ExportError], list[ExportNotice]]:
         errors: list[ExportError] = []
         notices: list[ExportNotice] = []
         rows: list[list[str]] = []
-        allow_empty_speaker = False
-        allow_empty_dialogue = False
-        if dialogue_pair_resolver is None:
-            groups = dialogue_pair_groups(fields)
+        allow_empty_slots: set[str] = set()
+        if set_resolver is None:
+            groups = set_groups(fields, set_definition)
         else:
             raise_if_cancelled(cancel_check)
-            detection = dialogue_pair_resolver(image, fields)
+            detection = set_resolver(image, fields)
             raise_if_cancelled(cancel_check)
-            groups = detection.groups
-            allow_empty_speaker = detection.allow_empty_speaker
-            allow_empty_dialogue = detection.allow_empty_dialogue
+            groups = [
+                (
+                    order,
+                    {
+                        SET_SLOT_SPEAKER: speaker,
+                        SET_SLOT_TEXT: text,
+                    },
+                )
+                for order, speaker, text in detection.groups
+            ]
+            if detection.allow_empty_speaker:
+                allow_empty_slots.add(SET_SLOT_SPEAKER)
+            if detection.allow_empty_dialogue:
+                allow_empty_slots.add(SET_SLOT_TEXT)
             notices.extend(
                 ExportNotice(image_path.name, message)
                 for message in detection.notices
             )
             if detection.review_reason:
                 errors.append(
-                    ExportError(image_path.name, "会話ペア確認", detection.review_reason)
+                    ExportError(image_path.name, "セット確認", detection.review_reason)
                 )
                 return [], errors, notices
             if not groups:
                 errors.append(
                     ExportError(
                         image_path.name,
-                        "会話ペア検出",
+                        "セット検出",
                         detection.review_reason
-                        or "完全な話者・セリフの組を検出できませんでした。",
+                        or "完全なセットを検出できませんでした。",
                     )
                 )
-        for pair_id, speaker_field, dialogue_field in groups:
-            raise_if_cancelled(cancel_check)
-            speaker_text, speaker_error = ocr_callback(image, speaker_field)
-            raise_if_cancelled(cancel_check)
-            dialogue_text, dialogue_error = ocr_callback(image, dialogue_field)
-            raise_if_cancelled(cancel_check)
-            speaker_failed = speaker_text is None
-            dialogue_failed = dialogue_text is None
-            if speaker_text is None:
-                errors.append(ExportError(image_path.name, speaker_field.name, speaker_error or "OCRに失敗しました。"))
-                speaker_text = ""
-            if dialogue_text is None:
-                errors.append(ExportError(image_path.name, dialogue_field.name, dialogue_error or "OCRに失敗しました。"))
-                dialogue_text = ""
-            if (
-                not speaker_failed
-                and not speaker_text.strip()
-                and not allow_empty_speaker
-            ):
-                errors.append(ExportError(image_path.name, speaker_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
-            if (
-                not dialogue_failed
-                and not dialogue_text.strip()
-                and not allow_empty_dialogue
-            ):
-                errors.append(ExportError(image_path.name, dialogue_field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
-            row = [str(pair_id), speaker_text, dialogue_text]
+        for order, slots in groups:
+            values: list[str] = []
+            for column in set_definition.columns:
+                raise_if_cancelled(cancel_check)
+                field = slots[column.key]
+                text, error = ocr_callback(image, field)
+                raise_if_cancelled(cancel_check)
+                failed = text is None
+                if text is None:
+                    errors.append(ExportError(image_path.name, field.name, error or "OCRに失敗しました。"))
+                    text = ""
+                if not failed and not text.strip() and column.key not in allow_empty_slots:
+                    errors.append(ExportError(image_path.name, field.name, "OCR結果が空です。読み取り範囲または認識設定を確認してください。"))
+                values.append(text)
+            row = [str(order), *values]
             if settings.include_filename:
                 row.insert(0, image_path.name)
             rows.append(row)
         return rows, errors, notices
 
-    def _blank_rows(self, image_path: Path, fields: list[TemplateField], settings: ExportSettings) -> list[list[str]]:
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
+    def _blank_rows(
+        self,
+        image_path: Path,
+        fields: list[TemplateField],
+        settings: ExportSettings,
+        set_definition: SetDefinition,
+    ) -> list[list[str]]:
+        if settings.output_layout == EXPORT_LAYOUT_SET:
             rows = []
-            for pair_id, _speaker_field, _dialogue_field in dialogue_pair_groups(fields):
-                row = [str(pair_id), "", ""]
+            for order, _slots in set_groups(fields, set_definition):
+                row = [str(order), *([""] * len(set_definition.columns))]
                 if settings.include_filename:
                     row.insert(0, image_path.name)
                 rows.append(row)
             return rows
         return [[*([image_path.name] if settings.include_filename else []), *([""] * len(fields))]]
 
-    def _headers(self, fields: list[TemplateField], settings: ExportSettings) -> list[str]:
-        if settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            return self._dialogue_pair_headers(settings.include_filename)
+    def _headers(
+        self,
+        fields: list[TemplateField],
+        settings: ExportSettings,
+        set_definition: SetDefinition,
+    ) -> list[str]:
+        if settings.output_layout == EXPORT_LAYOUT_SET:
+            return self._set_headers(settings.include_filename, set_definition)
         return self._export_headers(fields, settings.include_filename)
 
     def _clear_record_rows(self, sheet, record: ImageExportRecord, start_col: int, column_count: int) -> None:
@@ -395,8 +427,8 @@ class ExcelExporter:
             return ["画像名", *headers]
         return headers
 
-    def _dialogue_pair_headers(self, include_filename: bool) -> list[str]:
-        headers = ["ログ順", "話者", "セリフ"]
+    def _set_headers(self, include_filename: bool, definition: SetDefinition) -> list[str]:
+        headers = [definition.order_label, *(column.label for column in definition.columns)]
         if include_filename:
             return ["画像名", *headers]
         return headers

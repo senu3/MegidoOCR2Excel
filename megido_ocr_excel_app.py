@@ -74,11 +74,18 @@ from ocr_models import (
     LINE_JOIN_NEWLINE,
     LINE_JOIN_NONE,
     OCR_BACKEND_OPTIONS,
+    SET_PRESET_CONVERSATION,
+    SET_PRESET_DISPLAY,
+    SET_PRESET_OPTIONS,
+    SET_SLOT_SPEAKER,
+    SET_SLOT_SUPPLEMENT,
+    SET_SLOT_TEXT,
     CoordinateSettings,
     CorrectionRule,
     TemplateField,
     TextFormattingSettings,
-    dialogue_pair_validation_error,
+    set_definition_for_preset,
+    set_validation_error,
 )
 from operation_control import OperationCancelled, raise_if_cancelled
 from profiles.base import OcrProfile
@@ -89,6 +96,7 @@ from template_store import (
     fields_from_template,
     load_template,
     save_template,
+    set_definition_from_template,
     text_formatting_from_template,
 )
 
@@ -210,6 +218,7 @@ class ImageOcrExcelApp:
         self.current_content_rect: tuple[int, int, int, int] | None = None
 
         self.fields: list[TemplateField] = []
+        self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
         self.current_results: list[str] = []
         self.current_raw_results: list[str] = []
         # Future correction-rule foundation.
@@ -269,6 +278,9 @@ class ImageOcrExcelApp:
         self.export_include_filename_var = BooleanVar(value=True)
         self.export_include_header_var = BooleanVar(value=True)
         self.export_layout_var = StringVar(value=EXPORT_LAYOUT_IMAGE_ROW)
+        self.set_preset_var = StringVar(
+            value=SET_PRESET_DISPLAY[self.set_definition.preset]
+        )
         self.review_raw_preview_var = StringVar(value="未OCR")
         self.review_processed_preview_var = StringVar(value="未OCR")
         self.review_line_split_var = StringVar(value=OCR_MODE_OPTIONS[0])
@@ -953,9 +965,33 @@ class ImageOcrExcelApp:
             text_color=COLOR_TEXT,
         ).grid(row=0, column=1, sticky="ew")
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            preset_row = ctk.CTkFrame(body, fg_color="transparent")
+            preset_row.pack(fill="x", padx=16, pady=(0, 8))
+            preset_row.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(
+                preset_row,
+                text="セット種類",
+                anchor="w",
+                font=UI_FONT_SMALL,
+                text_color=COLOR_MUTED,
+            ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+            ctk.CTkOptionMenu(
+                preset_row,
+                variable=self.set_preset_var,
+                values=[SET_PRESET_DISPLAY[key] for key in SET_PRESET_OPTIONS],
+                command=self._set_set_preset,
+                height=THEME.layout.entry_height,
+                font=UI_FONT_SMALL,
+                fg_color=COLOR_SECONDARY,
+                button_color=COLOR_PRIMARY,
+                button_hover_color=COLOR_PRIMARY_HOVER,
+                dropdown_fg_color=COLOR_SURFACE_ALT,
+                dropdown_hover_color=COLOR_SECONDARY_HOVER,
+                text_color=COLOR_TEXT,
+            ).grid(row=0, column=1, sticky="ew")
             ctk.CTkLabel(
                 body,
-                text="項目は見出し直下の会話に属します。ハンドルをドラッグすると別の会話へ移動できます。",
+                text="同じセット内の項目を1行に出力します。ハンドルをドラッグすると別のセットへ移動できます。",
                 anchor="w",
                 justify="left",
                 font=UI_FONT_SMALL,
@@ -963,7 +999,7 @@ class ImageOcrExcelApp:
                 wraplength=350,
             ).pack(fill="x", padx=16, pady=(0, 6))
             pair_error = (
-                dialogue_pair_validation_error(self._enabled_fields())
+                set_validation_error(self._enabled_fields(), self.set_definition)
                 if self.fields
                 else None
             )
@@ -1025,7 +1061,7 @@ class ImageOcrExcelApp:
                 scroller,
                 "項目がありません",
                 (
-                    "会話ペアを追加して範囲をドラッグ"
+                    "セットを追加して範囲をドラッグ"
                     if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
                     else "画像上で範囲をドラッグ"
                 ),
@@ -1040,7 +1076,40 @@ class ImageOcrExcelApp:
         if value != EXPORT_LAYOUT_DIALOGUE_PAIR:
             self.pending_dialogue_pair_id = None
             self.pending_dialogue_role = ""
+            self.auto_detection_enabled = False
+            self.auto_detection_base_fields = []
         self._render_side_body()
+        self.redraw()
+
+    def _set_set_preset(self, display: str) -> None:
+        preset = next(
+            (key for key, label in SET_PRESET_DISPLAY.items() if label == display),
+            self.set_definition.preset,
+        )
+        if preset == self.set_definition.preset:
+            return
+        assigned = any(field.set_id > 0 or field.slot_key for field in self.fields)
+        if assigned and not messagebox.askyesno(
+            "セット種類を変更",
+            "セット種類を変更すると、既存項目のセット割当を解除します。変更しますか？",
+        ):
+            self.set_preset_var.set(SET_PRESET_DISPLAY[self.set_definition.preset])
+            return
+        self.set_definition = set_definition_for_preset(preset)
+        self.set_preset_var.set(SET_PRESET_DISPLAY[preset])
+        self.auto_detection_enabled = False
+        self.auto_detection_base_fields = []
+        self.current_detection_layout = ""
+        self.current_detection_reason = ""
+        self.pending_dialogue_pair_id = None
+        self.pending_dialogue_role = ""
+        if assigned:
+            for field in self.fields:
+                field.set_id = 0
+                field.slot_key = ""
+        self._mark_dirty()
+        self.status_var.set(f"セット種類を「{self.set_definition.name}」に変更しました。")
+        self._schedule_side_body_render()
         self.redraw()
 
     def _dialogue_pair_ids(self) -> list[int]:
@@ -1052,28 +1121,24 @@ class ImageOcrExcelApp:
 
     def _dialogue_creation_button_text(self) -> str:
         if self.pending_dialogue_pair_id is None:
-            return "会話ペアを追加"
-        role = (
-            "話者" if self.pending_dialogue_role == DIALOGUE_ROLE_SPEAKER else "セリフ"
-        )
-        return f"会話 {self.pending_dialogue_pair_id}: {role}範囲をCanvasでドラッグ"
+            return "セットを追加"
+        slot_label = self.set_definition.slot_label(self.pending_dialogue_role)
+        return f"セット {self.pending_dialogue_pair_id}: {slot_label}範囲をCanvasでドラッグ"
 
     def begin_dialogue_pair_creation(self) -> None:
         if self.pending_dialogue_pair_id is None:
             self.pending_dialogue_pair_id = self._next_dialogue_pair_id()
-            self.pending_dialogue_role = DIALOGUE_ROLE_SPEAKER
-        role = (
-            "話者" if self.pending_dialogue_role == DIALOGUE_ROLE_SPEAKER else "セリフ"
-        )
+            self.pending_dialogue_role = self.set_definition.columns[0].key
+        slot_label = self.set_definition.slot_label(self.pending_dialogue_role)
         self.status_var.set(
-            f"会話 {self.pending_dialogue_pair_id} の{role}範囲をCanvasでドラッグしてください。"
+            f"セット {self.pending_dialogue_pair_id} の{slot_label}範囲をCanvasでドラッグしてください。"
         )
         self._render_side_body()
 
     def cancel_dialogue_pair_creation(self) -> None:
         self.pending_dialogue_pair_id = None
         self.pending_dialogue_role = ""
-        self.status_var.set("会話ペアの追加を中止しました。")
+        self.status_var.set("セットの追加を中止しました。")
         self._render_side_body()
 
     def _render_dialogue_pair_fields(self, parent) -> None:
@@ -1086,7 +1151,7 @@ class ImageOcrExcelApp:
             header.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(
                 header,
-                text=f"会話 {pair_id}",
+                text=f"セット {pair_id}",
                 anchor="w",
                 font=UI_FONT_BOLD,
                 text_color=COLOR_TEXT,
@@ -1120,11 +1185,14 @@ class ImageOcrExcelApp:
             ]
             indexes.sort(
                 key=lambda idx: (
-                    {
-                        DIALOGUE_ROLE_SPEAKER: 0,
-                        DIALOGUE_ROLE_TEXT: 1,
-                        DIALOGUE_ROLE_SUPPLEMENT: 2,
-                    }.get(self.fields[idx].dialogue_role, 3),
+                    (
+                        list(self.set_definition.allowed_slot_keys()).index(
+                            self.fields[idx].slot_key
+                        )
+                        if self.fields[idx].slot_key
+                        in self.set_definition.allowed_slot_keys()
+                        else len(self.set_definition.allowed_slot_keys())
+                    ),
                     idx,
                 )
             )
@@ -1149,7 +1217,7 @@ class ImageOcrExcelApp:
         else:
             ctk.CTkLabel(
                 section,
-                text="ペアから外す場合はここへドラッグ",
+                text="セットから外す場合はここへドラッグ",
                 anchor="w",
                 font=UI_FONT_SMALL,
                 text_color=COLOR_MUTED,
@@ -1181,7 +1249,7 @@ class ImageOcrExcelApp:
             elif field.pair_id == other_id:
                 field.pair_id = pair_id
         self._mark_dirty()
-        self.status_var.set("会話ペアの出力順を変更しました。")
+        self.status_var.set("セットの出力順を変更しました。")
         self._render_side_body()
         self.redraw()
 
@@ -2220,7 +2288,13 @@ class ImageOcrExcelApp:
             settings.include_filename,
             settings.include_header,
             settings.output_layout,
-            tuple((field.name, field.pair_id, field.dialogue_role) for field in fields),
+            self.set_definition.preset,
+            self.set_definition.order_label,
+            tuple(
+                (column.key, column.label, column.ocr_line_split)
+                for column in self.set_definition.columns
+            ),
+            tuple((field.name, field.set_id, field.slot_key) for field in fields),
         )
 
     def _render_excel_output_settings(self, parent) -> None:
@@ -2344,11 +2418,13 @@ class ImageOcrExcelApp:
 
     def _export_column_summary(self) -> str:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            columns = (
-                "画像名+ログ順+話者+セリフ"
-                if self.export_include_filename_var.get()
-                else "ログ順+話者+セリフ"
-            )
+            names = [
+                self.set_definition.order_label,
+                *(column.label for column in self.set_definition.columns),
+            ]
+            if self.export_include_filename_var.get():
+                names.insert(0, "画像名")
+            columns = "+".join(names)
         else:
             columns = (
                 "ファイル名列あり"
@@ -2362,7 +2438,7 @@ class ImageOcrExcelApp:
 
     def _export_unit_summary(self, enabled_count: int) -> str:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            return f"{len(self._dialogue_pair_field_indexes())}会話ペア"
+            return f"{len(self._dialogue_pair_field_indexes())}セット"
         return f"{enabled_count}項目"
 
     def _empty_state(self, parent, title: str, note: str) -> None:
@@ -2600,7 +2676,15 @@ class ImageOcrExcelApp:
 
         role_menu = ctk.CTkOptionMenu(
             row,
-            values=["役割なし", "話者", "セリフ", "補足セリフ"],
+            values=[
+                "未割当",
+                *(column.label for column in self.set_definition.columns),
+                *(
+                    ["補足セリフ"]
+                    if self.set_definition.preset == SET_PRESET_CONVERSATION
+                    else []
+                ),
+            ],
             command=lambda value, i=idx: self.set_field_dialogue_role(i, value),
             width=116,
             height=26,
@@ -2670,31 +2754,49 @@ class ImageOcrExcelApp:
         )
 
     def _dialogue_role_display(self, role: str) -> str:
-        return {
-            DIALOGUE_ROLE_SPEAKER: "話者",
-            DIALOGUE_ROLE_TEXT: "セリフ",
-            DIALOGUE_ROLE_SUPPLEMENT: "補足セリフ",
-        }.get(role, "役割なし")
+        return (
+            self.set_definition.slot_label(role)
+            if role in self.set_definition.allowed_slot_keys()
+            else "未割当"
+        )
 
     def set_field_dialogue_role(self, idx: int, display: str) -> None:
         if not (0 <= idx < len(self.fields)):
             return
-        role = {
-            "話者": DIALOGUE_ROLE_SPEAKER,
-            "セリフ": DIALOGUE_ROLE_TEXT,
-            "補足セリフ": DIALOGUE_ROLE_SUPPLEMENT,
-        }.get(display, "")
+        definition = getattr(
+            self,
+            "set_definition",
+            set_definition_for_preset(SET_PRESET_CONVERSATION),
+        )
+        role = next(
+            (
+                column.key
+                for column in definition.columns
+                if column.label == display
+            ),
+            (
+                SET_SLOT_SUPPLEMENT
+                if display == "補足セリフ"
+                and definition.preset == SET_PRESET_CONVERSATION
+                else ""
+            ),
+        )
         field = self.fields[idx]
         role_changed = field.dialogue_role != role
+        column = definition.column_for(role)
+        desired_line_split = (
+            "detected" if role == SET_SLOT_SUPPLEMENT else column.ocr_line_split
+            if column is not None
+            else field.ocr_line_split
+        )
         line_split_changed = (
-            role in {DIALOGUE_ROLE_TEXT, DIALOGUE_ROLE_SUPPLEMENT}
-            and field.ocr_line_split != "detected"
+            bool(role) and field.ocr_line_split != desired_line_split
         )
         if not role_changed and not line_split_changed:
             return
         field.dialogue_role = role
         if line_split_changed:
-            field.ocr_line_split = "detected"
+            field.ocr_line_split = desired_line_split
             if idx < len(self.current_results):
                 self.current_results[idx] = ""
             if idx < len(self.current_raw_results):
@@ -2702,10 +2804,10 @@ class ImageOcrExcelApp:
         self._mark_dirty()
         if line_split_changed:
             self.status_var.set(
-                f"{field.name} を{display}に設定し、OCR方式を行切り出しに変更しました。"
+                f"{field.name} を{display}に設定し、OCR方式を{self._line_split_display(desired_line_split)}に変更しました。"
             )
         else:
-            self.status_var.set(f"{field.name} の役割を更新しました。")
+            self.status_var.set(f"{field.name} のセット内項目を更新しました。")
         self._render_side_body()
         self.redraw()
 
@@ -2765,8 +2867,11 @@ class ImageOcrExcelApp:
     def start_auto_detection_workflow(self) -> None:
         self.workflow_started = True
         self.auto_detection_enabled = True
+        self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
+        if hasattr(self, "set_preset_var"):
+            self.set_preset_var.set(SET_PRESET_DISPLAY[SET_PRESET_CONVERSATION])
         speaker = TemplateField(
-            "話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
+            "話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER
         )
         dialogue = TemplateField(
             "セリフ本文",
@@ -2774,8 +2879,8 @@ class ImageOcrExcelApp:
             0,
             1,
             1,
-            pair_id=1,
-            dialogue_role=DIALOGUE_ROLE_TEXT,
+            set_id=1,
+            slot_key=SET_SLOT_TEXT,
             ocr_line_split="detected",
         )
         for field in (speaker, dialogue):
@@ -2805,6 +2910,9 @@ class ImageOcrExcelApp:
         self.workflow_started = True
         self.auto_detection_enabled = False
         self.auto_detection_base_fields = []
+        self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
+        if hasattr(self, "set_preset_var"):
+            self.set_preset_var.set(SET_PRESET_DISPLAY[SET_PRESET_CONVERSATION])
         self.fields = []
         self.selected_index = None
         with self._without_dirty_tracking():
@@ -3091,6 +3199,7 @@ class ImageOcrExcelApp:
             correction_rules=self.correction_rules,
             coordinate_settings=self.coordinate_settings,
             text_formatting=self.text_formatting,
+            set_definition=self.set_definition,
             template_name=path.stem,
             profile_id=self.profile.profile_id,
         )
@@ -3134,6 +3243,10 @@ class ImageOcrExcelApp:
             self.auto_detection_enabled = False
             self.auto_detection_base_fields = []
             self.fields = fields
+            self.set_definition = set_definition_from_template(data)
+            self.set_preset_var.set(
+                SET_PRESET_DISPLAY[self.set_definition.preset]
+            )
             self.pending_dialogue_pair_id = None
             self.pending_dialogue_role = ""
             self.correction_rules = correction_rules_from_template(data)
@@ -3562,7 +3675,7 @@ class ImageOcrExcelApp:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
             self._set_dialogue_drop_target(self.fields[idx].pair_id)
             self.status_var.set(
-                f"{self.fields[idx].name} を移動先の会話へドラッグします。"
+                f"{self.fields[idx].name} を移動先のセットへドラッグします。"
             )
         else:
             self.status_var.set(f"{self.fields[idx].name} をドラッグして並び替えます。")
@@ -3574,7 +3687,7 @@ class ImageOcrExcelApp:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
             target_pair = self._dialogue_drop_pair_id(event.y_root)
             self._set_dialogue_drop_target(target_pair)
-            destination = f"会話 {target_pair}" if target_pair > 0 else "未割当"
+            destination = f"セット {target_pair}" if target_pair > 0 else "未割当"
             self.status_var.set(f"{self.fields[idx].name} を {destination} へ移動")
             return "break"
         target_idx = self._field_drop_index(event.y_root, idx)
@@ -3655,10 +3768,10 @@ class ImageOcrExcelApp:
 
         self.selected_index = idx
         self._mark_dirty()
-        destination = f"会話 {target_pair_id}" if target_pair_id > 0 else "未割当"
+        destination = f"セット {target_pair_id}" if target_pair_id > 0 else "未割当"
         if replacement is not None:
             self.status_var.set(
-                f"{field.name} を {destination} へ移動し、同じ役割の項目を入れ替えました。"
+                f"{field.name} を {destination} へ移動し、同じ種類の項目を入れ替えました。"
             )
         else:
             self.status_var.set(f"{field.name} を {destination} へ移動しました。")
@@ -4097,10 +4210,10 @@ class ImageOcrExcelApp:
         self.selected_index = (
             min(remove_idx, len(self.fields) - 1) if self.fields else None
         )
-        if removed_field.pair_id > 0 and removed_field.dialogue_role in {
-            DIALOGUE_ROLE_SPEAKER,
-            DIALOGUE_ROLE_TEXT,
-        }:
+        if (
+            removed_field.set_id > 0
+            and removed_field.slot_key in self.set_definition.slot_keys
+        ):
             self.pending_dialogue_pair_id = removed_field.pair_id
             self.pending_dialogue_role = removed_field.dialogue_role
         self.status_var.set(f"{field_name} の追加を取り消しました。")
@@ -4143,7 +4256,7 @@ class ImageOcrExcelApp:
         fields: dict[int, TemplateField] = action.get("fields") or {}
         if not fields:
             self.status_var.set(
-                "更新前の会話ペアが見つからないため、取り消せませんでした。"
+                "更新前のセットが見つからないため、取り消せませんでした。"
             )
             return
         restored_indexes: list[int] = []
@@ -4164,7 +4277,7 @@ class ImageOcrExcelApp:
             restored_indexes.append(idx)
         if not restored_indexes:
             self.status_var.set(
-                "更新前の会話ペアが見つからないため、取り消せませんでした。"
+                "更新前のセットが見つからないため、取り消せませんでした。"
             )
             return
         self._ensure_current_results()
@@ -4184,7 +4297,7 @@ class ImageOcrExcelApp:
                 if 0 <= selected_idx < len(self.fields)
                 else restored_indexes[0]
             )
-        self.status_var.set("会話ペアの移動を取り消しました。")
+        self.status_var.set("セットの移動を取り消しました。")
 
     def redraw(self) -> None:
         self.canvas.delete("all")
@@ -4227,7 +4340,7 @@ class ImageOcrExcelApp:
             return selected
         return None
 
-    def _dialogue_pair_field_indexes(self) -> list[tuple[int, tuple[int, int]]]:
+    def _dialogue_pair_field_indexes(self) -> list[tuple[int, tuple[int, ...]]]:
         if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
             return []
         grouped: dict[int, dict[str, int]] = {}
@@ -4235,18 +4348,21 @@ class ImageOcrExcelApp:
             if (
                 not field.enabled
                 or field.pair_id <= 0
-                or field.dialogue_role
-                not in {DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_TEXT}
+                or field.slot_key not in self.set_definition.allowed_slot_keys()
             ):
                 continue
             grouped.setdefault(field.pair_id, {})[field.dialogue_role] = idx
-        return [
-            (pair_id, (roles[DIALOGUE_ROLE_SPEAKER], roles[DIALOGUE_ROLE_TEXT]))
-            for pair_id, roles in sorted(grouped.items())
-            if DIALOGUE_ROLE_SPEAKER in roles and DIALOGUE_ROLE_TEXT in roles
-        ]
+        complete: list[tuple[int, tuple[int, ...]]] = []
+        for pair_id, roles in sorted(grouped.items()):
+            if not all(key in roles for key in self.set_definition.slot_keys):
+                continue
+            indexes = [roles[key] for key in self.set_definition.slot_keys]
+            if SET_SLOT_SUPPLEMENT in roles:
+                indexes.append(roles[SET_SLOT_SUPPLEMENT])
+            complete.append((pair_id, tuple(indexes)))
+        return complete
 
-    def _dialogue_pair_for_field(self, idx: int) -> tuple[int, int] | None:
+    def _dialogue_pair_for_field(self, idx: int) -> tuple[int, ...] | None:
         for _pair_id, indexes in self._dialogue_pair_field_indexes():
             if idx in indexes:
                 return indexes
@@ -4426,7 +4542,7 @@ class ImageOcrExcelApp:
     def _draw_pair_handle(
         self,
         pair_position: int,
-        indexes: tuple[int, int],
+        indexes: tuple[int, ...],
         rects: dict[int, tuple[int, int, int, int]],
     ) -> None:
         x1, y1, x2, y2 = self._pair_canvas_rect(rects)
@@ -4824,7 +4940,7 @@ class ImageOcrExcelApp:
                     "origs": origs,
                     "selected": self.selected_index,
                 }
-                self.status_var.set(f"会話ペア #{pair_hit} を移動中です。")
+                self.status_var.set(f"セット #{pair_hit} を移動中です。")
                 self.redraw()
                 return
         if field_hit_idx is not None and field_mode and field_mode != "move":
@@ -4950,7 +5066,7 @@ class ImageOcrExcelApp:
                 )
                 self._mark_dirty()
                 self.status_var.set(
-                    f"会話 {pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。"
+                    f"セット {pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。"
                 )
                 self._schedule_side_body_render()
                 self.redraw()
@@ -5017,10 +5133,9 @@ class ImageOcrExcelApp:
             else None
         )
         dialogue_role = self.pending_dialogue_role if pair_id is not None else ""
-        if pair_id is not None and dialogue_role == DIALOGUE_ROLE_SPEAKER:
-            name = self._unique_field_name(f"話者{pair_id}")
-        elif pair_id is not None and dialogue_role == DIALOGUE_ROLE_TEXT:
-            name = self._unique_field_name(f"セリフ本文{pair_id}")
+        if pair_id is not None:
+            slot_label = self.set_definition.slot_label(dialogue_role)
+            name = self._unique_field_name(f"{slot_label}{pair_id}")
         else:
             name = self._next_field_name()
         source_width, source_height = self.original_image.size
@@ -5033,14 +5148,15 @@ class ImageOcrExcelApp:
             True,
             source_width,
             source_height,
-            pair_id=pair_id or 0,
-            dialogue_role=dialogue_role,
+            set_id=pair_id or 0,
+            slot_key=dialogue_role,
         )
         if self.profile.has_field_ocr_preset(name):
             for key, value in self.profile.field_ocr_preset(name).items():
                 setattr(field, key, value)
-        if dialogue_role == DIALOGUE_ROLE_TEXT:
-            field.ocr_line_split = "detected"
+        slot_column = self.set_definition.column_for(dialogue_role)
+        if slot_column is not None:
+            field.ocr_line_split = slot_column.ocr_line_split
         self.fields.append(field)
         self.current_results.append("")
         self.current_raw_results.append("")
@@ -5054,16 +5170,23 @@ class ImageOcrExcelApp:
             result="",
         )
         self._mark_dirty()
-        if pair_id is not None and dialogue_role == DIALOGUE_ROLE_SPEAKER:
-            self.pending_dialogue_role = DIALOGUE_ROLE_TEXT
+        if pair_id is not None:
+            slot_keys = list(self.set_definition.slot_keys)
+            current_position = slot_keys.index(dialogue_role)
+            has_next = current_position + 1 < len(slot_keys)
+        else:
+            has_next = False
+        if pair_id is not None and has_next:
+            self.pending_dialogue_role = slot_keys[current_position + 1]
+            next_label = self.set_definition.slot_label(self.pending_dialogue_role)
             self.status_var.set(
-                f"{name} を追加しました。続けて会話 {pair_id} のセリフ範囲をドラッグしてください。"
+                f"{name} を追加しました。続けてセット {pair_id} の{next_label}範囲をドラッグしてください。"
             )
-        elif pair_id is not None and dialogue_role == DIALOGUE_ROLE_TEXT:
+        elif pair_id is not None:
             self.pending_dialogue_pair_id = None
             self.pending_dialogue_role = ""
             self.status_var.set(
-                f"会話 {pair_id} のペアを追加しました。Esc / Ctrl+Z で戻せます。"
+                f"セット {pair_id} を追加しました。Esc / Ctrl+Z で戻せます。"
             )
         else:
             self.editing_name_index = self.selected_index
@@ -5278,7 +5401,7 @@ class ImageOcrExcelApp:
             return
         pair_error = self._validate_dialogue_pair_export(fields)
         if pair_error:
-            messagebox.showerror("会話ペア設定エラー", pair_error)
+            messagebox.showerror("セット設定エラー", pair_error)
             return
         if not self.image_files:
             messagebox.showerror("画像なし", "画像フォルダを選択してください。")
@@ -5321,6 +5444,13 @@ class ImageOcrExcelApp:
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
         text_formatting = self.text_formatting
+        export_definition = self.set_definition
+        use_dialogue_detection = (
+            dialogue_detection is not None
+            and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+            and self.auto_detection_enabled
+            and export_definition.preset == SET_PRESET_CONVERSATION
+        )
         export_signature = self._export_structure_signature(export_fields, settings)
         self._clear_retry_context()
         self.image_queue.prepare(image_files)
@@ -5356,7 +5486,8 @@ class ImageOcrExcelApp:
                     text_formatting,
                 ),
                 update_progress,
-                dialogue_pair_resolver=(
+                set_definition=export_definition,
+                set_resolver=(
                     (
                         lambda image, detection_fields: include_supplement_candidates(
                             detect_complete_dialogue_pairs(
@@ -5367,8 +5498,7 @@ class ImageOcrExcelApp:
                             )
                         )
                     )
-                    if dialogue_detection is not None
-                    and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+                    if use_dialogue_detection
                     else None
                 ),
                 cancel_check=self._is_operation_cancelled,
@@ -5447,7 +5577,7 @@ class ImageOcrExcelApp:
         fields = self._enabled_fields()
         pair_error = self._validate_dialogue_pair_export(fields)
         if pair_error:
-            messagebox.showerror("会話ペア設定エラー", pair_error)
+            messagebox.showerror("セット設定エラー", pair_error)
             return
         settings, error = self._build_export_settings()
         if error or settings is None:
@@ -5476,6 +5606,13 @@ class ImageOcrExcelApp:
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
         text_formatting = self.text_formatting
+        export_definition = self.set_definition
+        use_dialogue_detection = (
+            dialogue_detection is not None
+            and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+            and self.auto_detection_enabled
+            and export_definition.preset == SET_PRESET_CONVERSATION
+        )
         total = len(retry_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set(f"失敗した {total} 画像を再実行します。")
@@ -5511,7 +5648,8 @@ class ImageOcrExcelApp:
                 ),
                 retry_files=retry_files,
                 progress_callback=update_progress,
-                dialogue_pair_resolver=(
+                set_definition=export_definition,
+                set_resolver=(
                     (
                         lambda image, detection_fields: include_supplement_candidates(
                             detect_complete_dialogue_pairs(
@@ -5522,8 +5660,7 @@ class ImageOcrExcelApp:
                             )
                         )
                     )
-                    if dialogue_detection is not None
-                    and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+                    if use_dialogue_detection
                     else None
                 ),
                 cancel_check=self._is_operation_cancelled,
@@ -5576,9 +5713,14 @@ class ImageOcrExcelApp:
     def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
         if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
             return None
-        if self.profile.dialogue_log_detection is not None and len(fields) >= 2:
+        if (
+            self.auto_detection_enabled
+            and self.set_definition.preset == SET_PRESET_CONVERSATION
+            and self.profile.dialogue_log_detection is not None
+            and len(fields) >= 2
+        ):
             return None
-        return dialogue_pair_validation_error(fields)
+        return set_validation_error(fields, self.set_definition)
 
     def _initial_zoom(self) -> float:
         if not self.original_image:
@@ -5628,17 +5770,12 @@ class ImageOcrExcelApp:
             and self.fields[idx].enabled
         ):
             field = self.fields[idx]
-            if field.pair_id > 0 and field.dialogue_role in {
-                DIALOGUE_ROLE_SPEAKER,
-                DIALOGUE_ROLE_TEXT,
-                DIALOGUE_ROLE_SUPPLEMENT,
-            }:
-                role = {
-                    DIALOGUE_ROLE_SPEAKER: "話",
-                    DIALOGUE_ROLE_TEXT: "文",
-                    DIALOGUE_ROLE_SUPPLEMENT: "補",
-                }[field.dialogue_role]
-                return f"{field.pair_id}{role}"
+            if (
+                field.set_id > 0
+                and field.slot_key in self.set_definition.allowed_slot_keys()
+            ):
+                label = self.set_definition.slot_label(field.slot_key)
+                return f"{field.set_id}{label[:1]}"
             return "未割当"
         return f"#{idx + 1}"
 

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from atomic_io import atomic_write_text
-from ocr_models import DIALOGUE_ROLE_OPTIONS, LINE_JOIN_OPTIONS, CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, TemplateField, TextFormattingSettings, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict, text_formatting_settings_from_dict
+from ocr_models import EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, LINE_JOIN_OPTIONS, OCR_LINE_SPLIT_OPTIONS, SET_PRESET_OPTIONS, CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, SetDefinition, TemplateField, TextFormattingSettings, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict, set_definition_for_preset, set_definition_from_dict, set_validation_error, text_formatting_settings_from_dict
 
 
 TEMPLATE_FORMAT = "image-ocr-to-excel-template"
@@ -49,6 +49,28 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
     for key in ("sheet_name", "write_mode", "start_cell", "include_filename", "include_header"):
         if key not in output_settings:
             raise TemplateValidationError(f"output_settings.{key} がありません。")
+    if output_settings.get("output_layout") not in EXPORT_LAYOUT_OPTIONS:
+        raise TemplateValidationError("output_settings.output_layout が不正です。")
+    set_definition_data = _require_mapping(data, "set_definition")
+    if set_definition_data.get("preset") not in SET_PRESET_OPTIONS:
+        raise TemplateValidationError("set_definition.preset が不正です。")
+    for key in ("name", "order_label"):
+        if not str(set_definition_data.get(key) or "").strip():
+            raise TemplateValidationError(f"set_definition.{key} を指定してください。")
+    columns = set_definition_data.get("columns")
+    if not isinstance(columns, list) or not columns:
+        raise TemplateValidationError("set_definition.columns に1件以上の列を指定してください。")
+    column_keys: list[str] = []
+    for index, column in enumerate(columns, start=1):
+        if not isinstance(column, dict):
+            raise TemplateValidationError(f"set_definition.columns[{index}] はオブジェクトで指定してください。")
+        if not str(column.get("key") or "").strip() or not str(column.get("label") or "").strip():
+            raise TemplateValidationError(f"set_definition.columns[{index}] に key と label を指定してください。")
+        if column.get("ocr_line_split") not in OCR_LINE_SPLIT_OPTIONS:
+            raise TemplateValidationError(f"set_definition.columns[{index}].ocr_line_split が不正です。")
+        column_keys.append(str(column["key"]).strip())
+    if len(column_keys) != len(set(column_keys)):
+        raise TemplateValidationError("set_definition.columns の key が重複しています。")
     _require_mapping(data, "coordinate_settings")
     text_formatting = data.get("text_formatting")
     if text_formatting is not None:
@@ -76,10 +98,15 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
             raise TemplateValidationError(f"fields[{index}].name を指定してください。")
         if any(type(item[key]) is not int for key in ("x1", "y1", "x2", "y2")):
             raise TemplateValidationError(f"fields[{index}] の座標は整数で指定してください。")
-        if "pair_id" in item and (type(item["pair_id"]) is not int or item["pair_id"] < 0):
-            raise TemplateValidationError(f"fields[{index}].pair_id は0以上の整数で指定してください。")
-        if "dialogue_role" in item and item["dialogue_role"] not in {"", *DIALOGUE_ROLE_OPTIONS}:
-            raise TemplateValidationError(f"fields[{index}].dialogue_role が不正です。")
+        if "set_id" not in item or type(item["set_id"]) is not int or item["set_id"] < 0:
+            raise TemplateValidationError(f"fields[{index}].set_id は0以上の整数で指定してください。")
+        if "slot_key" not in item or not isinstance(item["slot_key"], str):
+            raise TemplateValidationError(f"fields[{index}].slot_key を文字列で指定してください。")
+    if output_settings.get("output_layout") == EXPORT_LAYOUT_SET:
+        definition = set_definition_from_dict(set_definition_data)
+        error = set_validation_error([field_from_dict(item) for item in fields], definition)
+        if error:
+            raise TemplateValidationError(error)
     return data
 
 
@@ -92,6 +119,7 @@ def build_template_data(
     correction_rules: list[CorrectionRule] | None = None,
     coordinate_settings: CoordinateSettings | None = None,
     text_formatting: TextFormattingSettings | None = None,
+    set_definition: SetDefinition | None = None,
     template_name: str = "ocr-template",
     profile_id: str = "",
 ) -> dict:
@@ -107,6 +135,9 @@ def build_template_data(
         "output_settings": output_settings,
         "coordinate_settings": (coordinate_settings or CoordinateSettings()).to_dict(),
         "text_formatting": (text_formatting or TextFormattingSettings()).to_dict(),
+        "set_definition": (
+            set_definition or set_definition_for_preset("conversation")
+        ).to_dict(),
         "correction_rules": [rule.to_dict() for rule in correction_rules or [] if rule.pattern.strip()],
         "fields": [field.to_dict() for field in fields],
     }
@@ -142,3 +173,7 @@ def text_formatting_from_template(
     fallback: TextFormattingSettings | None = None,
 ) -> TextFormattingSettings:
     return text_formatting_settings_from_dict(data.get("text_formatting"), fallback)
+
+
+def set_definition_from_template(data: dict) -> SetDefinition:
+    return set_definition_from_dict(data.get("set_definition"))

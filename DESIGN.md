@@ -57,7 +57,7 @@ Primary layout is two-pane:
 
 The three modes are the product structure:
 
-- 1. 範囲・列: create and edit OCR regions, name fields, order Excel columns or dialogue-pair order, and load/save templates.
+- 1. 範囲・列: create and edit OCR regions, name fields, order Excel columns or set order, and load/save templates.
 - 2. 認識テスト: use representative images to inspect the selected crop and full OCR result, then tune the OCR mode before batch export. This is a preflight test; Excel export runs OCR again for every target image.
 - 3. Excel出力: review the naturally sorted image queue, exclude non-target captures, choose the output file/settings, and batch export.
 
@@ -72,12 +72,12 @@ The three modes are the product structure:
 - Buttons use three roles: purple Primary for one main action per surface, bordered dark Secondary for supporting actions, and neutral icon-only controls for navigation. Standard controls are 32–34px high with 6px corners; final actions are 40px high.
 - Queue status combines a monochrome state icon, semantic color, and a text label. Color is never the only status channel.
 - Field rows show enabled state, order, field name, and pixel size.
-- Image-row fields expose only their OCR mode (`範囲全体 / 行切り出し`). Dialogue-pair fields expose only their conversational role (`話者 / セリフ / 補足セリフ`). Switching output layouts preserves hidden role metadata.
+- Image-row fields expose only their OCR mode (`範囲全体 / 行切り出し`). Set-row fields expose only their slot assignment, whose labels come from the selected set type. Conversation sets additionally expose `補足セリフ`. Switching output layouts preserves hidden set metadata.
 - Field-name editing is never dependent on hidden gestures. Every row shows a pencil action and an overflow menu; double-click, right-click, and F2 remain accelerators. Newly drawn ordinary fields enter inline name editing immediately.
 - Inline naming uses Enter to commit and Esc to restore the previous name. Duplicate names stay in edit mode with a local error instead of being silently renamed. The overflow menu exposes select, duplicate, and undoable delete actions.
-- Dialogue-pair export is a template/output mode, not a positional convention. Every field stores an explicit `pair_id` and `dialogue_role`; Excel groups by pair ID and folds each complete pair into `ログ順 / 話者 / セリフ` rows. Field names and raw list order never determine meaning.
-- Range design groups fields under `会話 n`, exposes role/pair assignment inline, and reorders the whole pair with one action. Adding a pair guides the user through speaker range and then dialogue range on the Canvas.
-- In dialogue-pair mode, Canvas shows an amber pair outline and a compact numeric handle for each complete enabled pair. Inner field rectangles stay hidden by default to avoid double outlines; selecting an individual field shows only that field's rectangle for precise move/resize. Dragging the pair handle moves both regions together.
+- Set export is a template/output mode, not a positional convention. Every field stores an explicit `set_id` and `slot_key`; a `SetDefinition` supplies the ordered Excel columns and default OCR mode. Field names and raw list order never determine meaning.
+- Range design groups fields under `セット n`, exposes slot/set assignment inline, and reorders the whole set with one action. Adding a set guides the user through each required slot in definition order on the Canvas.
+- In set mode, Canvas shows an amber set outline and a compact numeric handle for each complete enabled set. Inner field rectangles stay hidden by default to avoid double outlines; selecting an individual field shows only that field's rectangle for precise move/resize. Dragging the set handle moves all regions together.
 - Line-split OCR is a mode of a normal field, not a separate region type. In image-row layout, expose it through the compact OCR-mode selector; show it with a cyan field outline and light horizontal guides inside the existing rectangle.
 - Line-split text formatting is one shared basic setting, not a per-field control. Templates store the line join mode (none, full-width space, or newline) and whether ASCII letters, digits, spaces, and punctuation are normalized to full-width forms. Recognition tests and Excel export use the same formatting path; multiline Excel cells enable wrapping and receive a readable row height.
 - Canvas region editing prioritizes movement in the center of a rectangle and resizing only near the edges. Dragging a canvas label moves its field unless the pointer is on a resize edge/corner. The selected field is drawn and hit-tested in front of other fields; non-selected fields are visually muted, and their labels are hidden while a field is selected.
