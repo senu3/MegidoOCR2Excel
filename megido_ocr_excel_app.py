@@ -1088,11 +1088,18 @@ class ImageOcrExcelApp:
                 else "セット1を用意しました。最初の範囲をドラッグしてください。"
             )
         else:
+            fixed_auto_detection_ranges = self.auto_detection_enabled
+            if fixed_auto_detection_ranges:
+                self._adopt_current_image_as_coordinate_source()
             self.pending_dialogue_pair_id = None
             self.pending_dialogue_role = ""
             self.empty_set_ids.clear()
             self.auto_detection_enabled = False
             self.auto_detection_base_fields = []
+            if fixed_auto_detection_ranges:
+                self.status_var.set(
+                    "現在画像の検出範囲を、画像ごとに1行の固定範囲として引き継ぎました。"
+                )
         self._schedule_side_body_render()
         self.redraw()
 

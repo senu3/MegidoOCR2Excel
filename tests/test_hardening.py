@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -535,6 +536,43 @@ class FieldNameInteractionTests(unittest.TestCase):
             root.update_idletasks()
         finally:
             root.destroy()
+
+    def test_switching_auto_detection_to_image_rows_fixes_the_current_coordinate_source(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.export_layout_var = MagicMock()
+        app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR
+        app.original_image = Image.open(".samples/1.png").convert("RGB")
+        app.coordinate_settings = APP_PROFILE.coordinate_settings()
+        app.current_content_rect = None
+        app.fields = [TemplateField("話者", 55, 1523, 697, 1620)]
+        app.auto_detection_enabled = True
+        app.auto_detection_base_fields = [replace(app.fields[0])]
+        app.pending_dialogue_pair_id = None
+        app.pending_dialogue_role = ""
+        app.empty_set_ids = set()
+        app.status_var = MagicMock()
+        app._mark_dirty = MagicMock()
+        app._schedule_side_body_render = MagicMock()
+        app.redraw = MagicMock()
+        app._refresh_content_mapping()
+
+        app._set_export_layout(EXPORT_LAYOUT_IMAGE_ROW)
+
+        self.assertFalse(app.auto_detection_enabled)
+        self.assertEqual(app.auto_detection_base_fields, [])
+        self.assertEqual(
+            (app.fields[0].source_width, app.fields[0].source_height),
+            app.original_image.size,
+        )
+        self.assertEqual(
+            app.coordinate_settings.source_content_rect,
+            app.current_content_rect,
+        )
+        app.original_image = Image.open(".samples/9.png").convert("RGB")
+        app._refresh_content_mapping()
+        mapped = app._scaled_field(app.fields[0])
+        self.assertEqual((mapped.y1, mapped.y2), (1610, 1706))
+        self.assertIn("固定範囲", app.status_var.set.call_args.args[0])
 
     def test_empty_set_one_remains_available_and_preset_change_reassigns_fields(self) -> None:
         root = ctk.CTk()
