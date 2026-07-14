@@ -507,9 +507,18 @@ class BatchWorkflowTests(unittest.TestCase):
         template = load_template(Path(".samples/megido_novel_template.json"), expected_profile_id="megido_novel")
 
         settings = coordinate_settings_from_template(template)
+        fields = fields_from_template(template)
 
         self.assertEqual(settings.coordinate_space, COORDINATE_SPACE_CONTENT)
         self.assertEqual(settings.source_content_rect, (0, 219, 1080, 2087))
+        self.assertEqual(
+            next(field for field in fields if field.slot_key == SET_SLOT_SPEAKER).ocr_preprocess,
+            "default",
+        )
+        self.assertEqual(
+            next(field for field in fields if field.slot_key == SET_SLOT_TEXT).ocr_preprocess,
+            "gray",
+        )
 
     def test_missing_coordinate_settings_use_full_image_default(self) -> None:
         settings = coordinate_settings_from_template({})

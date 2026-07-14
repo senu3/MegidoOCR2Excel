@@ -38,6 +38,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(profile.default_backend, "paddle")
         self.assertEqual(profile.field_family("セリフ本文3"), "セリフ本文")
         self.assertEqual(profile.field_ocr_preset("セリフ3")["ocr_line_split"], "detected")
+        self.assertEqual(profile.field_ocr_preset("セリフ3")["ocr_preprocess"], "gray")
         self.assertFalse(profile.has_field_ocr_preset("選択肢"))
         self.assertTrue(profile.text_formatting_settings().fullwidth_ascii)
 

@@ -52,7 +52,7 @@ PROFILE = OcrProfile(
             family="セリフ本文",
             prefixes=("セリフ本文", "セリフ"),
             ocr={
-                "ocr_preprocess": "default",
+                "ocr_preprocess": "gray",
                 "ocr_scale": "auto",
                 "ocr_threshold": 180,
                 "ocr_lang": "jpn",
