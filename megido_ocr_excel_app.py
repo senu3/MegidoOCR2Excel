@@ -954,7 +954,7 @@ class ImageOcrExcelApp:
         layout_menu = ctk.CTkOptionMenu(
             layout_row,
             values=EXPORT_LAYOUT_OPTIONS,
-            command=self._set_export_layout,
+            command=lambda value: self._set_export_layout(value, layout_menu),
             height=THEME.layout.entry_height,
             font=UI_FONT_SMALL,
             fg_color=COLOR_SECONDARY,
@@ -1075,8 +1075,21 @@ class ImageOcrExcelApp:
             for idx, field in enumerate(self.fields):
                 self._field_row(scroller, idx)
 
-    def _set_export_layout(self, value: str) -> None:
-        if self.export_layout_var.get() != value:
+    def _set_export_layout(
+        self, value: str, menu: ctk.CTkOptionMenu | None = None
+    ) -> None:
+        current_layout = self.export_layout_var.get()
+        if (
+            value == EXPORT_LAYOUT_IMAGE_ROW
+            and current_layout != value
+            and self.auto_detection_enabled
+            and not self._confirm_fixed_range_switch()
+        ):
+            if menu is not None:
+                menu.set(current_layout)
+            self.status_var.set("自動検出を継続します。")
+            return
+        if current_layout != value:
             self.export_layout_var.set(value)
         if value == EXPORT_LAYOUT_DIALOGUE_PAIR:
             self.empty_set_ids.add(1)
@@ -1102,6 +1115,86 @@ class ImageOcrExcelApp:
                 )
         self._schedule_side_body_render()
         self.redraw()
+
+    def _confirm_fixed_range_switch(self) -> bool:
+        confirmed = False
+        window = ctk.CTkToplevel(self.root)
+        window.title("固定範囲へ切り替え")
+        window.geometry("520x270")
+        window.resizable(False, False)
+        window.transient(self.root)
+        window.grab_set()
+        window.configure(fg_color=COLOR_BG)
+
+        image_name = self.image_path.name if self.image_path else "現在表示中の画像"
+
+        def close(value: bool) -> None:
+            nonlocal confirmed
+            confirmed = value
+            window.grab_release()
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", lambda: close(False))
+        panel = ctk.CTkFrame(
+            window,
+            corner_radius=THEME.layout.panel_radius,
+            fg_color=COLOR_SURFACE,
+            border_width=1,
+            border_color=COLOR_BORDER,
+        )
+        panel.pack(fill=BOTH, expand=True, padx=18, pady=18)
+        panel.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            panel,
+            text="現在の画像を基準に固定しますか？",
+            image=ICONS.get("alert_circle", 20, THEME.palette.warning),
+            compound="left",
+            anchor="w",
+            font=UI_FONT_TITLE,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 10))
+        ctk.CTkLabel(
+            panel,
+            text=(
+                f"{image_name} の検出範囲を固定範囲として引き継ぎます。\n"
+                "切り替え後は画像ごとの会話自動検出を行いません。"
+            ),
+            anchor="w",
+            justify="left",
+            wraplength=440,
+            font=UI_FONT,
+            text_color=COLOR_MUTED,
+        ).grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 18))
+        buttons = ctk.CTkFrame(panel, fg_color="transparent")
+        buttons.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 18))
+        buttons.grid_columnconfigure(0, weight=1)
+        buttons.grid_columnconfigure(1, weight=1)
+        ctk.CTkButton(
+            buttons,
+            text="自動検出を続ける",
+            command=lambda: close(False),
+            height=THEME.layout.row_button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(
+            buttons,
+            text="固定範囲に切り替える",
+            command=lambda: close(True),
+            height=THEME.layout.row_button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT,
+            fg_color=COLOR_PRIMARY,
+            hover_color=COLOR_PRIMARY_HOVER,
+            text_color=THEME.palette.on_color,
+        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        window.wait_window()
+        return confirmed
 
     def _assign_fields_to_current_set_definition(
         self, reassign_all: bool

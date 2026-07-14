@@ -556,8 +556,12 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.redraw = MagicMock()
         app._refresh_content_mapping()
 
-        app._set_export_layout(EXPORT_LAYOUT_IMAGE_ROW)
+        with patch.object(
+            app, "_confirm_fixed_range_switch", return_value=True
+        ) as confirm:
+            app._set_export_layout(EXPORT_LAYOUT_IMAGE_ROW)
 
+        confirm.assert_called_once_with()
         self.assertFalse(app.auto_detection_enabled)
         self.assertEqual(app.auto_detection_base_fields, [])
         self.assertEqual(
@@ -573,6 +577,30 @@ class FieldNameInteractionTests(unittest.TestCase):
         mapped = app._scaled_field(app.fields[0])
         self.assertEqual((mapped.y1, mapped.y2), (1610, 1706))
         self.assertIn("固定範囲", app.status_var.set.call_args.args[0])
+
+    def test_cancelling_fixed_range_switch_keeps_auto_detection_and_menu_value(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.export_layout_var = MagicMock()
+        app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR
+        app.auto_detection_enabled = True
+        app.status_var = MagicMock()
+        app._schedule_side_body_render = MagicMock()
+        app.redraw = MagicMock()
+        menu = MagicMock()
+
+        with patch.object(
+            app, "_confirm_fixed_range_switch", return_value=False
+        ):
+            app._set_export_layout(EXPORT_LAYOUT_IMAGE_ROW, menu)
+
+        app.export_layout_var.set.assert_not_called()
+        self.assertTrue(app.auto_detection_enabled)
+        menu.set.assert_called_once_with(EXPORT_LAYOUT_DIALOGUE_PAIR)
+        app._schedule_side_body_render.assert_not_called()
+        app.redraw.assert_not_called()
+        self.assertEqual(
+            app.status_var.set.call_args.args[0], "自動検出を継続します。"
+        )
 
     def test_empty_set_one_remains_available_and_preset_change_reassigns_fields(self) -> None:
         root = ctk.CTk()
