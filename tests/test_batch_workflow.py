@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from argparse import Namespace
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from openpyxl import Workbook, load_workbook
 from PIL import Image
@@ -15,6 +17,7 @@ from operation_control import OperationCancelled
 from megido_app_config import natural_image_sort_key
 from ocr_engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
 from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_SET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, SET_PRESET_HEADING_TEXT, SET_PRESET_SINGLE_LINE, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error, set_definition_for_preset
+from scripts.ocr_accuracy_common import build_accuracy_row, expected_values_for_field, measurement_fields, read_expected_sets, recognize_with_engine
 from template_store import coordinate_settings_from_template, load_template
 from template_store import fields_from_template
 from profiles.megido_novel import PROFILE
@@ -357,6 +360,98 @@ class BatchWorkflowTests(unittest.TestCase):
 
         self.assertEqual([result.layout for result in results], ["unknown", "unknown"])
         self.assertEqual([len(result.groups) for result in results], [0, 0])
+
+    def test_accuracy_samples_preserve_repeated_dialogues_and_expand_supplements(self) -> None:
+        b1 = read_expected_sets(Path(".samples/b1.csv"))
+        b2 = read_expected_sets(Path(".samples/b2.csv"))
+        supplement = read_expected_sets(Path(".samples/e.csv"))
+
+        self.assertEqual(len(b1), 5)
+        self.assertEqual(len(b2), 5)
+        self.assertEqual(b1[0].speaker, "タナトス")
+        self.assertEqual(b1[-1].text, "死体だからいいんだろ　いいから案内してくれよ")
+        self.assertEqual(len(supplement), 2)
+        self.assertEqual(
+            [row.speaker for row in supplement],
+            ["ドン引きする治療猫たち", "ドン引きする治療猫たち"],
+        )
+        self.assertIn("意訳", supplement[1].text)
+
+    def test_accuracy_measurement_uses_the_same_dynamic_groups_as_export(self) -> None:
+        template = load_template(
+            Path(".samples/megido_novel_template.json"),
+            expected_profile_id="megido_novel",
+        )
+        fields = fields_from_template(template)
+        settings = coordinate_settings_from_template(template)
+        speaker = next(field for field in fields if field.slot_key == SET_SLOT_SPEAKER)
+        dialogue = next(field for field in fields if field.slot_key == SET_SLOT_TEXT)
+
+        b2_dialogues, b2_error = measurement_fields(
+            Image.open(".samples/b2.png"), fields, dialogue, settings
+        )
+        e_speakers, e_error = measurement_fields(
+            Image.open(".samples/e.png"), fields, speaker, settings
+        )
+        e_dialogues, _ = measurement_fields(
+            Image.open(".samples/e.png"), fields, dialogue, settings
+        )
+
+        self.assertEqual(b2_error, "")
+        self.assertEqual(len(b2_dialogues), 5)
+        self.assertEqual(e_error, "")
+        self.assertEqual(len(e_speakers), 2)
+        self.assertEqual(len(e_dialogues), 2)
+        self.assertEqual(
+            expected_values_for_field(read_expected_sets(Path(".samples/e.csv")), speaker),
+            ["ドン引きする治療猫たち", "ドン引きする治療猫たち"],
+        )
+
+    def test_accuracy_measurement_passes_the_apps_text_formatting_to_ocr(self) -> None:
+        formatting = TextFormattingSettings(
+            line_join=LINE_JOIN_FULLWIDTH_SPACE,
+            fullwidth_ascii=True,
+        )
+        args = Namespace(
+            backend="paddle",
+            preprocess="default",
+            scale="auto",
+            threshold=180,
+            psm=6,
+            lang="jpn",
+            line_split="detected",
+            line_padding=12,
+            line_detect_threshold=90,
+            line_detect_min_ratio=0.015,
+            line_detect_gap=10,
+            tesseract="",
+            correction_rules=[],
+            coordinate_settings=CoordinateSettings(),
+            text_formatting=formatting,
+        )
+        engine = MagicMock()
+        engine.recognize_field_detail.return_value = (
+            "ABC!?",
+            "ＡＢＣ！？",
+            None,
+        )
+
+        value, error = recognize_with_engine(
+            Image.new("RGB", (20, 20), "white"),
+            TemplateField("セリフ本文", 0, 0, 20, 20),
+            args,
+            engine,
+        )
+
+        self.assertEqual(value, "ＡＢＣ！？")
+        self.assertEqual(error, "")
+        self.assertEqual(
+            engine.recognize_field_detail.call_args.kwargs["text_formatting"],
+            formatting,
+        )
+        failed = build_accuracy_row("missing.png", "", "", "検出失敗")
+        self.assertFalse(failed.exact)
+        self.assertFalse(failed.normalized_match)
 
     def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
         template = load_template(

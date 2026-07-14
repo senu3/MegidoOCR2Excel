@@ -16,9 +16,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from megido_app_config import APP_PROFILE
-from ocr_engine import OcrEngine, apply_postprocess, clean_text, detect_tesseract, prepare_for_ocr, scaled_field
-from ocr_models import OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, TemplateField
-from template_store import coordinate_settings_from_template, fields_from_template, load_template
+from dialogue_log_detector import detect_complete_dialogue_pairs, include_supplement_candidates
+from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, clean_text, detect_tesseract, format_detected_text, prepare_for_ocr, scaled_field
+from ocr_models import CoordinateSettings, OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField
+from template_store import coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, text_formatting_from_template
 
 try:
     import pytesseract
@@ -35,6 +36,12 @@ class AccuracyRow:
     exact: bool
     normalized_match: bool
     error: str
+
+
+@dataclass(frozen=True)
+class ExpectedSetRow:
+    speaker: str
+    text: str
 
 
 def build_parser(
@@ -111,6 +118,10 @@ def run_accuracy(
 
     template = load_template(args.template, expected_profile_id=APP_PROFILE.profile_id)
     args.coordinate_settings = coordinate_settings_from_template(template)
+    args.text_formatting = text_formatting_from_template(
+        template, APP_PROFILE.text_formatting_settings()
+    )
+    args.correction_rules = correction_rules_from_template(template)
     fields = fields_from_template(template)
     field = find_field(fields, args.field)
     if field is None:
@@ -119,6 +130,7 @@ def run_accuracy(
         return 2
 
     tesseract = args.tesseract or str(template.get("tesseract_path") or "") or detect_tesseract()
+    args.tesseract = tesseract
     if args.backend == "tesseract" and tesseract:
         pytesseract.pytesseract.tesseract_cmd = tesseract
 
@@ -135,11 +147,46 @@ def run_accuracy(
     engine = OcrEngine()
     rows: list[AccuracyRow] = []
     for image_path, csv_path in pairs:
-        expected = read_expected(csv_path, field.name)
-        actual, error = recognize(image_path, field, args, engine, expected)
-        similarity = score_text(expected, actual)
-        exact = expected == actual
-        rows.append(AccuracyRow(image_path.name, expected, actual, similarity, exact, is_match(expected, actual), error))
+        expected_sets = read_expected_sets(csv_path)
+        expected_values = expected_values_for_field(expected_sets, field)
+        try:
+            image = Image.open(image_path).convert("RGB")
+        except Exception as exc:
+            rows.extend(
+                accuracy_rows_for_unreadable_image(
+                    image_path.name, expected_values, str(exc)
+                )
+            )
+            continue
+
+        detected_fields, detection_error = measurement_fields(
+            image, fields, field, args.coordinate_settings
+        )
+        row_count = max(len(expected_values), len(detected_fields), 1)
+        count_error = detection_count_error(
+            len(expected_values), len(detected_fields), detection_error
+        )
+        for index in range(row_count):
+            expected = expected_values[index] if index < len(expected_values) else ""
+            if index < len(detected_fields):
+                actual, error = recognize_image(
+                    image,
+                    detected_fields[index],
+                    args,
+                    engine,
+                    expected,
+                    f"{image_path.stem}_{index + 1}",
+                )
+            else:
+                actual, error = "", count_error
+            if count_error and not error:
+                error = count_error
+            label = (
+                image_path.name
+                if row_count == 1
+                else f"{image_path.name}#{index + 1}"
+            )
+            rows.append(build_accuracy_row(label, expected, actual, error))
 
     print_report(args.field, args, rows)
     if args.csv_out:
@@ -168,18 +215,118 @@ def sample_sort_key(path: Path) -> tuple[int, str]:
     return (int(path.stem), path.name) if path.stem.isdigit() else (10_000, path.name)
 
 
-def read_expected(csv_path: Path, field_name: str) -> str:
+def read_expected_sets(csv_path: Path) -> list[ExpectedSetRow]:
     rows = list(csv.reader(csv_path.read_text(encoding="utf-8-sig").splitlines()))
-    data = {row[0]: row[1] for row in rows if len(row) >= 2}
-    return data.get(field_name, "")
+    expected: list[ExpectedSetRow] = []
+    pending_speaker: str | None = None
+    for row in rows:
+        if len(row) < 2:
+            continue
+        key, value = row[0].strip(), row[1]
+        if key == "話者":
+            pending_speaker = value
+            continue
+        if key not in {"セリフ本文", "補足", "補足セリフ"}:
+            continue
+        speaker = (
+            pending_speaker
+            if pending_speaker is not None
+            else expected[-1].speaker
+            if expected
+            else ""
+        )
+        expected.append(ExpectedSetRow(speaker, value))
+        pending_speaker = None
+    return expected
 
 
-def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, engine: OcrEngine, expected: str = "") -> tuple[str, str]:
-    try:
-        image = Image.open(image_path).convert("RGB")
-    except Exception as exc:
-        return "", f"画像を開けませんでした: {exc}"
+def expected_values_for_field(
+    expected: list[ExpectedSetRow], field: TemplateField
+) -> list[str]:
+    if field.slot_key == SET_SLOT_SPEAKER or field.name.startswith("話者"):
+        return [row.speaker for row in expected]
+    return [row.text for row in expected]
 
+
+def measurement_fields(
+    image: Image.Image,
+    template_fields: list[TemplateField],
+    requested_field: TemplateField,
+    coordinate_settings: CoordinateSettings,
+) -> tuple[list[TemplateField], str]:
+    config = APP_PROFILE.dialogue_log_detection
+    if config is None or requested_field.slot_key not in {
+        SET_SLOT_SPEAKER,
+        SET_SLOT_TEXT,
+    }:
+        return [requested_field], ""
+    detection = include_supplement_candidates(
+        detect_complete_dialogue_pairs(
+            image,
+            template_fields,
+            coordinate_settings,
+            config,
+        )
+    )
+    if not detection.groups:
+        return [], detection.review_reason or "会話を自動検出できませんでした。"
+    field_index = 1 if requested_field.slot_key == SET_SLOT_SPEAKER else 2
+    return [group[field_index] for group in detection.groups], ""
+
+
+def detection_count_error(
+    expected_count: int, detected_count: int, detection_error: str = ""
+) -> str:
+    if detection_error:
+        return detection_error
+    if expected_count == detected_count:
+        return ""
+    return (
+        f"検出件数が正解データと一致しません。"
+        f"正解 {expected_count} 件 / 検出 {detected_count} 件"
+    )
+
+
+def accuracy_rows_for_unreadable_image(
+    image_name: str, expected_values: list[str], error: str
+) -> list[AccuracyRow]:
+    values = expected_values or [""]
+    row_count = len(values)
+    return [
+        build_accuracy_row(
+            image_name if row_count == 1 else f"{image_name}#{index + 1}",
+            expected,
+            "",
+            f"画像を開けませんでした: {error}",
+        )
+        for index, expected in enumerate(values)
+    ]
+
+
+def build_accuracy_row(
+    image: str, expected: str, actual: str, error: str = ""
+) -> AccuracyRow:
+    exact = not error and expected == actual
+    normalized_match = not error and is_match(expected, actual)
+    return AccuracyRow(
+        image,
+        expected,
+        actual,
+        score_text(expected, actual),
+        exact,
+        normalized_match,
+        error,
+    )
+
+
+def recognize_image(
+    image: Image.Image,
+    field: TemplateField,
+    args: argparse.Namespace,
+    engine: OcrEngine,
+    expected: str = "",
+    output_stem: str = "sample",
+) -> tuple[str, str]:
     region = scaled_field(field, image, args.coordinate_settings)
     if (region.x2 - region.x1) < 1 or (region.y2 - region.y1) < 1:
         return "", "読み取り範囲が画像外、または小さすぎます。"
@@ -189,11 +336,11 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, 
         return recognize_with_engine(image, field, args, engine)
 
     if args.line_split != "none":
-        return recognize_lines(crop, field, args, expected, image_path.stem)
+        return recognize_lines(crop, field, args, expected, output_stem)
 
     prepared = prepare_for_ocr(crop, args.preprocess, args.scale, args.threshold)
     if args.save_crops:
-        prepared.save(args.save_crops / f"{image_path.stem}_{field.name}.png")
+        prepared.save(args.save_crops / f"{output_stem}_{field.name}.png")
 
     try:
         raw_text = pytesseract.image_to_string(prepared, lang=args.lang.strip() or APP_PROFILE.default_lang, config=ocr_config(args))
@@ -202,13 +349,16 @@ def recognize(image_path: Path, field: TemplateField, args: argparse.Namespace, 
     except pytesseract.TesseractError as exc:
         return "", str(exc)
 
-    return apply_postprocess(clean_text(raw_text), field), ""
+    corrected = apply_correction_rules(
+        clean_text(raw_text), field, args.correction_rules
+    )
+    return apply_postprocess(corrected, field), ""
 
 
 def recognize_with_engine(image: Image.Image, field: TemplateField, args: argparse.Namespace, engine: OcrEngine) -> tuple[str, str]:
     adjusted = replace(
         field,
-        ocr_backend="paddle",
+        ocr_backend=args.backend,
         ocr_preprocess=args.preprocess,
         ocr_scale=args.scale,
         ocr_threshold=args.threshold,
@@ -226,7 +376,9 @@ def recognize_with_engine(image: Image.Image, field: TemplateField, args: argpar
         args.lang,
         args.tesseract,
         args.backend,
+        args.correction_rules,
         coordinate_settings=args.coordinate_settings,
+        text_formatting=args.text_formatting,
     )
     return value or "", error or ""
 
@@ -252,9 +404,10 @@ def recognize_lines(crop: Image.Image, field: TemplateField, args: argparse.Name
         if cleaned:
             parts.append(cleaned)
 
-    if errors:
-        return apply_postprocess(" ".join(parts), field), " / ".join(errors)
-    return apply_postprocess(" ".join(parts), field), ""
+    formatted = format_detected_text("\n".join(parts), args.text_formatting)
+    corrected = apply_correction_rules(formatted, field, args.correction_rules)
+    value = apply_postprocess(corrected, field, preserve_whitespace=True)
+    return value, " / ".join(errors)
 
 
 def line_bands(crop: Image.Image, args: argparse.Namespace, expected: str) -> list[tuple[int, int]]:
@@ -345,7 +498,11 @@ def print_report(field_name: str, args: argparse.Namespace, rows: list[AccuracyR
         line_split += f" line_padding={args.line_padding}"
     if args.line_split == "detected":
         line_split += f" line_detect_threshold={args.line_detect_threshold} line_detect_min_ratio={args.line_detect_min_ratio} line_detect_gap={args.line_detect_gap}"
-    print(f"settings: backend={args.backend} preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or APP_PROFILE.default_lang}{tessdata}{line_split}")
+    formatting = (
+        f" line_join={args.text_formatting.line_join}"
+        f" fullwidth_ascii={args.text_formatting.fullwidth_ascii}"
+    )
+    print(f"settings: backend={args.backend} preprocess={args.preprocess} scale={args.scale} threshold={args.threshold} psm={args.psm} oem={args.oem} lang={args.lang or APP_PROFILE.default_lang}{tessdata}{line_split}{formatting}")
     if args.match_space_normalized:
         print(f"samples: {len(rows)}  avg_similarity: {avg:.3f}  {match_label}: {matched}/{len(rows)}  exact_match: {exact}/{len(rows)}")
     else:
