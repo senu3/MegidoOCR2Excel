@@ -197,6 +197,7 @@ class DialogueLogDetectionConfig:
     log_dialogue_x1_ratio: float = 0.10
     log_dialogue_x2_ratio: float = 0.86
     speaker_vertical_padding_ratio: float = 0.006
+    max_auto_detection_aspect_ratio: float = 1.0
 
 
 @dataclass(frozen=True)

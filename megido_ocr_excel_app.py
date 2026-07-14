@@ -251,6 +251,7 @@ class ImageOcrExcelApp:
         self.canvas_labels: dict[int, int] = {}
         self.canvas_label_bgs: dict[int, int] = {}
         self.canvas_pair_handles: dict[int, dict] = {}
+        self.empty_set_ids: set[int] = set()
         self.pending_dialogue_pair_id: int | None = None
         self.pending_dialogue_role: str = ""
         self.ocr_engine = OcrEngine()
@@ -950,9 +951,8 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
         ).grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ctk.CTkOptionMenu(
+        layout_menu = ctk.CTkOptionMenu(
             layout_row,
-            variable=self.export_layout_var,
             values=EXPORT_LAYOUT_OPTIONS,
             command=self._set_export_layout,
             height=THEME.layout.entry_height,
@@ -963,7 +963,9 @@ class ImageOcrExcelApp:
             dropdown_fg_color=COLOR_SURFACE_ALT,
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
-        ).grid(row=0, column=1, sticky="ew")
+        )
+        layout_menu.set(self.export_layout_var.get())
+        layout_menu.grid(row=0, column=1, sticky="ew")
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
             preset_row = ctk.CTkFrame(body, fg_color="transparent")
             preset_row.pack(fill="x", padx=16, pady=(0, 8))
@@ -975,11 +977,10 @@ class ImageOcrExcelApp:
                 font=UI_FONT_SMALL,
                 text_color=COLOR_MUTED,
             ).grid(row=0, column=0, sticky="w", padx=(0, 8))
-            ctk.CTkOptionMenu(
+            preset_menu = ctk.CTkOptionMenu(
                 preset_row,
-                variable=self.set_preset_var,
                 values=[SET_PRESET_DISPLAY[key] for key in SET_PRESET_OPTIONS],
-                command=self._set_set_preset,
+                command=lambda value: self._set_set_preset(value, preset_menu),
                 height=THEME.layout.entry_height,
                 font=UI_FONT_SMALL,
                 fg_color=COLOR_SECONDARY,
@@ -988,7 +989,9 @@ class ImageOcrExcelApp:
                 dropdown_fg_color=COLOR_SURFACE_ALT,
                 dropdown_hover_color=COLOR_SECONDARY_HOVER,
                 text_color=COLOR_TEXT,
-            ).grid(row=0, column=1, sticky="ew")
+            )
+            preset_menu.set(self.set_preset_var.get())
+            preset_menu.grid(row=0, column=1, sticky="ew")
             ctk.CTkLabel(
                 body,
                 text="同じセット内の項目を1行に出力します。ハンドルをドラッグすると別のセットへ移動できます。",
@@ -1056,7 +1059,7 @@ class ImageOcrExcelApp:
         )
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
         self.template_fields_scroller = scroller
-        if not self.fields:
+        if not self.fields and self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
             self._empty_state(
                 scroller,
                 "項目がありません",
@@ -1073,15 +1076,114 @@ class ImageOcrExcelApp:
                 self._field_row(scroller, idx)
 
     def _set_export_layout(self, value: str) -> None:
-        if value != EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if self.export_layout_var.get() != value:
+            self.export_layout_var.set(value)
+        if value == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            self.empty_set_ids.add(1)
+            self._assign_fields_to_current_set_definition(reassign_all=False)
+            self._prepare_initial_set_creation()
+            self.status_var.set(
+                "セット1を用意し、既存項目を割り当てました。"
+                if self.fields
+                else "セット1を用意しました。最初の範囲をドラッグしてください。"
+            )
+        else:
             self.pending_dialogue_pair_id = None
             self.pending_dialogue_role = ""
+            self.empty_set_ids.clear()
             self.auto_detection_enabled = False
             self.auto_detection_base_fields = []
-        self._render_side_body()
+        self._schedule_side_body_render()
         self.redraw()
 
-    def _set_set_preset(self, display: str) -> None:
+    def _assign_fields_to_current_set_definition(
+        self, reassign_all: bool
+    ) -> bool:
+        columns = self.set_definition.columns
+        if not columns or not self.fields:
+            return False
+        allowed = set(self.set_definition.slot_keys)
+        occupied_by_set: dict[int, set[str]] = {}
+        if not reassign_all:
+            for field in self.fields:
+                if field.set_id > 0 and field.slot_key in allowed:
+                    occupied_by_set.setdefault(field.set_id, set()).add(field.slot_key)
+
+        changed = False
+        overflow_position_by_set: dict[int, int] = {}
+        for field in self.fields:
+            if (
+                not reassign_all
+                and field.set_id > 0
+                and field.slot_key in allowed
+            ):
+                continue
+            set_id = field.set_id if field.set_id > 0 else 1
+            occupied = occupied_by_set.setdefault(set_id, set())
+            matching = next(
+                (
+                    column
+                    for column in columns
+                    if column.key not in occupied and column.label in field.name
+                ),
+                None,
+            )
+            column = matching or next(
+                (column for column in columns if column.key not in occupied),
+                None,
+            )
+            if column is None:
+                position = overflow_position_by_set.get(set_id, 0)
+                column = columns[position % len(columns)]
+                overflow_position_by_set[set_id] = position + 1
+            if (
+                field.set_id != set_id
+                or field.slot_key != column.key
+                or field.ocr_line_split != column.ocr_line_split
+            ):
+                changed = True
+            field.set_id = set_id
+            field.slot_key = column.key
+            field.ocr_line_split = column.ocr_line_split
+            occupied.add(column.key)
+
+        assigned_ids = {field.set_id for field in self.fields if field.set_id > 0}
+        self.empty_set_ids.difference_update(assigned_ids)
+        if changed:
+            self.current_results = [""] * len(self.fields)
+            self.current_raw_results = [""] * len(self.fields)
+        return changed
+
+    def _prepare_initial_set_creation(self) -> None:
+        has_set_one_fields = any(field.set_id == 1 for field in self.fields)
+        if has_set_one_fields:
+            self.empty_set_ids.discard(1)
+        else:
+            self.empty_set_ids.add(1)
+        slots_in_set_one = {
+            field.slot_key
+            for field in self.fields
+            if field.set_id == 1
+            and field.slot_key in self.set_definition.slot_keys
+        }
+        missing = next(
+            (
+                column.key
+                for column in self.set_definition.columns
+                if column.key not in slots_in_set_one
+            ),
+            "",
+        )
+        if missing:
+            self.pending_dialogue_pair_id = 1
+            self.pending_dialogue_role = missing
+        else:
+            self.pending_dialogue_pair_id = None
+            self.pending_dialogue_role = ""
+
+    def _set_set_preset(
+        self, display: str, menu: ctk.CTkOptionMenu | None = None
+    ) -> None:
         preset = next(
             (key for key, label in SET_PRESET_DISPLAY.items() if label == display),
             self.set_definition.preset,
@@ -1091,29 +1193,35 @@ class ImageOcrExcelApp:
         assigned = any(field.set_id > 0 or field.slot_key for field in self.fields)
         if assigned and not messagebox.askyesno(
             "セット種類を変更",
-            "セット種類を変更すると、既存項目のセット割当を解除します。変更しますか？",
+            "セット種類を変更すると、既存項目を新しい構成へ再割り当てします。変更しますか？",
         ):
-            self.set_preset_var.set(SET_PRESET_DISPLAY[self.set_definition.preset])
+            current_display = SET_PRESET_DISPLAY[self.set_definition.preset]
+            self.set_preset_var.set(current_display)
+            if menu is not None:
+                menu.set(current_display)
             return
         self.set_definition = set_definition_for_preset(preset)
         self.set_preset_var.set(SET_PRESET_DISPLAY[preset])
+        if menu is not None:
+            menu.set(SET_PRESET_DISPLAY[preset])
         self.auto_detection_enabled = False
         self.auto_detection_base_fields = []
         self.current_detection_layout = ""
         self.current_detection_reason = ""
-        self.pending_dialogue_pair_id = None
-        self.pending_dialogue_role = ""
         if assigned:
-            for field in self.fields:
-                field.set_id = 0
-                field.slot_key = ""
+            self._assign_fields_to_current_set_definition(reassign_all=True)
+        self._prepare_initial_set_creation()
         self._mark_dirty()
         self.status_var.set(f"セット種類を「{self.set_definition.name}」に変更しました。")
         self._schedule_side_body_render()
         self.redraw()
 
     def _dialogue_pair_ids(self) -> list[int]:
-        return sorted({field.pair_id for field in self.fields if field.pair_id > 0})
+        pair_ids = {field.pair_id for field in self.fields if field.pair_id > 0}
+        pair_ids.update(getattr(self, "empty_set_ids", set()))
+        if self.pending_dialogue_pair_id is not None:
+            pair_ids.add(self.pending_dialogue_pair_id)
+        return sorted(pair_ids)
 
     def _next_dialogue_pair_id(self) -> int:
         pair_ids = self._dialogue_pair_ids()
@@ -1127,19 +1235,35 @@ class ImageOcrExcelApp:
 
     def begin_dialogue_pair_creation(self) -> None:
         if self.pending_dialogue_pair_id is None:
-            self.pending_dialogue_pair_id = self._next_dialogue_pair_id()
-            self.pending_dialogue_role = self.set_definition.columns[0].key
+            incomplete = next(
+                (
+                    (set_id, column.key)
+                    for set_id in self._dialogue_pair_ids()
+                    for column in self.set_definition.columns
+                    if not any(
+                        field.set_id == set_id and field.slot_key == column.key
+                        for field in self.fields
+                    )
+                ),
+                None,
+            )
+            if incomplete is None:
+                self.pending_dialogue_pair_id = self._next_dialogue_pair_id()
+                self.pending_dialogue_role = self.set_definition.columns[0].key
+                self.empty_set_ids.add(self.pending_dialogue_pair_id)
+            else:
+                self.pending_dialogue_pair_id, self.pending_dialogue_role = incomplete
         slot_label = self.set_definition.slot_label(self.pending_dialogue_role)
         self.status_var.set(
             f"セット {self.pending_dialogue_pair_id} の{slot_label}範囲をCanvasでドラッグしてください。"
         )
-        self._render_side_body()
+        self._schedule_side_body_render()
 
     def cancel_dialogue_pair_creation(self) -> None:
         self.pending_dialogue_pair_id = None
         self.pending_dialogue_role = ""
         self.status_var.set("セットの追加を中止しました。")
-        self._render_side_body()
+        self._schedule_side_body_render()
 
     def _render_dialogue_pair_fields(self, parent) -> None:
         pair_ids = self._dialogue_pair_ids()
@@ -1198,6 +1322,14 @@ class ImageOcrExcelApp:
             )
             for idx in indexes:
                 self._dialogue_field_row(section, idx)
+            if not indexes:
+                ctk.CTkLabel(
+                    section,
+                    text="Canvasで最初の範囲をドラッグしてください。",
+                    anchor="w",
+                    font=UI_FONT_SMALL,
+                    text_color=COLOR_MUTED,
+                ).pack(fill="x", padx=8, pady=(4, 10))
 
         unassigned = [
             idx for idx, field in enumerate(self.fields) if field.pair_id <= 0
@@ -1248,6 +1380,15 @@ class ImageOcrExcelApp:
                 field.pair_id = other_id
             elif field.pair_id == other_id:
                 field.pair_id = pair_id
+        remapped_empty_ids: set[int] = set()
+        for value in self.empty_set_ids:
+            if value == pair_id:
+                remapped_empty_ids.add(other_id)
+            elif value == other_id:
+                remapped_empty_ids.add(pair_id)
+            else:
+                remapped_empty_ids.add(value)
+        self.empty_set_ids = remapped_empty_ids
         self._mark_dirty()
         self.status_var.set("セットの出力順を変更しました。")
         self._render_side_body()
@@ -2867,6 +3008,7 @@ class ImageOcrExcelApp:
     def start_auto_detection_workflow(self) -> None:
         self.workflow_started = True
         self.auto_detection_enabled = True
+        self.empty_set_ids = set()
         self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
         if hasattr(self, "set_preset_var"):
             self.set_preset_var.set(SET_PRESET_DISPLAY[SET_PRESET_CONVERSATION])
@@ -2896,6 +3038,7 @@ class ImageOcrExcelApp:
             self.workflow_started = False
             self.auto_detection_enabled = False
             self.auto_detection_base_fields = []
+            self.empty_set_ids = set()
             self.fields = []
             self.selected_index = None
             with self._without_dirty_tracking():
@@ -2910,6 +3053,7 @@ class ImageOcrExcelApp:
         self.workflow_started = True
         self.auto_detection_enabled = False
         self.auto_detection_base_fields = []
+        self.empty_set_ids = set()
         self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
         if hasattr(self, "set_preset_var"):
             self.set_preset_var.set(SET_PRESET_DISPLAY[SET_PRESET_CONVERSATION])
@@ -3242,6 +3386,7 @@ class ImageOcrExcelApp:
             self.workflow_started = True
             self.auto_detection_enabled = False
             self.auto_detection_base_fields = []
+            self.empty_set_ids = set()
             self.fields = fields
             self.set_definition = set_definition_from_template(data)
             self.set_preset_var.set(
@@ -5158,6 +5303,8 @@ class ImageOcrExcelApp:
         if slot_column is not None:
             field.ocr_line_split = slot_column.ocr_line_split
         self.fields.append(field)
+        if pair_id is not None:
+            self.empty_set_ids.discard(pair_id)
         self.current_results.append("")
         self.current_raw_results.append("")
         self.selected_index = len(self.fields) - 1

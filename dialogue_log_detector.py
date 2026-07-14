@@ -115,6 +115,15 @@ def detect_complete_dialogue_pairs(
     left, top, right, bottom = content_rect
     content_width = right - left
     content_height = bottom - top
+    if content_height <= 0 or content_width / content_height > config.max_auto_detection_aspect_ratio:
+        return DialoguePairDetectionResult(
+            [],
+            layout="unknown",
+            review_reason=(
+                "この画像比率は会話自動検出の対象外です。"
+                "新規テンプレートのセット設定を使用してください。"
+            ),
+        )
     scan_x1 = round(left + content_width * config.anchor_x1_ratio)
     scan_x2 = round(left + content_width * config.anchor_x2_ratio)
     log_top = round(top + content_height * config.log_top_ratio)

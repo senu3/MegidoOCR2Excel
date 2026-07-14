@@ -12,7 +12,7 @@ from PIL import Image
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
-from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, TemplateField, set_definition_for_preset
+from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
 class _FailingWorkbook:
@@ -506,6 +506,64 @@ class FieldNameInteractionTests(unittest.TestCase):
                 heading_row_menus[0].cget("values"),
                 ["未割当", "見出し", "本文"],
             )
+        finally:
+            root.destroy()
+
+    def test_switching_to_set_layout_creates_set_one_and_assigns_existing_fields(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app.fields = [
+                TemplateField("話者", 0, 0, 10, 10),
+                TemplateField("セリフ本文", 0, 10, 10, 20),
+            ]
+            app.current_results = ["old", "old"]
+            app.current_raw_results = ["raw", "raw"]
+
+            app.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            app._set_export_layout(EXPORT_LAYOUT_DIALOGUE_PAIR)
+
+            self.assertEqual([field.set_id for field in app.fields], [1, 1])
+            self.assertEqual(
+                [field.slot_key for field in app.fields],
+                [SET_SLOT_SPEAKER, SET_SLOT_TEXT],
+            )
+            self.assertEqual(app._dialogue_pair_ids(), [1])
+            self.assertIsNone(app.pending_dialogue_pair_id)
+            self.assertEqual(app.current_results, ["", ""])
+            root.update_idletasks()
+        finally:
+            root.destroy()
+
+    def test_empty_set_one_remains_available_and_preset_change_reassigns_fields(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            app._set_export_layout(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            self.assertEqual(app._dialogue_pair_ids(), [1])
+            self.assertEqual(app.pending_dialogue_pair_id, 1)
+            self.assertEqual(app.pending_dialogue_role, SET_SLOT_SPEAKER)
+
+            app.cancel_dialogue_pair_creation()
+            app.begin_dialogue_pair_creation()
+            self.assertEqual(app.pending_dialogue_pair_id, 1)
+
+            app.fields = [
+                TemplateField("見出し", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
+                TemplateField("本文", 0, 10, 10, 20, set_id=1, slot_key=SET_SLOT_TEXT),
+            ]
+            with patch("megido_ocr_excel_app.messagebox.askyesno", return_value=True):
+                app._set_set_preset("見出し＋本文")
+
+            self.assertEqual([field.set_id for field in app.fields], [1, 1])
+            self.assertEqual(
+                [field.slot_key for field in app.fields],
+                [SET_SLOT_HEADING, SET_SLOT_TEXT],
+            )
+            root.update_idletasks()
         finally:
             root.destroy()
 

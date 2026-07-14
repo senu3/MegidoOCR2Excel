@@ -336,6 +336,28 @@ class BatchWorkflowTests(unittest.TestCase):
 
         self.assertEqual(layouts, ["normal"] * 9)
 
+    def test_special_conversation_samples_are_outside_auto_detection(self) -> None:
+        template = load_template(
+            Path(".samples/megido_novellog_template.json"),
+            expected_profile_id="megido_novel",
+        )
+        fields = fields_from_template(template)
+        settings = coordinate_settings_from_template(template)
+        assert PROFILE.dialogue_log_detection is not None
+
+        results = [
+            detect_complete_dialogue_pairs(
+                Image.open(Path(".samples") / filename),
+                fields,
+                settings,
+                PROFILE.dialogue_log_detection,
+            )
+            for filename in ("f.jpg", "g.png")
+        ]
+
+        self.assertEqual([result.layout for result in results], ["unknown", "unknown"])
+        self.assertEqual([len(result.groups) for result in results], [0, 0])
+
     def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
         template = load_template(
             Path(".samples/megido_novellog_template.json"),
