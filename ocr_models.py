@@ -30,7 +30,7 @@ SET_PRESET_OPTIONS = [
 ]
 SET_PRESET_DISPLAY = {
     SET_PRESET_CONVERSATION: "会話（話者＋セリフ）",
-    SET_PRESET_SINGLE_LINE: "1行セリフ",
+    SET_PRESET_SINGLE_LINE: "話者＋1行セリフ",
     SET_PRESET_HEADING_TEXT: "見出し＋本文",
 }
 SET_SLOT_SPEAKER = "speaker"
@@ -124,9 +124,12 @@ def set_definition_for_preset(preset: str) -> SetDefinition:
     if preset == SET_PRESET_SINGLE_LINE:
         return SetDefinition(
             preset,
-            "1行セリフ",
+            "話者＋1行セリフ",
             "順序",
-            (SetColumn(SET_SLOT_TEXT, "セリフ", "none"),),
+            (
+                SetColumn(SET_SLOT_SPEAKER, "話者", "none"),
+                SetColumn(SET_SLOT_TEXT, "セリフ", "none"),
+            ),
         )
     if preset == SET_PRESET_HEADING_TEXT:
         return SetDefinition(

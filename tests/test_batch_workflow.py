@@ -14,7 +14,7 @@ from excel_exporter import ExcelExporter, ExportSettings
 from operation_control import OperationCancelled
 from megido_app_config import natural_image_sort_key
 from ocr_engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
-from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_SET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, SET_PRESET_HEADING_TEXT, SET_PRESET_SINGLE_LINE, SET_SLOT_HEADING, SET_SLOT_TEXT, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error, set_definition_for_preset
+from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_SET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, SET_PRESET_HEADING_TEXT, SET_PRESET_SINGLE_LINE, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error, set_definition_for_preset
 from template_store import coordinate_settings_from_template, load_template
 from template_store import fields_from_template
 from profiles.megido_novel import PROFILE
@@ -620,7 +620,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertIn("セリフ", dialogue_pair_validation_error(missing) or "")
         self.assertIn("複数", dialogue_pair_validation_error(duplicate) or "")
 
-    def test_single_line_set_exports_one_text_column_per_set(self) -> None:
+    def test_single_line_set_exports_speaker_and_text_per_set(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             image_path = root / "cards.png"
@@ -628,7 +628,9 @@ class BatchWorkflowTests(unittest.TestCase):
             Image.new("RGB", (20, 20), "white").save(image_path)
             definition = set_definition_for_preset(SET_PRESET_SINGLE_LINE)
             fields = [
+                TemplateField("話者1", 0, 0, 20, 5, set_id=1, slot_key=SET_SLOT_SPEAKER),
                 TemplateField("セリフ1", 0, 0, 20, 10, set_id=1, slot_key=SET_SLOT_TEXT),
+                TemplateField("話者2", 0, 10, 20, 15, set_id=2, slot_key=SET_SLOT_SPEAKER),
                 TemplateField("セリフ2", 0, 10, 20, 20, set_id=2, slot_key=SET_SLOT_TEXT),
             ]
 
@@ -643,12 +645,12 @@ class BatchWorkflowTests(unittest.TestCase):
             sheet = load_workbook(output)["OCR"]
 
             self.assertEqual(
-                [sheet.cell(1, column).value for column in range(1, 4)],
-                ["画像名", "順序", "セリフ"],
+                [sheet.cell(1, column).value for column in range(1, 5)],
+                ["画像名", "順序", "話者", "セリフ"],
             )
             self.assertEqual(
-                [sheet.cell(3, column).value for column in range(1, 4)],
-                ["cards.png", "2", "セリフ2"],
+                [sheet.cell(3, column).value for column in range(1, 5)],
+                ["cards.png", "2", "話者2", "セリフ2"],
             )
 
     def test_heading_text_set_uses_definition_for_headers_and_slot_order(self) -> None:
