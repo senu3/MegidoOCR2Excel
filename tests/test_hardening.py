@@ -98,6 +98,7 @@ class WorkflowChoiceTests(unittest.TestCase):
         app.open_image_folder = MagicMock(return_value=True)
         app._mark_clean = MagicMock()
         app._show_workflow_choice = MagicMock()
+        app._hide_workflow_choice = MagicMock()
         app._render_side_body = MagicMock()
         return app
 
@@ -112,6 +113,7 @@ class WorkflowChoiceTests(unittest.TestCase):
         self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_SPEAKER)
         self.assertEqual(app.fields[1].dialogue_role, DIALOGUE_ROLE_TEXT)
         self.assertEqual(app.fields[1].ocr_line_split, "detected")
+        app._hide_workflow_choice.assert_called_once()
         app.open_image_folder.assert_called_once()
 
     def test_new_template_choice_keeps_the_field_list_empty(self) -> None:
@@ -122,7 +124,47 @@ class WorkflowChoiceTests(unittest.TestCase):
         self.assertTrue(app.workflow_started)
         self.assertFalse(app.auto_detection_enabled)
         self.assertEqual(app.fields, [])
+        app._hide_workflow_choice.assert_called_once()
         app.open_image_folder.assert_called_once()
+
+    def test_workflow_choice_uses_a_translucent_modal_layer(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            modal = app.workflow_choice_modal
+            self.assertIsNotNone(modal)
+            self.assertIs(modal.backdrop.master, root)
+            self.assertIs(
+                app.workflow_choice_overlay, modal.panel
+            )
+            self.assertAlmostEqual(modal.backdrop_alpha, 0.66)
+            self.assertTrue(modal.visible)
+
+            app._hide_workflow_choice()
+            self.assertFalse(modal.visible)
+            self.assertEqual(modal.backdrop.state(), "withdrawn")
+            self.assertEqual(modal.window.state(), "withdrawn")
+
+            app._show_workflow_choice()
+            self.assertTrue(modal.visible)
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
+    def test_shortcuts_are_blocked_until_workflow_is_selected(self) -> None:
+        app = self._logic_only_app()
+        command = MagicMock(return_value="handled")
+        event = object()
+
+        self.assertEqual(app._dispatch_shortcut(command, event), "break")
+        command.assert_not_called()
+        app._show_workflow_choice.assert_called_once()
+
+        app.workflow_started = True
+        self.assertEqual(app._dispatch_shortcut(command, event), "handled")
+        command.assert_called_once_with(event)
 
     def test_supplement_candidate_panel_renders_and_does_not_dirty_the_app(self) -> None:
         root = ctk.CTk()

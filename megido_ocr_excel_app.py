@@ -50,6 +50,7 @@ from megido_app_config import (
 )
 from megido_icons import ICONS
 from megido_ui_theme import THEME
+from modal_overlay import ModalOverlay
 from ocr_engine import (
     OcrEngine,
     apply_correction_rules,
@@ -300,7 +301,9 @@ class ImageOcrExcelApp:
         self.template_fields_scroller: AutoHideScrollableFrame | None = None
         self.canvas: Canvas
         self.canvas_frame: ctk.CTkFrame | None = None
+        self.workflow_choice_modal: ModalOverlay | None = None
         self.workflow_choice_overlay: ctk.CTkFrame | None = None
+        self.workflow_choice_primary_button: ctk.CTkButton | None = None
         self.hbar: ctk.CTkScrollbar | None = None
         self.vbar: ctk.CTkScrollbar | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
@@ -584,16 +587,16 @@ class ImageOcrExcelApp:
         self.loading_overlay.place_forget()
 
     def _build_workflow_choice_overlay(self) -> None:
-        if self.canvas_frame is None:
-            return
-        overlay = ctk.CTkFrame(
-            self.canvas_frame,
+        modal = ModalOverlay(
+            self.root,
             width=470,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE,
-            border_width=1,
+            backdrop_color=THEME.palette.modal_backdrop,
+            backdrop_alpha=THEME.layout.modal_backdrop_alpha,
+            surface_color=COLOR_SURFACE,
             border_color=COLOR_BORDER,
+            corner_radius=THEME.layout.panel_radius,
         )
+        overlay = modal.panel
         overlay.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             overlay,
@@ -611,7 +614,7 @@ class ImageOcrExcelApp:
             text_color=COLOR_MUTED,
             wraplength=390,
         ).grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 20))
-        ctk.CTkButton(
+        primary_button = ctk.CTkButton(
             overlay,
             text="会話を自動検出",
             image=ICONS.get("scan", 18, THEME.palette.on_color),
@@ -622,8 +625,13 @@ class ImageOcrExcelApp:
             font=UI_FONT_BOLD,
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
-        ).grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 8))
-        ctk.CTkButton(
+        )
+        primary_button.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 8))
+        primary_button.bind(
+            "<Return>",
+            lambda _event: self.start_auto_detection_workflow() or "break",
+        )
+        secondary_button = ctk.CTkButton(
             overlay,
             text="新規テンプレート",
             image=ICONS.get("plus", 17, COLOR_TEXT),
@@ -636,10 +644,22 @@ class ImageOcrExcelApp:
             hover_color=COLOR_SECONDARY_HOVER,
             border_width=1,
             border_color=COLOR_BORDER,
-        ).grid(row=3, column=0, sticky="ew", padx=28, pady=(0, 26))
+        )
+        secondary_button.grid(
+            row=3, column=0, sticky="ew", padx=28, pady=(0, 26)
+        )
+        secondary_button.bind(
+            "<Return>",
+            lambda _event: self.start_new_template_workflow() or "break",
+        )
+
+        modal.set_focus_order(
+            [primary_button, secondary_button], default=primary_button
+        )
+        self.workflow_choice_modal = modal
         self.workflow_choice_overlay = overlay
-        overlay.place(relx=0.5, rely=0.5, anchor="center")
-        overlay.lift()
+        self.workflow_choice_primary_button = primary_button
+        modal.show()
 
     def _show_loading(self, message: str) -> None:
         self.loading_var.set(message)
@@ -760,17 +780,32 @@ class ImageOcrExcelApp:
             self.loading_close_button.configure(state="disabled")
 
     def _bind_shortcuts(self) -> None:
-        self.root.bind_all("<Control-Left>", self.previous_image)
-        self.root.bind_all("<Control-Right>", self.next_image)
-        self.root.bind_all("<Control-s>", self.save_template)
-        self.root.bind_all("<Control-o>", self.load_template)
-        self.root.bind_all("<Control-Return>", self.export_to_excel)
-        self.root.bind_all("<Alt-Up>", self.move_selected_field_up)
-        self.root.bind_all("<Alt-Down>", self.move_selected_field_down)
-        self.root.bind_all("<F2>", self.edit_selected_field_name)
-        self.root.bind_all("<Escape>", self.undo_last_action)
-        self.root.bind_all("<Control-z>", self.undo_last_action)
-        self.root.bind_all("<Control-Z>", self.undo_last_action)
+        shortcuts = (
+            ("<Control-Left>", self.previous_image),
+            ("<Control-Right>", self.next_image),
+            ("<Control-s>", self.save_template),
+            ("<Control-o>", self.load_template),
+            ("<Control-Return>", self.export_to_excel),
+            ("<Alt-Up>", self.move_selected_field_up),
+            ("<Alt-Down>", self.move_selected_field_down),
+            ("<F2>", self.edit_selected_field_name),
+            ("<Escape>", self.undo_last_action),
+            ("<Control-z>", self.undo_last_action),
+            ("<Control-Z>", self.undo_last_action),
+        )
+        for sequence, command in shortcuts:
+            self.root.bind_all(
+                sequence,
+                lambda event, handler=command: self._dispatch_shortcut(
+                    handler, event
+                ),
+            )
+
+    def _dispatch_shortcut(self, command, event):
+        if not self.workflow_started:
+            self._show_workflow_choice()
+            return "break"
+        return command(event)
 
     def _bind_dirty_tracking(self) -> None:
         variables = [
@@ -3134,6 +3169,7 @@ class ImageOcrExcelApp:
         with self._without_dirty_tracking():
             self.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
             self.mode_var.set(MODE_REVIEW)
+        self._hide_workflow_choice()
         if not self.open_image_folder():
             self.workflow_started = False
             self.auto_detection_enabled = False
@@ -3162,6 +3198,7 @@ class ImageOcrExcelApp:
         with self._without_dirty_tracking():
             self.export_layout_var.set(EXPORT_LAYOUT_IMAGE_ROW)
             self.mode_var.set(MODE_TEMPLATE)
+        self._hide_workflow_choice()
         if not self.open_image_folder():
             self.workflow_started = False
             self._show_workflow_choice()
@@ -3169,15 +3206,14 @@ class ImageOcrExcelApp:
         self._mark_clean()
 
     def _show_workflow_choice(self) -> None:
-        if self.workflow_choice_overlay is not None:
-            self.workflow_choice_overlay.place(
-                relx=0.5, rely=0.5, anchor="center"
+        if self.workflow_choice_modal is not None:
+            self.workflow_choice_modal.show(
+                focus=self.workflow_choice_primary_button
             )
-            self.workflow_choice_overlay.lift()
 
     def _hide_workflow_choice(self) -> None:
-        if self.workflow_choice_overlay is not None:
-            self.workflow_choice_overlay.place_forget()
+        if self.workflow_choice_modal is not None:
+            self.workflow_choice_modal.hide()
 
     def open_image_folder(self) -> bool:
         if not self.workflow_started:

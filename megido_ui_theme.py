@@ -63,6 +63,7 @@ class Palette:
     pair_handle_hover: str = "#7d45c2"
     empty_title: str = "#f3eff8"
     empty_note: str = "#bfb4cb"
+    modal_backdrop: str = "#050407"
     modal_button_hover: str = "#282132"
     on_color: str = "#ffffff"
 
@@ -82,6 +83,7 @@ class Layout:
     toolbar_height: int = 54
     status_bar_height: int = 34
     settings_size: str = "440x500"
+    modal_backdrop_alpha: float = 0.66
 
 
 @dataclass(frozen=True)
