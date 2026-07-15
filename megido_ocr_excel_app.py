@@ -904,6 +904,8 @@ class ImageOcrExcelApp:
             )
 
     def _dispatch_shortcut(self, command, event):
+        if getattr(self, "busy", False):
+            return "break"
         if not self.workflow_started:
             self._show_workflow_choice()
             return "break"
@@ -1021,6 +1023,12 @@ class ImageOcrExcelApp:
         self.root.destroy()
 
     def _on_mode_change(self, _value: str | None = None) -> None:
+        if self.mode_var.get() != MODE_TEMPLATE:
+            had_edit_preview = self.canvas_edit_state is not None
+            self._clear_canvas_pointer_interaction()
+            self.canvas.configure(cursor="arrow")
+            if had_edit_preview:
+                self.redraw()
         self._schedule_side_body_render()
 
     def _render_side_body(self) -> None:
@@ -2678,20 +2686,31 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
         ).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
-        ctk.CTkOptionMenu(
+        layout_summary = ctk.CTkFrame(
             panel,
-            variable=self.export_layout_var,
-            values=EXPORT_LAYOUT_OPTIONS,
-            command=lambda _value: self._render_side_body(),
             height=THEME.layout.entry_height,
+            corner_radius=THEME.layout.control_radius,
+            fg_color=COLOR_INPUT,
+            border_width=1,
+            border_color=COLOR_BORDER,
+        )
+        layout_summary.grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+        layout_summary.grid_columnconfigure(0, weight=1)
+        layout_summary.grid_propagate(False)
+        ctk.CTkLabel(
+            layout_summary,
+            text=self.export_layout_var.get(),
+            anchor="w",
             font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            button_color=COLOR_PRIMARY,
-            button_hover_color=COLOR_PRIMARY_HOVER,
-            dropdown_fg_color=COLOR_SURFACE_ALT,
-            dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
-        ).grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+        ).grid(row=0, column=0, sticky="ew", padx=(10, 6), pady=4)
+        ctk.CTkLabel(
+            layout_summary,
+            text="1. 範囲・列で変更",
+            anchor="e",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).grid(row=0, column=1, sticky="e", padx=(0, 10), pady=4)
 
         ctk.CTkCheckBox(
             panel,
@@ -4008,6 +4027,8 @@ class ImageOcrExcelApp:
         self.move_selected_field(1)
 
     def move_selected_field(self, direction: int) -> None:
+        if self.mode_var.get() != MODE_TEMPLATE:
+            return
         if not self._commit_active_name_edit():
             return
         idx = self._require_field_selection()
@@ -4220,6 +4241,8 @@ class ImageOcrExcelApp:
     def edit_selected_field_name(self, _event=None) -> str:
         if self._focus_is_text_entry():
             return "break"
+        if self.mode_var.get() != MODE_TEMPLATE:
+            return "break"
         idx = self._require_field_selection()
         if idx is not None:
             self.begin_inline_name_edit(idx)
@@ -4410,6 +4433,9 @@ class ImageOcrExcelApp:
     def show_canvas_context_menu(self, event) -> str:
         if not self.original_image:
             return "break"
+        mode = self.mode_var.get()
+        if mode == MODE_EXPORT:
+            return "break"
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
@@ -4419,6 +4445,10 @@ class ImageOcrExcelApp:
             if label_hit_idx is not None
             else self._hit_test_field(x, y)
         )
+        if mode == MODE_REVIEW:
+            if hit_idx is not None:
+                self._select_field_index(hit_idx, update_review_detail=True)
+            return "break"
         if hit_idx is not None:
             self._select_field_index(hit_idx, update_review_detail=True)
             menu = self._field_actions_menu(hit_idx, include_undo=True)
@@ -4547,6 +4577,8 @@ class ImageOcrExcelApp:
             and self._focus_is_text_entry()
         ):
             return None
+        if self.mode_var.get() != MODE_TEMPLATE:
+            return "break"
         if self.canvas_edit_state is not None or self.drag_start is not None:
             self.canvas_edit_state = None
             self.drag_start = None
@@ -5179,6 +5211,19 @@ class ImageOcrExcelApp:
         if not self.original_image:
             self.canvas.configure(cursor="arrow")
             return
+        mode = self.mode_var.get()
+        if mode == MODE_EXPORT:
+            self.canvas.configure(cursor="arrow")
+            return
+        if mode == MODE_REVIEW:
+            self.canvas.configure(
+                cursor=(
+                    "hand2"
+                    if self._canvas_selection_hit(event) is not None
+                    else "arrow"
+                )
+            )
+            return
         if self.canvas_edit_state is not None:
             self.canvas.configure(
                 cursor=self._cursor_for_edit_mode(
@@ -5295,7 +5340,7 @@ class ImageOcrExcelApp:
             )
 
     def on_canvas_double_click(self, event) -> str:
-        if not self.original_image:
+        if not self.original_image or self.mode_var.get() != MODE_TEMPLATE:
             return "break"
         canvas_x = self.canvas.canvasx(event.x)
         canvas_y = self.canvas.canvasy(event.y)
@@ -5315,6 +5360,14 @@ class ImageOcrExcelApp:
 
     def on_mouse_down(self, event) -> None:
         if not self.original_image:
+            return
+        mode = self.mode_var.get()
+        if mode == MODE_EXPORT:
+            return
+        if mode == MODE_REVIEW:
+            hit_idx = self._canvas_selection_hit(event)
+            if hit_idx is not None:
+                self._select_field_index(hit_idx, update_review_detail=True)
             return
         if not self._commit_active_name_edit():
             return
@@ -5388,6 +5441,8 @@ class ImageOcrExcelApp:
         )
 
     def on_mouse_drag(self, event) -> None:
+        if self.mode_var.get() != MODE_TEMPLATE:
+            return
         if self.canvas_edit_state is not None:
             if self.canvas_edit_state.get("mode") == "pair_move":
                 x, y = self._event_image_point(event)
@@ -5416,6 +5471,9 @@ class ImageOcrExcelApp:
         )
 
     def on_mouse_up(self, event) -> None:
+        if self.mode_var.get() != MODE_TEMPLATE:
+            self._clear_canvas_pointer_interaction()
+            return
         if self.canvas_edit_state is not None:
             if self.canvas_edit_state.get("mode") == "pair_move":
                 x, y = self._event_image_point(event)
@@ -5604,6 +5662,30 @@ class ImageOcrExcelApp:
             )
         self._schedule_side_body_render()
         self.redraw()
+
+    def _canvas_selection_hit(self, event) -> int | None:
+        canvas_x = self.canvas.canvasx(event.x)
+        canvas_y = self.canvas.canvasy(event.y)
+        pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
+        if pair_hit is not None:
+            indexes = tuple(
+                (self.canvas_pair_handles.get(pair_hit) or {}).get("fields") or ()
+            )
+            if indexes:
+                return int(indexes[0])
+        label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
+        if label_hit_idx is not None:
+            return label_hit_idx
+        x, y = self._event_image_point(event)
+        field_hit_idx, _mode = self._hit_test_field(x, y)
+        return field_hit_idx
+
+    def _clear_canvas_pointer_interaction(self) -> None:
+        self.canvas_edit_state = None
+        self.drag_start = None
+        if self.drag_rect:
+            self.canvas.delete(self.drag_rect)
+            self.drag_rect = None
 
     def on_mouse_wheel(self, event) -> None:
         if not self.original_image:

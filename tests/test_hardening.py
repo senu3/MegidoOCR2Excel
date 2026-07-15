@@ -12,9 +12,9 @@ from PIL import Image
 
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
-from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
+from megido_ocr_excel_app import APP_TITLE, MODE_EXPORT, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
 from megido_ocr_excel_app import COLOR_PRIMARY, COLOR_SECONDARY
-from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
+from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
 class _FailingWorkbook:
@@ -166,6 +166,15 @@ class WorkflowChoiceTests(unittest.TestCase):
         app.workflow_started = True
         self.assertEqual(app._dispatch_shortcut(command, event), "handled")
         command.assert_called_once_with(event)
+
+    def test_shortcuts_are_blocked_while_an_operation_is_running(self) -> None:
+        app = self._logic_only_app()
+        app.workflow_started = True
+        app.busy = True
+        command = MagicMock(return_value="handled")
+
+        self.assertEqual(app._dispatch_shortcut(command, object()), "break")
+        command.assert_not_called()
 
     def test_supplement_candidate_panel_renders_and_does_not_dirty_the_app(self) -> None:
         root = ctk.CTk()
@@ -566,12 +575,117 @@ class FieldNameInteractionTests(unittest.TestCase):
 
     def test_mode_change_does_not_redraw_the_unchanged_canvas(self) -> None:
         app = self._logic_only_app()
+        app.mode_var = MagicMock()
+        app.mode_var.get.return_value = MODE_REVIEW
+        app.canvas = MagicMock()
+        app.canvas_edit_state = None
+        app.drag_start = None
+        app.drag_rect = None
         app._schedule_side_body_render = MagicMock()
 
         app._on_mode_change()
 
         app._schedule_side_body_render.assert_called_once()
         app.redraw.assert_not_called()
+
+    def test_review_canvas_selects_without_starting_an_edit(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.original_image = object()
+        app.mode_var = MagicMock()
+        app.mode_var.get.return_value = MODE_REVIEW
+        app._canvas_selection_hit = MagicMock(return_value=1)
+        app._select_field_index = MagicMock()
+        app._commit_active_name_edit = MagicMock()
+
+        app.on_mouse_down(MagicMock())
+
+        app._select_field_index.assert_called_once_with(
+            1, update_review_detail=True
+        )
+        app._commit_active_name_edit.assert_not_called()
+
+    def test_export_canvas_ignores_selection_and_editing(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.original_image = object()
+        app.mode_var = MagicMock()
+        app.mode_var.get.return_value = MODE_EXPORT
+        app._canvas_selection_hit = MagicMock()
+        app._select_field_index = MagicMock()
+        app._commit_active_name_edit = MagicMock()
+
+        app.on_mouse_down(MagicMock())
+
+        app._canvas_selection_hit.assert_not_called()
+        app._select_field_index.assert_not_called()
+        app._commit_active_name_edit.assert_not_called()
+
+    def test_review_mode_blocks_field_editing_shortcuts(self) -> None:
+        app = self._logic_only_app()
+        app.mode_var = MagicMock()
+        app.mode_var.get.return_value = MODE_REVIEW
+        app._focus_is_text_entry = MagicMock(return_value=False)
+        app._require_field_selection = MagicMock(return_value=0)
+        app.begin_inline_name_edit = MagicMock()
+        app._commit_active_name_edit = MagicMock(return_value=True)
+        app.undo_action = {"type": "add"}
+
+        self.assertEqual(app.edit_selected_field_name(), "break")
+        app.move_selected_field(1)
+        self.assertEqual(app.undo_last_action(), "break")
+
+        app._require_field_selection.assert_not_called()
+        app.begin_inline_name_edit.assert_not_called()
+        app._commit_active_name_edit.assert_not_called()
+        self.assertEqual(app.undo_action, {"type": "add"})
+
+    def test_non_template_mouse_release_clears_stale_edit_state(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.mode_var = MagicMock()
+        app.mode_var.get.return_value = MODE_REVIEW
+        app.canvas = MagicMock()
+        app.canvas_edit_state = {"idx": 0, "mode": "move"}
+        app.drag_start = (10, 10)
+        app.drag_rect = 42
+
+        app.on_mouse_up(MagicMock())
+
+        self.assertIsNone(app.canvas_edit_state)
+        self.assertIsNone(app.drag_start)
+        self.assertIsNone(app.drag_rect)
+        app.canvas.delete.assert_called_once_with(42)
+
+    def test_export_settings_show_layout_as_read_only_summary(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        host = ctk.CTkFrame(root)
+        try:
+            app._render_excel_output_settings(host)
+            descendants = []
+            pending = list(host.winfo_children())
+            while pending:
+                widget = pending.pop()
+                descendants.append(widget)
+                pending.extend(widget.winfo_children())
+
+            option_values = [
+                widget.cget("values")
+                for widget in descendants
+                if isinstance(widget, ctk.CTkOptionMenu)
+            ]
+            labels = [
+                widget.cget("text")
+                for widget in descendants
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            self.assertNotIn(EXPORT_LAYOUT_OPTIONS, option_values)
+            self.assertIn(app.export_layout_var.get(), labels)
+            self.assertIn("1. 範囲・列で変更", labels)
+        finally:
+            host.destroy()
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
 
     def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
         app = self._logic_only_app()

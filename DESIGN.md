@@ -61,6 +61,8 @@ The three modes are the product structure:
 - 2. 認識テスト: use representative images to inspect the selected crop and full OCR result, then tune the OCR mode before batch export. This is a preflight test; Excel export runs OCR again for every target image.
 - 3. Excel出力: review the naturally sorted image queue, exclude non-target captures, choose the output file/settings, and batch export.
 
+Canvas permissions follow the workflow: `1. 範囲・列` allows creation, movement, resizing, and selection; `2. 認識テスト` allows selection only; `3. Excel出力` is view-only. Switching away from range editing cancels any in-progress pointer edit so a drag cannot leak into another mode.
+
 ## Components
 
 - Toolbar buttons are compact controls for global image navigation and OCR settings only. Only `画像を開く` uses the primary fill; navigation and settings use neutral icon buttons.
@@ -88,9 +90,10 @@ The three modes are the product structure:
 - Empty OCR output is a batch warning and is written to the Errors sheet even when the OCR backend itself did not raise an error.
 - Correction-rule UI is currently hidden because per-image editing is outside the batch-first workflow. Keep the underlying `CorrectionRule` model, template serialization, and OCR application path as future foundation for a bulk-correction workflow.
 - Export panel keeps folder, output file, queue, summary, and final action close together. Queue rows use explicit text states (`待機 / 処理中 / 完了 / 要再実行 / 除外`) so status never depends on color alone.
+- Export layout is configured only in `1. 範囲・列`. The Excel export panel shows the active layout as a read-only summary with a pointer back to that source of truth, avoiding two controls that appear independent but mutate the same structure.
 - Failed-image retry overwrites the exact row range reserved by the preceding export. It is session-scoped and disabled when the output path or structural Excel settings no longer match.
 - Unsaved template state is visible as `*` in both the window title and template filename. Loading another template or closing offers save, discard, and cancel. During OCR/export, a subdued close icon in the progress panel offers cooperative cancellation after confirmation; closing the app uses the same safe cancellation path before continuing to the unsaved-changes check.
-- Blocking dialogs and settings forms use the shared `ModalOverlay` layer: one translucent, borderless backdrop follows the application client area while a separate opaque panel preserves text and control contrast. Information, warning, error, confirmation, and settings surfaces share the black-purple visual language, close affordance, action hierarchy, and keyboard behavior. The layer owns the input grab, traps keyboard focus within the dialog, follows window movement/resizing, and restores focus when dismissed.
+- Blocking dialogs, settings forms, and OCR/export progress use the shared `ModalOverlay` layer: one translucent, borderless backdrop follows the application client area while a separate opaque panel preserves text and control contrast. Information, warning, error, confirmation, settings, and cancellation surfaces share the black-purple visual language, close affordance, action hierarchy, and keyboard behavior. The layer owns the input grab, blocks background input, traps keyboard focus within the dialog, follows window movement/resizing, and restores focus when dismissed.
 - Template and Excel writes use same-directory temporary files followed by atomic replacement so a failed save does not damage the previous file.
 - The app receives an `OcrProfile`; game identity, OCR defaults, coordinate defaults, and field-name preset matching stay outside the UI and OCR engine.
 - Release templates use schema version 1 and are validated at the file boundary. Format, version, required structure, and profile ID must match; prerelease legacy formats are intentionally rejected instead of guessed or silently normalized.
