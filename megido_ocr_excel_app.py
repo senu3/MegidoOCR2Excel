@@ -354,12 +354,12 @@ class ImageOcrExcelApp:
         toolbar.pack_propagate(False)
         self._toolbar_button(
             toolbar,
-            "画像を開く",
+            "画像フォルダを選択",
             "folder",
             self.open_image_folder,
             COLOR_PRIMARY,
             COLOR_PRIMARY_HOVER,
-            116,
+            148,
         ).pack(side=LEFT, padx=(12, 4), pady=10)
         ctk.CTkFrame(
             toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider
@@ -701,7 +701,7 @@ class ImageOcrExcelApp:
         overlay.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             overlay,
-            text="OCRを開始",
+            text="開始方法を選択",
             image=ICONS.get("scan", 26, COLOR_PRIMARY),
             compound="top",
             font=UI_FONT_TITLE,
@@ -709,7 +709,7 @@ class ImageOcrExcelApp:
         ).grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 8))
         ctk.CTkLabel(
             overlay,
-            text="会話画面なら読み取り範囲を自動で判定できます。\n独自の範囲を作る場合は新規テンプレートを選択してください。",
+            text="会話画面は読み取り範囲を自動検出できます。\n手動で範囲を指定する場合は、新規テンプレートを作成します。",
             justify="center",
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
@@ -734,7 +734,7 @@ class ImageOcrExcelApp:
         )
         secondary_button = ctk.CTkButton(
             overlay,
-            text="新規テンプレート",
+            text="新規テンプレートを作成",
             image=ICONS.get("plus", 17, COLOR_TEXT),
             compound="left",
             command=self.start_new_template_workflow,
@@ -1203,11 +1203,8 @@ class ImageOcrExcelApp:
             self._empty_state(
                 scroller,
                 "項目がありません",
-                (
-                    "セットを追加して範囲をドラッグ"
-                    if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
-                    else "画像上で範囲をドラッグ"
-                ),
+                "画像上で範囲をドラッグ",
+                "保存済みテンプレートは右上の「…」メニューから読み込めます。",
             )
         elif self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
             self._render_dialogue_pair_fields(scroller)
@@ -1584,11 +1581,17 @@ class ImageOcrExcelApp:
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(2, 10))
         if not self.fields:
             self._empty_state(
-                scroller, "テンプレートがありません", "先に読み取り項目を作成"
+                scroller,
+                "読み取り項目がありません",
+                "「範囲・列」で読み取り範囲を作成してください。",
             )
             return
         if not self.original_image:
-            self._empty_state(scroller, "画像がありません", "画像フォルダを選択")
+            self._empty_state(
+                scroller,
+                "画像がありません",
+                "上部から画像フォルダを選択してください。",
+            )
             return
 
         ctk.CTkLabel(
@@ -2766,7 +2769,9 @@ class ImageOcrExcelApp:
             return f"{len(self._dialogue_pair_field_indexes())}セット"
         return f"{enabled_count}項目"
 
-    def _empty_state(self, parent, title: str, note: str) -> None:
+    def _empty_state(
+        self, parent, title: str, note: str, hint: str = ""
+    ) -> None:
         box = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
         box.pack(fill=BOTH, expand=True, padx=12, pady=20)
         ctk.CTkLabel(
@@ -2777,14 +2782,26 @@ class ImageOcrExcelApp:
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
         ).pack(pady=(28, 6))
-        ctk.CTkLabel(
+        note_label = ctk.CTkLabel(
             box,
             text=note,
             justify="center",
             wraplength=290,
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
-        ).pack(pady=(0, 28))
+        )
+        note_label.pack(pady=(0, 8 if hint else 28))
+        if hint:
+            ctk.CTkLabel(
+                box,
+                text=hint,
+                image=ICONS.get("file_input", 14, COLOR_MUTED),
+                compound="left",
+                justify="center",
+                wraplength=290,
+                font=UI_FONT_SMALL,
+                text_color=COLOR_MUTED,
+            ).pack(pady=(0, 28))
 
     def _field_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
@@ -3565,8 +3582,8 @@ class ImageOcrExcelApp:
 
     def load_template(self, _event=None) -> None:
         file_name = filedialog.askopenfilename(
-            title="テンプレートを読み込み",
-            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+            title="読み込むテンプレートを選択",
+            filetypes=[("JSON", "*.json"), ("すべてのファイル", "*.*")],
         )
         if not file_name:
             return
@@ -5709,7 +5726,9 @@ class ImageOcrExcelApp:
 
     def ocr_current_image(self) -> None:
         if not self.original_image:
-            self.dialogs.showerror("画像未選択", "先に画像を開いてください。")
+            self.dialogs.showerror(
+                "画像未選択", "先に画像フォルダを選択してください。"
+            )
             return
         if not self._enabled_fields():
             self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
@@ -5763,7 +5782,9 @@ class ImageOcrExcelApp:
 
     def ocr_field_at(self, idx: int) -> None:
         if not self.original_image:
-            self.dialogs.showerror("画像未選択", "先に画像を開いてください。")
+            self.dialogs.showerror(
+                "画像未選択", "先に画像フォルダを選択してください。"
+            )
             return
         if not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
             return

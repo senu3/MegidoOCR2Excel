@@ -141,6 +141,21 @@ class WorkflowChoiceTests(unittest.TestCase):
             )
             self.assertAlmostEqual(modal.backdrop_alpha, 0.66)
             self.assertTrue(modal.visible)
+            labels = []
+            buttons = []
+            pending = list(app.workflow_choice_overlay.winfo_children())
+            while pending:
+                widget = pending.pop()
+                pending.extend(widget.winfo_children())
+                if isinstance(widget, ctk.CTkLabel):
+                    labels.append(widget.cget("text"))
+                elif isinstance(widget, ctk.CTkButton):
+                    buttons.append(widget.cget("text"))
+            self.assertIn("開始方法を選択", labels)
+            self.assertCountEqual(
+                buttons,
+                ["会話を自動検出", "新規テンプレートを作成"],
+            )
 
             app._hide_workflow_choice()
             self.assertFalse(modal.visible)
@@ -149,6 +164,30 @@ class WorkflowChoiceTests(unittest.TestCase):
 
             app._show_workflow_choice()
             self.assertTrue(modal.visible)
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
+    def test_empty_field_state_points_to_the_template_overflow_menu(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            labels = []
+            pending = list(app.side_body.winfo_children())
+            while pending:
+                widget = pending.pop()
+                pending.extend(widget.winfo_children())
+                if isinstance(widget, ctk.CTkLabel):
+                    labels.append(widget.cget("text"))
+
+            self.assertIn("項目がありません", labels)
+            self.assertIn("画像上で範囲をドラッグ", labels)
+            self.assertIn(
+                "保存済みテンプレートは右上の「…」メニューから読み込めます。",
+                labels,
+            )
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()

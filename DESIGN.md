@@ -65,7 +65,8 @@ Canvas permissions follow the workflow: `1. 範囲・列` allows creation, movem
 
 ## Components
 
-- Toolbar buttons are compact controls for global image navigation and OCR settings only. Only `画像を開く` uses the primary fill; navigation and settings use neutral icon buttons.
+- Toolbar buttons are compact controls for global image navigation and OCR settings only. Only `画像フォルダを選択` uses the primary fill; navigation and settings use neutral icon buttons.
+- Startup keeps two choices only: auto-detect a supported conversation screen or create a new template manually. Loading a saved template remains available in the persistent toolbar overflow menu and is mentioned in the empty field state instead of becoming another startup path.
 - Segmented mode switch is the main workflow navigation.
 - Tabs carry the section label; do not repeat tab headings or explanatory text inside the tab body.
 - Tab changes build the next side-panel surface offscreen and swap it in atomically. They do not clear the visible panel first or redraw the unchanged screenshot Canvas.
