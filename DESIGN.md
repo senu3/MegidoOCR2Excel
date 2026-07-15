@@ -57,7 +57,7 @@ Primary layout is two-pane:
 
 The three modes are the product structure:
 
-- 1. 範囲・列: create and edit OCR regions, name fields, order Excel columns or set order, and load/save templates.
+- 1. 範囲・列: create and edit OCR regions, name fields, and order Excel columns or sets.
 - 2. 認識テスト: use representative images to inspect the selected crop and full OCR result, then tune the OCR mode before batch export. This is a preflight test; Excel export runs OCR again for every target image.
 - 3. Excel出力: review the naturally sorted image queue, exclude non-target captures, choose the output file/settings, and batch export.
 
@@ -94,7 +94,7 @@ The three modes are the product structure:
 - Template and Excel writes use same-directory temporary files followed by atomic replacement so a failed save does not damage the previous file.
 - The app receives an `OcrProfile`; game identity, OCR defaults, coordinate defaults, and field-name preset matching stay outside the UI and OCR engine.
 - Release templates use schema version 1 and are validated at the file boundary. Format, version, required structure, and profile ID must match; prerelease legacy formats are intentionally rejected instead of guessed or silently normalized.
-- Template load/save lives with range and column design, not in the global toolbar.
+- Template state lives in a persistent toolbar at the top of the right panel because it applies to all three workflow modes. Save stays visible and becomes primary only while changes are pending; load and Save As live in its overflow menu.
 - OCR run actions live at the bottom of the selected field detail panel, close to the raw OCR preview and OCR mode.
 
 ## Implementation Notes

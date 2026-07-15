@@ -91,6 +91,7 @@ class Copy:
     initial_status: str = "ノベル画面の画像フォルダを選び、先頭画像で読み取りたい範囲をドラッグしてください。"
     empty_canvas_title: str = "画像フォルダを選択してください"
     empty_canvas_note: str = "「画像を開く」からスクリーンショットのフォルダを選択します。"
+    new_template_label: str = "新規テンプレート（未保存）"
     default_template_name: str = "megido-novel-template.json"
 
 

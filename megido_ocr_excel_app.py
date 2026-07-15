@@ -262,7 +262,7 @@ class ImageOcrExcelApp:
         self.image_var = StringVar(value="画像未選択")
         self.folder_var = StringVar(value="未選択")
         self.output_var = StringVar(value="未選択")
-        self.template_var = StringVar(value="未保存")
+        self.template_var = StringVar(value=THEME.copy.new_template_label)
         self.image_count_var = StringVar(value="0 / 0")
         self.status_var = StringVar(value=THEME.copy.initial_status)
         self.progress_var = StringVar(value="")
@@ -296,6 +296,9 @@ class ImageOcrExcelApp:
         self.last_export_output_path: Path | None = None
 
         self.side_body: ctk.CTkFrame | None = None
+        self.template_toolbar: ctk.CTkFrame | None = None
+        self.template_save_button: ctk.CTkButton | None = None
+        self.template_more_button: ctk.CTkButton | None = None
         self.review_detail_host: ctk.CTkFrame | None = None
         self.correction_rules_host: ctk.CTkFrame | None = None
         self.template_fields_scroller: AutoHideScrollableFrame | None = None
@@ -484,6 +487,63 @@ class ImageOcrExcelApp:
         side.pack(side=RIGHT, fill="y", padx=(12, 12), pady=12)
         side.pack_propagate(False)
 
+        template_toolbar = ctk.CTkFrame(
+            side,
+            height=44,
+            corner_radius=0,
+            fg_color="transparent",
+        )
+        template_toolbar.pack(side=TOP, fill="x", padx=16, pady=(12, 4))
+        template_toolbar.pack_propagate(False)
+        template_toolbar.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            template_toolbar,
+            textvariable=self.template_var,
+            anchor="w",
+            justify="left",
+            width=168,
+            wraplength=168,
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.template_save_button = ctk.CTkButton(
+            template_toolbar,
+            text="保存",
+            image=ICONS.get("save", 16, THEME.palette.on_color),
+            compound="left",
+            command=self.save_template,
+            width=76,
+            height=THEME.layout.entry_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+            text_color_disabled=COLOR_MUTED,
+        )
+        self.template_save_button.grid(row=0, column=1, padx=(0, 4))
+        self.template_more_button = ctk.CTkButton(
+            template_toolbar,
+            text="",
+            image=ICONS.get("more", 17, COLOR_MUTED),
+            command=lambda: None,
+            width=32,
+            height=THEME.layout.entry_height,
+            corner_radius=THEME.layout.control_radius,
+            fg_color="transparent",
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=0,
+        )
+        self.template_more_button.configure(
+            command=lambda button=self.template_more_button: (
+                self.show_template_actions_menu(button)
+            )
+        )
+        self.template_more_button.grid(row=0, column=2)
+        self.template_toolbar = template_toolbar
+
         ctk.CTkSegmentedButton(
             side,
             values=[MODE_TEMPLATE, MODE_REVIEW, MODE_EXPORT],
@@ -497,7 +557,7 @@ class ImageOcrExcelApp:
             unselected_color=THEME.palette.segmented_bg,
             unselected_hover_color=THEME.palette.segmented_hover,
             text_color=COLOR_TEXT,
-        ).pack(side=TOP, fill="x", padx=16, pady=(16, 12))
+        ).pack(side=TOP, fill="x", padx=16, pady=(4, 12))
 
         self.side_body = ctk.CTkFrame(side, corner_radius=0, fg_color=COLOR_SURFACE)
         self.side_body.pack(side=TOP, fill=BOTH, expand=True)
@@ -521,6 +581,39 @@ class ImageOcrExcelApp:
             fg_color=fg,
             hover_color=hover,
         )
+
+    def show_template_actions_menu(self, button: ctk.CTkButton) -> None:
+        menu = Menu(
+            self.root,
+            tearoff=0,
+            background=COLOR_SURFACE_ALT,
+            foreground=COLOR_TEXT,
+            activebackground=COLOR_PRIMARY,
+            activeforeground=THEME.palette.on_color,
+            disabledforeground=THEME.palette.disabled_fill,
+            borderwidth=1,
+            relief="flat",
+        )
+        menu.add_command(
+            label="テンプレートを読み込む    Ctrl+O",
+            command=self.load_template,
+        )
+        menu.add_command(
+            label="名前を付けて保存    Ctrl+Shift+S",
+            command=self.save_template_as,
+            state="normal" if self.fields else "disabled",
+        )
+        menu.update_idletasks()
+        x = (
+            button.winfo_rootx()
+            + button.winfo_width()
+            - menu.winfo_reqwidth()
+        )
+        y = button.winfo_rooty() + button.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
 
     def _build_loading_overlay(self) -> None:
         overlay = ctk.CTkFrame(
@@ -784,6 +877,7 @@ class ImageOcrExcelApp:
             ("<Control-Left>", self.previous_image),
             ("<Control-Right>", self.next_image),
             ("<Control-s>", self.save_template),
+            ("<Control-Shift-S>", self.save_template_as),
             ("<Control-o>", self.load_template),
             ("<Control-Return>", self.export_to_excel),
             ("<Alt-Up>", self.move_selected_field_up),
@@ -847,8 +941,35 @@ class ImageOcrExcelApp:
     def _update_dirty_indicators(self) -> None:
         suffix = " *" if self.dirty else ""
         self.root.title(f"{self.profile.app_title}{suffix}")
-        template_name = self.template_path.name if self.template_path else "未保存"
+        template_name = (
+            self.template_path.name
+            if self.template_path
+            else THEME.copy.new_template_label
+        )
         self.template_var.set(f"{template_name}{suffix}")
+        self._update_template_toolbar_state()
+
+    def _update_template_toolbar_state(self) -> None:
+        button = self.template_save_button
+        if button is None or not button.winfo_exists():
+            return
+        has_fields = bool(self.fields)
+        button.configure(
+            state="normal" if has_fields else "disabled",
+            fg_color=(
+                COLOR_PRIMARY
+                if self.dirty and has_fields
+                else COLOR_SECONDARY
+            ),
+            hover_color=(
+                COLOR_PRIMARY_HOVER
+                if self.dirty and has_fields
+                else COLOR_SECONDARY_HOVER
+            ),
+            border_color=(
+                COLOR_PRIMARY if self.dirty and has_fields else COLOR_BORDER
+            ),
+        )
 
     def _confirm_unsaved_changes(self, action: str) -> bool:
         if not self.dirty:
@@ -938,46 +1059,8 @@ class ImageOcrExcelApp:
         self.field_row_by_index = {}
         self.field_drag_handle_by_index = {}
         self.dialogue_drop_section_by_pair = {}
-        action_row = ctk.CTkFrame(body, fg_color="transparent")
-        action_row.pack(fill="x", padx=16, pady=(2, 8))
-        action_row.grid_columnconfigure(0, weight=1)
-        action_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(
-            action_row,
-            text="読み込む",
-            image=ICONS.get("file_input", 17, COLOR_TEXT),
-            compound="left",
-            command=self.load_template,
-            height=THEME.layout.entry_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(
-            action_row,
-            text="保存",
-            image=ICONS.get("save", 17, THEME.palette.on_color),
-            compound="left",
-            command=self.save_template,
-            height=THEME.layout.entry_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_PRIMARY,
-            hover_color=COLOR_PRIMARY_HOVER,
-        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
-        ctk.CTkLabel(
-            body,
-            textvariable=self.template_var,
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=340,
-        ).pack(fill="x", padx=16, pady=(0, 8))
         layout_row = ctk.CTkFrame(body, fg_color="transparent")
-        layout_row.pack(fill="x", padx=16, pady=(0, 8))
+        layout_row.pack(fill="x", padx=16, pady=(2, 8))
         layout_row.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
             layout_row,
@@ -3453,15 +3536,33 @@ class ImageOcrExcelApp:
         self._render_side_body()
 
     def save_template(self, _event=None) -> bool:
+        return self._save_template_document(force_path_selection=False)
+
+    def save_template_as(self, _event=None) -> bool:
+        return self._save_template_document(force_path_selection=True)
+
+    def _save_template_document(self, *, force_path_selection: bool) -> bool:
         if not self.fields:
             messagebox.showinfo("項目なし", "保存する読み取り項目がありません。")
             return False
-        if self.template_path:
+        if self.template_path and not force_path_selection:
             path = self.template_path
         else:
+            initial_path = self.template_path
             file_name = filedialog.asksaveasfilename(
-                title="テンプレートを保存",
-                initialfile=THEME.copy.default_template_name,
+                title=(
+                    "テンプレートに名前を付けて保存"
+                    if force_path_selection
+                    else "テンプレートを保存"
+                ),
+                initialdir=(
+                    str(initial_path.parent) if initial_path is not None else None
+                ),
+                initialfile=(
+                    initial_path.name
+                    if initial_path is not None
+                    else THEME.copy.default_template_name
+                ),
                 defaultextension=".json",
                 filetypes=[("JSON", "*.json")],
             )
@@ -3494,7 +3595,6 @@ class ImageOcrExcelApp:
         self.template_path = path
         self._mark_clean()
         self.status_var.set(f"テンプレートを保存しました: {path.name}")
-        self._render_side_body()
         return True
 
     def load_template(self, _event=None) -> None:

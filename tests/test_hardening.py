@@ -13,6 +13,7 @@ from PIL import Image
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
+from megido_ocr_excel_app import COLOR_PRIMARY, COLOR_SECONDARY
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
@@ -258,7 +259,9 @@ class DirtyStateTests(unittest.TestCase):
 
             self.assertTrue(app.dirty)
             self.assertEqual(root.title(), f"{APP_TITLE} *")
-            self.assertEqual(app.template_var.get(), "未保存 *")
+            self.assertEqual(
+                app.template_var.get(), "新規テンプレート（未保存） *"
+            )
 
             with patch("megido_ocr_excel_app.messagebox.askyesnocancel", return_value=None):
                 allowed = app._confirm_unsaved_changes("終了する")
@@ -299,7 +302,9 @@ class DirtyStateTests(unittest.TestCase):
             app._mark_clean()
             self.assertFalse(app.dirty)
             self.assertEqual(root.title(), APP_TITLE)
-            self.assertEqual(app.template_var.get(), "未保存")
+            self.assertEqual(
+                app.template_var.get(), "新規テンプレート（未保存）"
+            )
 
             app.fields = [TemplateField("話者", 0, 0, 10, 10)]
             app.set_field_enabled(0, False)
@@ -318,6 +323,23 @@ class DirtyStateTests(unittest.TestCase):
                 template_writer.assert_called_once()
                 self.assertFalse(app.dirty)
 
+                save_as_path = Path(temp_dir) / "renamed.json"
+                with (
+                    patch(
+                        "megido_ocr_excel_app.filedialog.asksaveasfilename",
+                        return_value=str(save_as_path),
+                    ) as save_dialog,
+                    patch("megido_ocr_excel_app.save_template") as template_writer,
+                ):
+                    saved = app.save_template_as()
+
+                self.assertTrue(saved)
+                self.assertEqual(app.template_path, save_as_path)
+                self.assertEqual(
+                    save_dialog.call_args.kwargs["initialfile"], "existing.json"
+                )
+                template_writer.assert_called_once()
+
                 app._mark_dirty()
                 with (
                     patch("megido_ocr_excel_app.save_template", side_effect=PermissionError("locked")),
@@ -329,6 +351,37 @@ class DirtyStateTests(unittest.TestCase):
                 self.assertTrue(app.dirty)
                 showerror.assert_called_once()
         finally:
+            root.destroy()
+
+
+class TemplateToolbarTests(unittest.TestCase):
+    def test_toolbar_is_persistent_and_save_emphasizes_pending_changes(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            toolbar = app.template_toolbar
+            self.assertIsNotNone(toolbar)
+            self.assertIs(toolbar.master, app.side_body.master)
+            self.assertEqual(app.template_save_button.cget("state"), "disabled")
+
+            app.fields = [TemplateField("本文", 0, 0, 10, 10)]
+            app._mark_dirty()
+            self.assertEqual(app.template_save_button.cget("state"), "normal")
+            self.assertEqual(app.template_save_button.cget("fg_color"), COLOR_PRIMARY)
+
+            app.mode_var.set(MODE_REVIEW)
+            app._render_side_body()
+            self.assertTrue(toolbar.winfo_exists())
+            self.assertIs(app.template_toolbar, toolbar)
+
+            app._mark_clean()
+            self.assertEqual(
+                app.template_save_button.cget("fg_color"), COLOR_SECONDARY
+            )
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
             root.destroy()
 
 
