@@ -263,7 +263,7 @@ class DirtyStateTests(unittest.TestCase):
                 app.template_var.get(), "新規テンプレート（未保存） *"
             )
 
-            with patch("megido_ocr_excel_app.messagebox.askyesnocancel", return_value=None):
+            with patch.object(app.dialogs, "askyesnocancel", return_value=None):
                 allowed = app._confirm_unsaved_changes("終了する")
 
             self.assertFalse(allowed)
@@ -271,23 +271,21 @@ class DirtyStateTests(unittest.TestCase):
 
             app.busy = True
             app._operation_cancel_event = threading.Event()
-            with patch(
-                "megido_ocr_excel_app.messagebox.askyesno", return_value=False
+            with patch.object(
+                app.dialogs, "askyesno", return_value=False
             ) as ask_cancel:
                 app.confirm_cancel_current_operation()
 
             ask_cancel.assert_called_once()
             self.assertFalse(app._operation_cancel_event.is_set())
 
-            with patch(
-                "megido_ocr_excel_app.messagebox.askyesno", return_value=True
-            ):
+            with patch.object(app.dialogs, "askyesno", return_value=True):
                 app.confirm_cancel_current_operation()
 
             self.assertTrue(app._operation_cancel_event.is_set())
             app._operation_cancel_event = threading.Event()
-            with patch(
-                "megido_ocr_excel_app.messagebox.askyesno", return_value=True
+            with patch.object(
+                app.dialogs, "askyesno", return_value=True
             ) as askyesno:
                 app.request_close()
 
@@ -343,7 +341,7 @@ class DirtyStateTests(unittest.TestCase):
                 app._mark_dirty()
                 with (
                     patch("megido_ocr_excel_app.save_template", side_effect=PermissionError("locked")),
-                    patch("megido_ocr_excel_app.messagebox.showerror") as showerror,
+                    patch.object(app.dialogs, "showerror") as showerror,
                 ):
                     saved = app.save_template()
 
@@ -716,7 +714,7 @@ class FieldNameInteractionTests(unittest.TestCase):
                 TemplateField("見出し", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
                 TemplateField("本文", 0, 10, 10, 20, set_id=1, slot_key=SET_SLOT_TEXT),
             ]
-            with patch("megido_ocr_excel_app.messagebox.askyesno", return_value=True):
+            with patch.object(app.dialogs, "askyesno", return_value=True):
                 app._set_set_preset("見出し＋本文")
 
             self.assertEqual([field.set_id for field in app.fields], [1, 1])

@@ -17,12 +17,12 @@ from tkinter import (
     Menu,
     StringVar,
     filedialog,
-    messagebox,
 )
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
+from app_dialogs import AppDialogs
 from batch_queue import (
     STATUS_EXCLUDED,
     STATUS_FAILED,
@@ -193,6 +193,7 @@ class ImageOcrExcelApp:
         self.root.geometry(THEME.layout.window_size)
         self.root.minsize(*THEME.layout.min_window_size)
         self.root.option_add("*Font", f"{{{UI_FONT_FAMILY}}} 10")
+        self.dialogs = AppDialogs(root)
         self.dirty = False
         self._dirty_tracking_suspended = True
 
@@ -806,7 +807,7 @@ class ImageOcrExcelApp:
                 if on_error is not None:
                     on_error(error)
                 else:
-                    messagebox.showerror("処理エラー", str(error))
+                    self.dialogs.showerror("処理エラー", str(error))
             finally:
                 finish_common()
 
@@ -853,11 +854,14 @@ class ImageOcrExcelApp:
     def confirm_cancel_current_operation(self) -> None:
         if not self.busy or self._is_operation_cancelled():
             return
-        if not messagebox.askyesno(
+        if not self.dialogs.askyesno(
             "処理をキャンセル",
             "現在の処理をキャンセルしますか？\n\n"
             "現在処理中の項目が終わり次第、安全に停止します。"
-            "Excel出力中の場合、未完了の内容は保存されません。",
+            "\nExcel出力中の場合、未完了の内容は保存されません。",
+            yes_text="処理をキャンセル",
+            no_text="戻る",
+            destructive=True,
         ):
             return
         self.cancel_current_operation()
@@ -974,9 +978,12 @@ class ImageOcrExcelApp:
     def _confirm_unsaved_changes(self, action: str) -> bool:
         if not self.dirty:
             return True
-        response = messagebox.askyesnocancel(
+        response = self.dialogs.askyesnocancel(
             "未保存の変更",
-            f"{action}前にテンプレートの変更を保存しますか。\n\n保存: 変更を保存して続行\n保存しない: 変更を破棄して続行\nキャンセル: 元の画面に戻る",
+            f"{action}前にテンプレートの変更を保存しますか。\n\n"
+            "保存しない場合、変更内容は破棄されます。",
+            yes_text="保存",
+            no_text="保存しない",
         )
         if response is None:
             return False
@@ -987,16 +994,19 @@ class ImageOcrExcelApp:
     def request_close(self) -> None:
         if self.busy:
             if self._close_after_cancel:
-                messagebox.showinfo(
+                self.dialogs.showinfo(
                     "停止待機中",
                     "現在処理中の項目が終わり次第、終了確認へ進みます。",
                 )
                 return
-            if not messagebox.askyesno(
+            if not self.dialogs.askyesno(
                 "処理中です",
                 "処理をキャンセルして終了しますか？\n\n"
                 "現在処理中の項目が終わり次第、安全に停止します。"
-                "Excel出力中の場合、未完了の内容は保存されません。",
+                "\nExcel出力中の場合、未完了の内容は保存されません。",
+                yes_text="キャンセルして終了",
+                no_text="戻る",
+                destructive=True,
             ):
                 return
             self._close_after_cancel = True
@@ -1409,9 +1419,11 @@ class ImageOcrExcelApp:
         if preset == self.set_definition.preset:
             return
         assigned = any(field.set_id > 0 or field.slot_key for field in self.fields)
-        if assigned and not messagebox.askyesno(
+        if assigned and not self.dialogs.askyesno(
             "セット種類を変更",
             "セット種類を変更すると、既存項目を新しい構成へ再割り当てします。変更しますか？",
+            yes_text="変更する",
+            no_text="戻る",
         ):
             current_display = SET_PRESET_DISPLAY[self.set_definition.preset]
             self.set_preset_var.set(current_display)
@@ -3316,7 +3328,7 @@ class ImageOcrExcelApp:
             key=natural_image_sort_key,
         )
         if not files:
-            messagebox.showinfo(
+            self.dialogs.showinfo(
                 "画像なし", "選択したフォルダ内に対応画像がありません。"
             )
             return False
@@ -3358,7 +3370,7 @@ class ImageOcrExcelApp:
         try:
             self.original_image = Image.open(self.image_path).convert("RGB")
         except Exception as exc:
-            messagebox.showerror("画像エラー", f"画像を開けませんでした。\n{exc}")
+            self.dialogs.showerror("画像エラー", f"画像を開けませんでした。\n{exc}")
             return
         self._refresh_content_mapping()
         if self.auto_detection_enabled:
@@ -3543,7 +3555,7 @@ class ImageOcrExcelApp:
 
     def _save_template_document(self, *, force_path_selection: bool) -> bool:
         if not self.fields:
-            messagebox.showinfo("項目なし", "保存する読み取り項目がありません。")
+            self.dialogs.showinfo("項目なし", "保存する読み取り項目がありません。")
             return False
         if self.template_path and not force_path_selection:
             path = self.template_path
@@ -3587,7 +3599,7 @@ class ImageOcrExcelApp:
         try:
             save_template(path, data)
         except Exception as exc:
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "テンプレート保存エラー",
                 f"テンプレートを保存できませんでした。元のファイルは変更されていません。\n\n{path}\n{exc}",
             )
@@ -3609,12 +3621,12 @@ class ImageOcrExcelApp:
             data = load_template(path, expected_profile_id=self.profile.profile_id)
             fields = fields_from_template(data)
         except Exception as exc:
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "テンプレートエラー", f"テンプレートを読み込めませんでした。\n{exc}"
             )
             return
         if not fields:
-            messagebox.showerror("テンプレートエラー", "読み取り項目がありません。")
+            self.dialogs.showerror("テンプレートエラー", "読み取り項目がありません。")
             return
         if not self._confirm_unsaved_changes("別のテンプレートを読み込む"):
             return
@@ -4473,8 +4485,12 @@ class ImageOcrExcelApp:
             return
         self.editing_name_index = None
         field_name = self.fields[idx].name
-        if confirm and not messagebox.askyesno(
-            "項目削除", f"{field_name} を削除しますか。"
+        if confirm and not self.dialogs.askyesno(
+            "項目削除",
+            f"{field_name} を削除しますか。",
+            yes_text="削除する",
+            no_text="戻る",
+            destructive=True,
         ):
             return
         self._set_undo(
@@ -4503,7 +4519,7 @@ class ImageOcrExcelApp:
         if self.selected_index is None or not (
             0 <= self.selected_index < len(self.fields)
         ):
-            messagebox.showinfo("項目未選択", "読み取り項目を選択してください。")
+            self.dialogs.showinfo("項目未選択", "読み取り項目を選択してください。")
             return None
         return self.selected_index
 
@@ -5597,16 +5613,16 @@ class ImageOcrExcelApp:
         if idx is None:
             return
         if not self.fields[idx].enabled:
-            messagebox.showinfo("項目無効", "選択中の読み取り項目が無効です。")
+            self.dialogs.showinfo("項目無効", "選択中の読み取り項目が無効です。")
             return
         self.ocr_field_at(idx)
 
     def ocr_current_image(self) -> None:
         if not self.original_image:
-            messagebox.showerror("画像未選択", "先に画像を開いてください。")
+            self.dialogs.showerror("画像未選択", "先に画像を開いてください。")
             return
         if not self._enabled_fields():
-            messagebox.showerror("項目なし", "有効な読み取り項目がありません。")
+            self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
             return
         image = self.original_image.copy()
         fields = [(idx, replace(field)) for idx, field in enumerate(self.fields)]
@@ -5646,7 +5662,7 @@ class ImageOcrExcelApp:
 
         def on_error(error: Exception) -> None:
             self.status_var.set("OCRに失敗しました。")
-            messagebox.showerror("OCRエラー", str(error))
+            self.dialogs.showerror("OCRエラー", str(error))
 
         self._run_background(
             "認識テスト中です。初回はPaddleOCRの準備に時間がかかります。",
@@ -5657,7 +5673,7 @@ class ImageOcrExcelApp:
 
     def ocr_field_at(self, idx: int) -> None:
         if not self.original_image:
-            messagebox.showerror("画像未選択", "先に画像を開いてください。")
+            self.dialogs.showerror("画像未選択", "先に画像を開いてください。")
             return
         if not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
             return
@@ -5700,7 +5716,7 @@ class ImageOcrExcelApp:
 
         def on_error(error: Exception) -> None:
             self.status_var.set("OCRに失敗しました。")
-            messagebox.showerror("OCRエラー", str(error))
+            self.dialogs.showerror("OCRエラー", str(error))
 
         self._run_background(
             f"{field.name} を認識テスト中です。", work, on_success, on_error
@@ -5736,7 +5752,7 @@ class ImageOcrExcelApp:
             self.text_formatting,
         )
         if error and show_errors:
-            messagebox.showerror("OCRエラー", error)
+            self.dialogs.showerror("OCRエラー", error)
         return raw_text, text
 
     def _export_settings_dict(self) -> dict:
@@ -5780,18 +5796,18 @@ class ImageOcrExcelApp:
     def export_to_excel(self, _event=None) -> None:
         fields = self._enabled_fields()
         if not fields:
-            messagebox.showerror("項目なし", "有効な読み取り項目がありません。")
+            self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
             return
         pair_error = self._validate_dialogue_pair_export(fields)
         if pair_error:
-            messagebox.showerror("セット設定エラー", pair_error)
+            self.dialogs.showerror("セット設定エラー", pair_error)
             return
         if not self.image_files:
-            messagebox.showerror("画像なし", "画像フォルダを選択してください。")
+            self.dialogs.showerror("画像なし", "画像フォルダを選択してください。")
             return
         image_files = self.image_queue.included_files()
         if not image_files:
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "処理対象なし", "画像キューで処理する画像を1枚以上選択してください。"
             )
             return
@@ -5801,15 +5817,19 @@ class ImageOcrExcelApp:
                 return
         settings, error = self._build_export_settings()
         if error or settings is None:
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "出力設定エラー", error or "Excel出力設定を確認してください。"
             )
             return
         if (
             settings.write_mode == "上書き"
             and self.output_path.exists()
-            and not messagebox.askyesno(
-                "上書き確認", f"既存ファイルを上書きします。\n{self.output_path}"
+            and not self.dialogs.askyesno(
+                "上書き確認",
+                f"既存ファイルを上書きします。\n{self.output_path}",
+                yes_text="上書きする",
+                no_text="戻る",
+                destructive=True,
             )
         ):
             return
@@ -5897,7 +5917,7 @@ class ImageOcrExcelApp:
                 self.status_var.set(
                     f"Excelへ出力しました（エラー {len(result.errors)} 件）: {output_path}"
                 )
-                messagebox.showwarning(
+                self.dialogs.showwarning(
                     "完了（エラーあり）",
                     f"{result.total_images} 画像の処理が完了しました。"
                     f"\nエラー {len(result.errors)} 件は Errors シートに出力しました。"
@@ -5913,7 +5933,7 @@ class ImageOcrExcelApp:
                     f"（除外通知 {len(result.notices)} 件）" if result.notices else ""
                 )
                 self.status_var.set(f"Excelへ出力しました{notice_suffix}: {output_path}")
-                messagebox.showinfo(
+                self.dialogs.showinfo(
                     "完了",
                     f"{result.total_images} 画像をExcelへ出力しました。"
                     + (
@@ -5928,7 +5948,7 @@ class ImageOcrExcelApp:
             self.image_queue.prepare(image_files)
             self._render_side_body()
             self.status_var.set("Excel出力に失敗しました。")
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "出力エラー", f"Excelへ出力できませんでした。\n{error}"
             )
 
@@ -5951,20 +5971,20 @@ class ImageOcrExcelApp:
 
     def retry_failed_images(self) -> None:
         if self.last_export_result is None or self.last_export_output_path is None:
-            messagebox.showinfo("再実行対象なし", "先にExcel出力を実行してください。")
+            self.dialogs.showinfo("再実行対象なし", "先にExcel出力を実行してください。")
             return
         retry_files = self.image_queue.failed_files()
         if not retry_files:
-            messagebox.showinfo("再実行対象なし", "再実行が必要な画像はありません。")
+            self.dialogs.showinfo("再実行対象なし", "再実行が必要な画像はありません。")
             return
         fields = self._enabled_fields()
         pair_error = self._validate_dialogue_pair_export(fields)
         if pair_error:
-            messagebox.showerror("セット設定エラー", pair_error)
+            self.dialogs.showerror("セット設定エラー", pair_error)
             return
         settings, error = self._build_export_settings()
         if error or settings is None:
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "出力設定エラー", error or "Excel出力設定を確認してください。"
             )
             return
@@ -5973,7 +5993,7 @@ class ImageOcrExcelApp:
             self.output_path != self.last_export_output_path
             or current_signature != self.last_export_signature
         ):
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "再実行できません",
                 "出力先、シート、開始セル、列構成のいずれかが前回の出力から変更されています。\n全画像をExcel出力し直してください。",
             )
@@ -6058,13 +6078,13 @@ class ImageOcrExcelApp:
                 self.status_var.set(
                     f"再実行が完了しました（要再実行 {remaining} 画像）: {output_path}"
                 )
-                messagebox.showwarning(
+                self.dialogs.showwarning(
                     "再実行完了",
                     f"{total} 画像を再実行しました。\n要再実行: {remaining} 画像\n{output_path}",
                 )
             else:
                 self.status_var.set(f"失敗分の再実行が完了しました: {output_path}")
-                messagebox.showinfo(
+                self.dialogs.showinfo(
                     "再実行完了", f"{total} 画像の再実行が完了しました。\n{output_path}"
                 )
 
@@ -6072,7 +6092,7 @@ class ImageOcrExcelApp:
             self.image_queue.apply_result(previous_result)
             self._render_side_body()
             self.status_var.set("失敗分の再実行に失敗しました。")
-            messagebox.showerror(
+            self.dialogs.showerror(
                 "再実行エラー", f"失敗分を再実行できませんでした。\n{error}"
             )
 
