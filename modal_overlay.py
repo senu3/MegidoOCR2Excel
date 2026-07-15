@@ -102,6 +102,10 @@ class ModalOverlay:
     def set_escape_handler(self, handler: Callable[[], object] | None) -> None:
         self._escape_handler = handler
 
+    def refresh_geometry(self) -> None:
+        """Recenter the modal after its content size changes."""
+        self._schedule_sync()
+
     def set_focus_order(
         self, widgets: Sequence[Misc], *, default: Misc | None = None
     ) -> None:

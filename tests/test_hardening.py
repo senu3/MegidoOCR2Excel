@@ -383,6 +383,65 @@ class TemplateToolbarTests(unittest.TestCase):
             root.destroy()
 
 
+class ModalConsistencyTests(unittest.TestCase):
+    def test_fixed_range_confirmation_uses_the_themed_warning_dialog(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app.image_path = Path("sample.png")
+            with patch.object(
+                app.dialogs, "askyesno", return_value=True
+            ) as askyesno:
+                confirmed = app._confirm_fixed_range_switch()
+
+            self.assertTrue(confirmed)
+            self.assertEqual(askyesno.call_args.args[0], "固定範囲へ切り替え")
+            self.assertIn("sample.png", askyesno.call_args.args[1])
+            self.assertEqual(askyesno.call_args.kwargs["kind"], "warning")
+            self.assertEqual(
+                askyesno.call_args.kwargs["yes_text"],
+                "固定範囲に切り替える",
+            )
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
+    def test_settings_uses_the_shared_borderless_modal(self) -> None:
+        root = ctk.CTk()
+        root.geometry("900x700+10000+10000")
+        app = ImageOcrExcelApp(root)
+        try:
+            app._hide_workflow_choice()
+            root.update()
+            app.open_settings_modal()
+            root.update()
+
+            modal = app.settings_modal
+            self.assertIsNotNone(modal)
+            self.assertTrue(modal.visible)
+            self.assertTrue(bool(modal.window.overrideredirect()))
+            self.assertEqual(modal.window.grab_current(), modal.window)
+
+            labels = [
+                widget.cget("text")
+                for widget in modal.panel.winfo_children()
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            self.assertIn("基本設定", labels)
+
+            modal.window.event_generate("<Escape>", when="tail")
+            root.update()
+            self.assertIsNone(app.settings_modal)
+        finally:
+            if app.settings_modal is not None:
+                app.settings_modal.destroy()
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
+
 class FieldNameInteractionTests(unittest.TestCase):
     def _logic_only_app(self) -> ImageOcrExcelApp:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)

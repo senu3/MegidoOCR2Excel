@@ -306,6 +306,7 @@ class ImageOcrExcelApp:
         self.canvas: Canvas
         self.canvas_frame: ctk.CTkFrame | None = None
         self.workflow_choice_modal: ModalOverlay | None = None
+        self.settings_modal: ModalOverlay | None = None
         self.workflow_choice_overlay: ctk.CTkFrame | None = None
         self.workflow_choice_primary_button: ctk.CTkButton | None = None
         self.hbar: ctk.CTkScrollbar | None = None
@@ -1245,84 +1246,15 @@ class ImageOcrExcelApp:
         self.redraw()
 
     def _confirm_fixed_range_switch(self) -> bool:
-        confirmed = False
-        window = ctk.CTkToplevel(self.root)
-        window.title("固定範囲へ切り替え")
-        window.geometry("520x270")
-        window.resizable(False, False)
-        window.transient(self.root)
-        window.grab_set()
-        window.configure(fg_color=COLOR_BG)
-
         image_name = self.image_path.name if self.image_path else "現在表示中の画像"
-
-        def close(value: bool) -> None:
-            nonlocal confirmed
-            confirmed = value
-            window.grab_release()
-            window.destroy()
-
-        window.protocol("WM_DELETE_WINDOW", lambda: close(False))
-        panel = ctk.CTkFrame(
-            window,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE,
-            border_width=1,
-            border_color=COLOR_BORDER,
+        return self.dialogs.askyesno(
+            "固定範囲へ切り替え",
+            f"{image_name} の検出範囲を固定範囲として引き継ぎます。\n\n"
+            "切り替え後は、画像ごとの会話自動検出を行いません。",
+            yes_text="固定範囲に切り替える",
+            no_text="自動検出を続ける",
+            kind="warning",
         )
-        panel.pack(fill=BOTH, expand=True, padx=18, pady=18)
-        panel.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            panel,
-            text="現在の画像を基準に固定しますか？",
-            image=ICONS.get("alert_circle", 20, THEME.palette.warning),
-            compound="left",
-            anchor="w",
-            font=UI_FONT_TITLE,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 10))
-        ctk.CTkLabel(
-            panel,
-            text=(
-                f"{image_name} の検出範囲を固定範囲として引き継ぎます。\n"
-                "切り替え後は画像ごとの会話自動検出を行いません。"
-            ),
-            anchor="w",
-            justify="left",
-            wraplength=440,
-            font=UI_FONT,
-            text_color=COLOR_MUTED,
-        ).grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 18))
-        buttons = ctk.CTkFrame(panel, fg_color="transparent")
-        buttons.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 18))
-        buttons.grid_columnconfigure(0, weight=1)
-        buttons.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(
-            buttons,
-            text="自動検出を続ける",
-            command=lambda: close(False),
-            height=THEME.layout.row_button_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(
-            buttons,
-            text="固定範囲に切り替える",
-            command=lambda: close(True),
-            height=THEME.layout.row_button_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT,
-            fg_color=COLOR_PRIMARY,
-            hover_color=COLOR_PRIMARY_HOVER,
-            text_color=THEME.palette.on_color,
-        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
-        window.wait_window()
-        return confirmed
 
     def _assign_fields_to_current_set_definition(
         self, reassign_all: bool
@@ -3671,13 +3603,26 @@ class ImageOcrExcelApp:
         self.redraw()
 
     def open_settings_modal(self) -> None:
-        window = ctk.CTkToplevel(self.root)
-        window.title("設定")
-        window.geometry(THEME.layout.settings_size)
-        window.resizable(False, False)
-        window.transient(self.root)
-        window.grab_set()
-        window.configure(fg_color=COLOR_BG)
+        if self.settings_modal is not None and self.settings_modal.visible:
+            self.settings_modal.show()
+            return
+        modal = ModalOverlay(
+            self.root,
+            width=480,
+            backdrop_color=THEME.palette.modal_backdrop,
+            backdrop_alpha=THEME.layout.modal_backdrop_alpha,
+            surface_color=COLOR_SURFACE,
+            border_color=COLOR_BORDER,
+            corner_radius=THEME.layout.panel_radius,
+        )
+        self.settings_modal = modal
+
+        def close_modal() -> None:
+            if self.settings_modal is modal:
+                self.settings_modal = None
+            modal.destroy()
+
+        window = modal.window
         dialog_lang_display = StringVar(
             window, value=self._lang_display(self.lang_var.get())
         )
@@ -3690,23 +3635,58 @@ class ImageOcrExcelApp:
             window, value=self.text_formatting.fullwidth_ascii
         )
 
-        panel = ctk.CTkFrame(
-            window,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        panel.pack(fill=BOTH, expand=True, padx=18, pady=18)
-        panel.grid_columnconfigure(0, weight=1)
+        panel = modal.panel
+        panel.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
-            panel, text="基本設定", anchor="w", font=UI_FONT_TITLE, text_color=COLOR_TEXT
-        ).grid(row=0, column=0, sticky="ew", padx=16, pady=(16, 14))
-        ctk.CTkLabel(
-            panel, text="OCR言語", anchor="w", font=UI_FONT_SMALL, text_color=COLOR_TEXT
-        ).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 6))
-        ctk.CTkComboBox(
             panel,
+            text="",
+            image=ICONS.get("settings", 24, COLOR_PRIMARY),
+            width=28,
+            height=28,
+        ).grid(row=0, column=0, sticky="nw", padx=(26, 10), pady=(25, 0))
+        ctk.CTkLabel(
+            panel,
+            text="基本設定",
+            anchor="w",
+            justify="left",
+            font=UI_FONT_TITLE,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=(24, 0))
+        close_button = ctk.CTkButton(
+            panel,
+            text="",
+            image=ICONS.get("x", 16, COLOR_MUTED),
+            command=close_modal,
+            width=28,
+            height=28,
+            corner_radius=THEME.layout.control_radius,
+            fg_color="transparent",
+            hover_color=THEME.palette.modal_button_hover,
+            border_width=0,
+        )
+        close_button.grid(
+            row=0, column=2, sticky="ne", padx=(0, 12), pady=(12, 0)
+        )
+
+        content = ctk.CTkFrame(panel, fg_color="transparent")
+        content.grid(
+            row=1,
+            column=0,
+            columnspan=3,
+            sticky="ew",
+            padx=26,
+            pady=(20, 24),
+        )
+        content.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            content,
+            text="OCR言語",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        lang_combo = ctk.CTkComboBox(
+            content,
             variable=dialog_lang_display,
             values=["日本語 + English", "日本語のみ", "English のみ"],
             height=THEME.layout.entry_height,
@@ -3717,29 +3697,19 @@ class ImageOcrExcelApp:
             button_color=COLOR_PRIMARY,
             button_hover_color=COLOR_PRIMARY_HOVER,
             text_color=COLOR_TEXT,
-        ).grid(row=2, column=0, sticky="ew", padx=16)
+        )
+        lang_combo.grid(row=1, column=0, sticky="ew")
         ctk.CTkLabel(
-            panel,
+            content,
             text="OCRバックエンド",
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
-        ).grid(row=3, column=0, sticky="ew", padx=16, pady=(14, 6))
-        tesseract_frame = ctk.CTkFrame(panel, fg_color="transparent")
-
-        def sync_backend_fields(_value: str | None = None) -> None:
-            if dialog_backend.get() == "tesseract":
-                tesseract_frame.grid(
-                    row=5, column=0, sticky="ew", padx=16, pady=(14, 0)
-                )
-            else:
-                tesseract_frame.grid_remove()
-
-        ctk.CTkOptionMenu(
-            panel,
+        ).grid(row=2, column=0, sticky="ew", pady=(14, 6))
+        backend_menu = ctk.CTkOptionMenu(
+            content,
             variable=dialog_backend,
             values=[value for value in OCR_BACKEND_OPTIONS if value != "default"],
-            command=sync_backend_fields,
             height=THEME.layout.entry_height,
             font=UI_FONT,
             fg_color=COLOR_SECONDARY,
@@ -3748,7 +3718,10 @@ class ImageOcrExcelApp:
             dropdown_fg_color=COLOR_SURFACE_ALT,
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
-        ).grid(row=4, column=0, sticky="ew", padx=16)
+        )
+        backend_menu.grid(row=3, column=0, sticky="ew")
+        tesseract_frame = ctk.CTkFrame(content, fg_color="transparent")
+        tesseract_frame.grid(row=4, column=0, sticky="ew", pady=(14, 0))
         tesseract_frame.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             tesseract_frame,
@@ -3757,7 +3730,7 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
         ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ctk.CTkEntry(
+        tesseract_entry = ctk.CTkEntry(
             tesseract_frame,
             textvariable=dialog_tesseract,
             height=THEME.layout.entry_height,
@@ -3766,24 +3739,24 @@ class ImageOcrExcelApp:
             fg_color=COLOR_INPUT,
             border_color=COLOR_BORDER,
             text_color=COLOR_TEXT,
-        ).grid(row=1, column=0, sticky="ew")
-        sync_backend_fields()
+        )
+        tesseract_entry.grid(row=1, column=0, sticky="ew")
         ctk.CTkLabel(
-            panel,
+            content,
             text="テキスト整形（行切り出し共通）",
             anchor="w",
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
-        ).grid(row=6, column=0, sticky="ew", padx=16, pady=(18, 8))
+        ).grid(row=5, column=0, sticky="ew", pady=(18, 8))
         ctk.CTkLabel(
-            panel,
+            content,
             text="行のつなぎ方",
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
-        ).grid(row=7, column=0, sticky="ew", padx=16, pady=(0, 6))
-        ctk.CTkOptionMenu(
-            panel,
+        ).grid(row=6, column=0, sticky="ew", pady=(0, 6))
+        line_join_menu = ctk.CTkOptionMenu(
+            content,
             variable=dialog_line_join,
             values=list(LINE_JOIN_DISPLAY.values()),
             height=THEME.layout.entry_height,
@@ -3794,9 +3767,10 @@ class ImageOcrExcelApp:
             dropdown_fg_color=COLOR_SURFACE_ALT,
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
-        ).grid(row=8, column=0, sticky="ew", padx=16)
-        ctk.CTkCheckBox(
-            panel,
+        )
+        line_join_menu.grid(row=7, column=0, sticky="ew")
+        fullwidth_checkbox = ctk.CTkCheckBox(
+            content,
             text="半角の英数字・記号を全角に統一",
             variable=dialog_fullwidth_ascii,
             font=UI_FONT_SMALL,
@@ -3805,49 +3779,78 @@ class ImageOcrExcelApp:
             checkbox_height=18,
             corner_radius=4,
             border_width=1,
-        ).grid(row=9, column=0, sticky="w", padx=16, pady=(14, 0))
-        buttons = ctk.CTkFrame(panel, fg_color="transparent")
-        buttons.grid(row=10, column=0, sticky="ew", padx=16, pady=(20, 16))
-        buttons.grid_columnconfigure(0, weight=1)
-        buttons.grid_columnconfigure(1, weight=1)
-        ctk.CTkButton(
+        )
+        fullwidth_checkbox.grid(row=8, column=0, sticky="w", pady=(14, 0))
+        buttons = ctk.CTkFrame(content, fg_color="transparent")
+        buttons.grid(row=9, column=0, sticky="e", pady=(24, 0))
+        cancel_button = ctk.CTkButton(
             buttons,
             text="キャンセル",
-            image=ICONS.get("x", 16, COLOR_TEXT),
-            compound="left",
-            command=window.destroy,
-            height=THEME.layout.row_button_height,
+            command=close_modal,
+            width=112,
+            height=THEME.layout.primary_button_height,
             corner_radius=THEME.layout.control_radius,
-            font=UI_FONT,
-            fg_color=COLOR_SURFACE,
-            hover_color=THEME.palette.modal_button_hover,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
             border_width=1,
             border_color=COLOR_BORDER,
             text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        ctk.CTkButton(
+        )
+        cancel_button.pack(side=LEFT)
+        save_button = ctk.CTkButton(
             buttons,
             text="保存",
-            image=ICONS.get("save", 16, THEME.palette.on_color),
-            compound="left",
             command=lambda: self._apply_settings(
-                window,
+                modal,
                 dialog_lang_display.get(),
                 dialog_backend.get(),
                 dialog_tesseract.get(),
                 dialog_line_join.get(),
                 dialog_fullwidth_ascii.get(),
             ),
-            height=THEME.layout.row_button_height,
+            width=112,
+            height=THEME.layout.primary_button_height,
             corner_radius=THEME.layout.control_radius,
-            font=UI_FONT,
+            font=UI_FONT_SMALL,
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
-        ).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        )
+        save_button.pack(side=LEFT, padx=(8, 0))
+
+        def sync_backend_fields(_value: str | None = None) -> None:
+            show_tesseract = dialog_backend.get() == "tesseract"
+            if show_tesseract:
+                tesseract_frame.grid()
+            else:
+                tesseract_frame.grid_remove()
+            focus_order = [lang_combo, backend_menu]
+            if show_tesseract:
+                focus_order.append(tesseract_entry)
+            focus_order.extend(
+                [
+                    line_join_menu,
+                    fullwidth_checkbox,
+                    cancel_button,
+                    save_button,
+                    close_button,
+                ]
+            )
+            modal.set_focus_order(focus_order, default=lang_combo)
+            modal.refresh_geometry()
+
+        backend_menu.configure(command=sync_backend_fields)
+        sync_backend_fields()
+        modal.set_escape_handler(close_modal)
+        modal.window.bind(
+            "<Control-Return>",
+            lambda _event: save_button.invoke() or "break",
+        )
+        modal.show(focus=lang_combo)
 
     def _apply_settings(
         self,
-        window: ctk.CTkToplevel,
+        window: ModalOverlay,
         lang_display: str,
         backend: str,
         tesseract_path: str,
@@ -3894,6 +3897,8 @@ class ImageOcrExcelApp:
         else:
             self.status_var.set("基本設定は変更されていません。")
         window.destroy()
+        if self.settings_modal is window:
+            self.settings_modal = None
         if changed:
             self._render_side_body()
 

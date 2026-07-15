@@ -69,10 +69,11 @@ class AppDialogs:
         yes_text: str = "はい",
         no_text: str = "いいえ",
         destructive: bool = False,
+        kind: DialogKind = "question",
     ) -> bool:
         return bool(
             self._show(
-                "question",
+                kind,
                 title,
                 message,
                 [
