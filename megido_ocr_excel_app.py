@@ -311,6 +311,7 @@ class ImageOcrExcelApp:
         self.workflow_choice_primary_button: ctk.CTkButton | None = None
         self.hbar: ctk.CTkScrollbar | None = None
         self.vbar: ctk.CTkScrollbar | None = None
+        self.loading_modal: ModalOverlay | None = None
         self.loading_overlay: ctk.CTkFrame | None = None
         self.loading_progress: ctk.CTkProgressBar | None = None
         self.loading_close_button: ctk.CTkButton | None = None
@@ -618,15 +619,16 @@ class ImageOcrExcelApp:
             menu.grab_release()
 
     def _build_loading_overlay(self) -> None:
-        overlay = ctk.CTkFrame(
+        modal = ModalOverlay(
             self.root,
             width=360,
-            height=138,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE,
-            border_width=1,
+            backdrop_color=THEME.palette.modal_backdrop,
+            backdrop_alpha=THEME.layout.modal_backdrop_alpha,
+            surface_color=COLOR_SURFACE,
             border_color=THEME.palette.info,
+            corner_radius=THEME.layout.panel_radius,
         )
+        overlay = modal.panel
         overlay.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             overlay,
@@ -678,8 +680,12 @@ class ImageOcrExcelApp:
             padx=22,
             pady=(0, 18),
         )
+        modal.set_escape_handler(self.confirm_cancel_current_operation)
+        modal.set_focus_order(
+            [self.loading_close_button], default=self.loading_close_button
+        )
+        self.loading_modal = modal
         self.loading_overlay = overlay
-        self.loading_overlay.place_forget()
 
     def _build_workflow_choice_overlay(self) -> None:
         modal = ModalOverlay(
@@ -761,24 +767,21 @@ class ImageOcrExcelApp:
         self.loading_note_var.set("処理中の項目が完了するまでお待ちください。")
         if self.loading_close_button is not None:
             self.loading_close_button.configure(state="normal")
-        if self.loading_overlay is not None:
-            self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
-            self.loading_overlay.lift()
+        if self.loading_modal is not None:
+            self.loading_modal.show(focus=self.loading_close_button)
         if self.loading_progress is not None:
             self.loading_progress.start()
         self.root.update_idletasks()
 
     def _update_loading(self, message: str) -> None:
         self.loading_var.set(message)
-        if self.loading_overlay is not None:
-            self.loading_overlay.lift()
         self.root.update_idletasks()
 
     def _hide_loading(self) -> None:
         if self.loading_progress is not None:
             self.loading_progress.stop()
-        if self.loading_overlay is not None:
-            self.loading_overlay.place_forget()
+        if self.loading_modal is not None:
+            self.loading_modal.hide()
         self.root.update_idletasks()
 
     def _run_background(

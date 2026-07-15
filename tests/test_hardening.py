@@ -441,6 +441,37 @@ class ModalConsistencyTests(unittest.TestCase):
                 app.workflow_choice_modal.destroy()
             root.destroy()
 
+    def test_processing_modal_blocks_background_input_until_hidden(self) -> None:
+        root = ctk.CTk()
+        root.geometry("900x700+10000+10000")
+        app = ImageOcrExcelApp(root)
+        try:
+            app._hide_workflow_choice()
+            root.update()
+            app.busy = True
+            app._operation_cancel_event = threading.Event()
+
+            app._show_loading("OCR処理中です。")
+            root.update()
+
+            modal = app.loading_modal
+            self.assertIsNotNone(modal)
+            self.assertTrue(modal.visible)
+            self.assertEqual(modal.window.grab_current(), modal.window)
+            self.assertEqual(modal.backdrop.state(), "normal")
+
+            app._hide_loading()
+            root.update()
+            self.assertFalse(modal.visible)
+            self.assertEqual(modal.window.state(), "withdrawn")
+            self.assertIsNone(root.grab_current())
+        finally:
+            if app.loading_modal is not None:
+                app.loading_modal.destroy()
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
 
 class FieldNameInteractionTests(unittest.TestCase):
     def _logic_only_app(self) -> ImageOcrExcelApp:

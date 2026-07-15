@@ -153,7 +153,10 @@ class ModalOverlay:
 
     def _move_focus(self, target: Misc) -> str:
         if self._visible and target.winfo_exists():
-            target.focus_set()
+            try:
+                target.focus_set()
+            except (AttributeError, TclError):
+                pass
         return "break"
 
     def _on_tab(self, _event: Event, *, reverse: bool) -> str:
@@ -270,8 +273,11 @@ class ModalOverlay:
             and target is not None
             and target.winfo_exists()
         ):
-            self.window.focus_set()
-            target.focus_set()
+            try:
+                self.window.focus_set()
+                target.focus_set()
+            except (AttributeError, TclError):
+                pass
 
     def _restore_focus(self) -> None:
         target = self._previous_focus
