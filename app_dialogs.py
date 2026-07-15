@@ -84,7 +84,7 @@ class AppDialogs:
                         "danger" if destructive else "primary",
                     ),
                 ],
-                default_value=True,
+                default_value=False if destructive else True,
                 escape_value=False,
             )
         )
@@ -232,10 +232,22 @@ class AppDialogs:
 
         if default_button is None:
             default_button = buttons[-1]
-        modal.window.bind(
-            "<Return>",
-            lambda _event: default_button.invoke() or "break",
-        )
+        def invoke_focused_or_default(_event=None) -> str:
+            focused = self.root.focus_get()
+            target = next(
+                (
+                    button
+                    for button in [*buttons, close_button]
+                    if self._owns_focus(button, focused)
+                ),
+                default_button,
+            )
+            target.invoke()
+            return "break"
+
+        modal.window.bind("<Return>", invoke_focused_or_default)
+        modal.window.bind("<KP_Enter>", invoke_focused_or_default)
+        modal.window.bind("<space>", invoke_focused_or_default)
         modal.set_focus_order(buttons + [close_button], default=default_button)
         modal.show(focus=default_button)
         try:
@@ -246,6 +258,15 @@ class AppDialogs:
             self.active_modal = None
             self._restore_previous_grab(previous_grab)
         return result
+
+    @staticmethod
+    def _owns_focus(widget: Misc, focused: Misc | None) -> bool:
+        current = focused
+        while current is not None:
+            if current is widget:
+                return True
+            current = getattr(current, "master", None)
+        return False
 
     @staticmethod
     def _appearance(kind: DialogKind) -> tuple[str, str]:

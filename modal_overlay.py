@@ -160,14 +160,29 @@ class ModalOverlay:
         if not self._visible or not self._focus_order:
             return "break"
         current = self.root.focus_get()
-        try:
-            index = self._focus_order.index(current)
-        except ValueError:
+        index = next(
+            (
+                position
+                for position, widget in enumerate(self._focus_order)
+                if self._owns_focus(widget, current)
+            ),
+            None,
+        )
+        if index is None:
             target = self._default_focus or self._focus_order[0]
         else:
             offset = -1 if reverse else 1
             target = self._focus_order[(index + offset) % len(self._focus_order)]
         return self._move_focus(target)
+
+    @staticmethod
+    def _owns_focus(widget: Misc, focused: Misc | None) -> bool:
+        current = focused
+        while current is not None:
+            if current is widget:
+                return True
+            current = getattr(current, "master", None)
+        return False
 
     def _show_windows(self) -> None:
         self._show_job = None

@@ -44,6 +44,29 @@ class AppDialogsTests(unittest.TestCase):
 
         self.assertFalse(accepted)
 
+    def test_enter_defaults_to_cancel_for_a_destructive_action(self) -> None:
+        self.root.after(100, lambda: self._send("<Return>"))
+
+        accepted = self.dialogs.askyesno(
+            "削除確認",
+            "この項目を削除しますか。",
+            destructive=True,
+        )
+
+        self.assertFalse(accepted)
+
+    def test_enter_invokes_the_focused_action_instead_of_the_default(self) -> None:
+        self.root.after(100, lambda: self._send("<Tab>"))
+        self.root.after(160, lambda: self._send("<Return>"))
+
+        accepted = self.dialogs.askyesno(
+            "削除確認",
+            "この項目を削除しますか。",
+            destructive=True,
+        )
+
+        self.assertTrue(accepted)
+
     def test_dialog_kinds_use_semantic_theme_colors(self) -> None:
         self.assertEqual(
             AppDialogs._appearance("error"),
