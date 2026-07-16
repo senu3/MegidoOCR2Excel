@@ -12,7 +12,7 @@ from PIL import Image
 
 from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
-from megido_ocr_excel_app import APP_TITLE, MODE_EXPORT, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
+from megido_ocr_excel_app import APP_TITLE, MODE_EXPORT, MODE_REVIEW, MODE_TEMPLATE, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
 from megido_ocr_excel_app import COLOR_PRIMARY, COLOR_SECONDARY
 from megido_ui_theme import THEME
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
@@ -764,7 +764,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertIsNone(app.drag_rect)
         app.canvas.delete.assert_called_once_with(42)
 
-    def test_export_settings_show_layout_as_read_only_summary(self) -> None:
+    def test_export_settings_show_layout_summary_and_navigation(self) -> None:
         root = ctk.CTk()
         root.withdraw()
         app = ImageOcrExcelApp(root)
@@ -788,14 +788,39 @@ class FieldNameInteractionTests(unittest.TestCase):
                 for widget in descendants
                 if isinstance(widget, ctk.CTkLabel)
             ]
+            buttons = [
+                widget
+                for widget in descendants
+                if isinstance(widget, ctk.CTkButton)
+            ]
             self.assertNotIn(EXPORT_LAYOUT_OPTIONS, option_values)
             self.assertIn(app.export_layout_var.get(), labels)
-            self.assertIn("1. 範囲・列で変更", labels)
+            navigation = next(
+                button
+                for button in buttons
+                if button.cget("text") == "1. 範囲・列で変更"
+            )
+            self.assertEqual(navigation.cget("fg_color"), COLOR_SECONDARY)
+            self.assertEqual(navigation.cget("border_width"), 1)
         finally:
             host.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
             root.destroy()
+
+    def test_export_layout_navigation_switches_to_template_mode(self) -> None:
+        app = self._logic_only_app()
+        app.mode_var = MagicMock()
+        app.status_var = MagicMock()
+        app._on_mode_change = MagicMock()
+
+        app.open_template_mode_from_export()
+
+        app.mode_var.set.assert_called_once_with(MODE_TEMPLATE)
+        app.status_var.set.assert_called_once_with(
+            "出力形式と列構成を変更できます。"
+        )
+        app._on_mode_change.assert_called_once_with()
 
     def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
         app = self._logic_only_app()

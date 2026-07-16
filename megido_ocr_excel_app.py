@@ -2755,15 +2755,18 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
         ).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
+        layout_controls = ctk.CTkFrame(panel, fg_color="transparent")
+        layout_controls.grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+        layout_controls.grid_columnconfigure(0, weight=1)
         layout_summary = ctk.CTkFrame(
-            panel,
+            layout_controls,
             height=THEME.layout.entry_height,
             corner_radius=THEME.layout.control_radius,
             fg_color=COLOR_INPUT,
             border_width=1,
             border_color=COLOR_BORDER,
         )
-        layout_summary.grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
+        layout_summary.grid(row=0, column=0, sticky="ew", padx=(0, 6))
         layout_summary.grid_columnconfigure(0, weight=1)
         layout_summary.grid_propagate(False)
         ctk.CTkLabel(
@@ -2772,14 +2775,23 @@ class ImageOcrExcelApp:
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew", padx=(10, 6), pady=4)
-        ctk.CTkLabel(
-            layout_summary,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=4)
+        ctk.CTkButton(
+            layout_controls,
             text="1. 範囲・列で変更",
-            anchor="e",
+            image=ICONS.get("chevron_left", 14, COLOR_TEXT),
+            compound="left",
+            command=self.open_template_mode_from_export,
+            width=132,
+            height=THEME.layout.entry_height,
+            corner_radius=THEME.layout.control_radius,
             font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=0, column=1, sticky="e", padx=(0, 10), pady=4)
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=1, sticky="e")
 
         ctk.CTkCheckBox(
             panel,
@@ -2809,6 +2821,11 @@ class ImageOcrExcelApp:
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
         ).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
+
+    def open_template_mode_from_export(self) -> None:
+        self.mode_var.set(MODE_TEMPLATE)
+        self.status_var.set("出力形式と列構成を変更できます。")
+        self._on_mode_change()
 
     def _export_column_summary(self) -> str:
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
