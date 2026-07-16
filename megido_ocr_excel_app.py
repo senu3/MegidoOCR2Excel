@@ -100,6 +100,7 @@ from template_store import (
     set_definition_from_template,
     text_formatting_from_template,
 )
+from ui_tooltip import add_tooltip
 
 
 class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
@@ -386,6 +387,7 @@ class ImageOcrExcelApp:
             "transparent",
             COLOR_UTILITY_HOVER,
             34,
+            tooltip="基本設定",
         ).pack(side=RIGHT, padx=(4, 12), pady=10)
         ctk.CTkFrame(
             toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider
@@ -398,6 +400,7 @@ class ImageOcrExcelApp:
             "transparent",
             COLOR_UTILITY_HOVER,
             34,
+            tooltip="次の画像",
         ).pack(side=RIGHT, padx=2, pady=10)
         ctk.CTkLabel(
             toolbar,
@@ -415,6 +418,7 @@ class ImageOcrExcelApp:
             "transparent",
             COLOR_UTILITY_HOVER,
             34,
+            tooltip="前の画像",
         ).pack(side=RIGHT, padx=2, pady=10)
 
         canvas_frame = ctk.CTkFrame(
@@ -566,6 +570,7 @@ class ImageOcrExcelApp:
             )
         )
         self.template_more_button.grid(row=0, column=2)
+        add_tooltip(self.template_more_button, "テンプレート操作")
         self.template_toolbar = template_toolbar
 
         ctk.CTkSegmentedButton(
@@ -590,9 +595,18 @@ class ImageOcrExcelApp:
         self._build_workflow_choice_overlay()
 
     def _toolbar_button(
-        self, parent, text: str, icon: str, command, fg: str, hover: str, width: int
+        self,
+        parent,
+        text: str,
+        icon: str,
+        command,
+        fg: str,
+        hover: str,
+        width: int,
+        *,
+        tooltip: str | None = None,
     ) -> ctk.CTkButton:
-        return ctk.CTkButton(
+        button = ctk.CTkButton(
             parent,
             text=text,
             image=ICONS.get(icon, 18, THEME.palette.toolbar_text),
@@ -605,6 +619,9 @@ class ImageOcrExcelApp:
             fg_color=fg,
             hover_color=hover,
         )
+        if tooltip:
+            add_tooltip(button, tooltip)
+        return button
 
     def show_template_actions_menu(self, button: ctk.CTkButton) -> None:
         menu = Menu(
@@ -675,6 +692,7 @@ class ImageOcrExcelApp:
         self.loading_close_button.grid(
             row=0, column=1, sticky="ne", padx=(0, 8), pady=(8, 0)
         )
+        add_tooltip(self.loading_close_button, "処理をキャンセル")
         self.loading_progress = ctk.CTkProgressBar(
             overlay,
             mode="indeterminate",
@@ -1478,7 +1496,7 @@ class ImageOcrExcelApp:
                 font=UI_FONT_BOLD,
                 text_color=COLOR_TEXT,
             ).grid(row=0, column=0, sticky="ew")
-            ctk.CTkButton(
+            up_button = ctk.CTkButton(
                 header,
                 text="",
                 image=ICONS.get("arrow_up", 15, COLOR_MUTED),
@@ -1490,8 +1508,10 @@ class ImageOcrExcelApp:
                 fg_color="transparent",
                 hover_color=COLOR_UTILITY_HOVER,
                 border_width=0,
-            ).grid(row=0, column=1, padx=(4, 2))
-            ctk.CTkButton(
+            )
+            up_button.grid(row=0, column=1, padx=(4, 2))
+            add_tooltip(up_button, "セットを上へ")
+            down_button = ctk.CTkButton(
                 header,
                 text="",
                 image=ICONS.get("arrow_down", 15, COLOR_MUTED),
@@ -1503,7 +1523,9 @@ class ImageOcrExcelApp:
                 fg_color="transparent",
                 hover_color=COLOR_UTILITY_HOVER,
                 border_width=0,
-            ).grid(row=0, column=2, padx=(2, 0))
+            )
+            down_button.grid(row=0, column=2, padx=(2, 0))
+            add_tooltip(down_button, "セットを下へ")
             indexes = [
                 idx for idx, field in enumerate(self.fields) if field.pair_id == pair_id
             ]
@@ -1949,7 +1971,7 @@ class ImageOcrExcelApp:
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
         ).grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(
+        disclosure_button = ctk.CTkButton(
             header,
             text="",
             image=ICONS.get(
@@ -1964,7 +1986,14 @@ class ImageOcrExcelApp:
             fg_color="transparent",
             hover_color=COLOR_UTILITY_HOVER,
             border_width=0,
-        ).grid(row=0, column=1, sticky="e")
+        )
+        disclosure_button.grid(row=0, column=1, sticky="e")
+        add_tooltip(
+            disclosure_button,
+            "補正ルールを閉じる"
+            if self.correction_rules_expanded
+            else "補正ルールを開く",
+        )
 
         self._correction_result_preview(panel)
         if not self.correction_rules_expanded:
@@ -2969,10 +2998,15 @@ class ImageOcrExcelApp:
         edit_button = more_button = drag_handle = None
         if not editing:
             edit_button = self._field_action_button(
-                row, "pencil", lambda i=idx: self.begin_inline_name_edit(i)
+                row,
+                "pencil",
+                lambda i=idx: self.begin_inline_name_edit(i),
+                "項目名を編集",
             )
             edit_button.grid(row=0, column=3, sticky="e", padx=(0, 2), pady=(7, 1))
-            more_button = self._field_action_button(row, "more", lambda: None)
+            more_button = self._field_action_button(
+                row, "more", lambda: None, "項目の操作"
+            )
             more_button.configure(
                 command=lambda button=more_button, i=idx: self.show_field_actions_menu(
                     button, i
@@ -2989,6 +3023,7 @@ class ImageOcrExcelApp:
             drag_handle.grid(
                 row=0, column=5, rowspan=2, sticky="e", padx=(0, 6), pady=8
             )
+            add_tooltip(drag_handle, "ドラッグして並べ替え")
             self.field_drag_handle_by_index[idx] = drag_handle
             drag_handle.bind(
                 "<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i)
@@ -3090,10 +3125,15 @@ class ImageOcrExcelApp:
         )
         if not editing:
             edit_button = self._field_action_button(
-                row, "pencil", lambda i=idx: self.begin_inline_name_edit(i)
+                row,
+                "pencil",
+                lambda i=idx: self.begin_inline_name_edit(i),
+                "項目名を編集",
             )
             edit_button.grid(row=0, column=4, sticky="e", padx=(0, 2), pady=(7, 1))
-            more_button = self._field_action_button(row, "more", lambda: None)
+            more_button = self._field_action_button(
+                row, "more", lambda: None, "項目の操作"
+            )
             more_button.configure(
                 command=lambda button=more_button, i=idx: self.show_field_actions_menu(
                     button, i
@@ -3143,6 +3183,7 @@ class ImageOcrExcelApp:
                 cursor="fleur",
             )
             drag_handle.grid(row=0, column=6, rowspan=2, sticky="e", padx=(0, 6), pady=8)
+            add_tooltip(drag_handle, "ドラッグして並べ替え")
             self.field_drag_handle_by_index[idx] = drag_handle
             drag_handle.bind(
                 "<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i)
@@ -3166,8 +3207,10 @@ class ImageOcrExcelApp:
                 lambda _event, i=idx: self.begin_inline_name_edit(i),
             )
 
-    def _field_action_button(self, parent, icon: str, command) -> ctk.CTkButton:
-        return ctk.CTkButton(
+    def _field_action_button(
+        self, parent, icon: str, command, tooltip: str
+    ) -> ctk.CTkButton:
+        button = ctk.CTkButton(
             parent,
             text="",
             image=ICONS.get(icon, 15, COLOR_MUTED),
@@ -3179,6 +3222,8 @@ class ImageOcrExcelApp:
             hover_color=COLOR_UTILITY_HOVER,
             border_width=0,
         )
+        add_tooltip(button, tooltip)
+        return button
 
     def _dialogue_role_display(self, role: str) -> str:
         return (
@@ -3809,6 +3854,7 @@ class ImageOcrExcelApp:
         close_button.grid(
             row=0, column=2, sticky="ne", padx=(0, 12), pady=(12, 0)
         )
+        add_tooltip(close_button, "閉じる")
 
         content = ctk.CTkFrame(panel, fg_color="transparent")
         content.grid(

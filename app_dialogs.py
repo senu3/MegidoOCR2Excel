@@ -9,6 +9,7 @@ import customtkinter as ctk
 from megido_icons import ICONS
 from megido_ui_theme import THEME
 from modal_overlay import ModalOverlay
+from ui_tooltip import add_tooltip
 
 
 DialogKind = Literal["info", "warning", "error", "question"]
@@ -173,6 +174,7 @@ class AppDialogs:
         close_button.grid(
             row=0, column=2, sticky="ne", padx=(0, 12), pady=(12, 0)
         )
+        add_tooltip(close_button, "閉じる")
         ctk.CTkLabel(
             panel,
             text=message,
