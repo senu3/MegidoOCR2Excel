@@ -97,9 +97,20 @@ def _draw_table(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
 
 
 def _draw_refresh(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
-    _line(draw, [(14*scale, 7*scale), (14*scale, 3*scale), (11*scale, 5*scale)], scale)
-    draw.arc((3*scale, 3*scale, 15*scale, 15*scale), 205, 25, fill="white", width=max(1, round(1.75*scale)))
-    _line(draw, [(4*scale, 11*scale), (4*scale, 15*scale), (7*scale, 13*scale)], scale)
+    width = max(1, round(1.75 * scale))
+    bounds = (3 * scale, 3 * scale, 15 * scale, 15 * scale)
+    draw.arc(bounds, 185, 355, fill="white", width=width)
+    draw.arc(bounds, 5, 175, fill="white", width=width)
+    _line(
+        draw,
+        [(3 * scale, 4 * scale), (3 * scale, 8 * scale), (7 * scale, 8 * scale)],
+        scale,
+    )
+    _line(
+        draw,
+        [(11 * scale, 10 * scale), (15 * scale, 10 * scale), (15 * scale, 14 * scale)],
+        scale,
+    )
 
 
 def _draw_arrow_up(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:

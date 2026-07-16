@@ -29,6 +29,13 @@ class IconDrawingTests(unittest.TestCase):
 
         self.assertEqual(image.getpixel((36, 36))[3], 0)
 
+    def test_refresh_arrows_connect_to_opposite_arc_ends(self) -> None:
+        image = self._render("refresh")
+
+        for point in ((12, 32), (28, 32), (44, 40), (60, 56)):
+            with self.subTest(point=point):
+                self.assertGreater(image.getpixel(point)[3], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
