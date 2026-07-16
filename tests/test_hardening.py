@@ -108,7 +108,7 @@ class CoordinateStatusTests(unittest.TestCase):
         )
         app.coordinate_status_label.grid.assert_called_once_with()
 
-    def test_detection_fallback_uses_warning_status(self) -> None:
+    def test_detection_fallback_uses_neutral_status(self) -> None:
         app = self._logic_only_app()
         app.current_content_rect = None
 
@@ -118,7 +118,7 @@ class CoordinateStatusTests(unittest.TestCase):
             "補正: 画像全体（黒余白未検出）"
         )
         app.coordinate_status_label.configure.assert_called_once_with(
-            text_color=THEME.palette.warning
+            text_color=THEME.palette.toolbar_muted
         )
 
     def test_coordinate_status_is_hidden_outside_review(self) -> None:
@@ -129,6 +129,28 @@ class CoordinateStatusTests(unittest.TestCase):
 
         app.coordinate_status_var.set.assert_called_once_with("")
         app.coordinate_status_label.grid_remove.assert_called_once_with()
+
+
+class StatusToneTests(unittest.TestCase):
+    def test_warning_status_resets_when_the_message_changes(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.status_var = MagicMock()
+        app.status_label = MagicMock()
+
+        app._set_warning_status("会話を自動検出できませんでした。")
+
+        app.status_var.set.assert_called_once_with(
+            "会話を自動検出できませんでした。"
+        )
+        app.status_label.configure.assert_called_once_with(
+            text_color=THEME.palette.warning
+        )
+
+        app._reset_status_text_color()
+
+        app.status_label.configure.assert_called_with(
+            text_color=THEME.palette.toolbar_text
+        )
 
 
 class WorkflowChoiceTests(unittest.TestCase):

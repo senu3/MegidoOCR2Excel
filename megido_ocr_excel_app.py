@@ -306,6 +306,7 @@ class ImageOcrExcelApp:
         self.template_fields_scroller: AutoHideScrollableFrame | None = None
         self.canvas: Canvas
         self.canvas_frame: ctk.CTkFrame | None = None
+        self.status_label: ctk.CTkLabel | None = None
         self.coordinate_status_label: ctk.CTkLabel | None = None
         self.workflow_choice_modal: ModalOverlay | None = None
         self.settings_modal: ModalOverlay | None = None
@@ -323,6 +324,9 @@ class ImageOcrExcelApp:
         self._close_after_cancel = False
 
         self._build_ui()
+        self._status_color_trace = self.status_var.trace_add(
+            "write", self._reset_status_text_color
+        )
         self._bind_shortcuts()
         self._bind_dirty_tracking()
         self._dirty_tracking_suspended = False
@@ -468,13 +472,14 @@ class ImageOcrExcelApp:
         status_bar.pack_propagate(False)
         status_bar.grid_rowconfigure(0, weight=1)
         status_bar.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
+        self.status_label = ctk.CTkLabel(
             status_bar,
             textvariable=self.status_var,
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=THEME.palette.toolbar_text,
-        ).grid(row=0, column=0, sticky="ew", padx=(12, 8))
+        )
+        self.status_label.grid(row=0, column=0, sticky="ew", padx=(12, 8))
         self.coordinate_status_label = ctk.CTkLabel(
             status_bar,
             textvariable=self.coordinate_status_var,
@@ -1654,7 +1659,7 @@ class ImageOcrExcelApp:
                 if self.current_content_rect
                 else (
                     "補正: 画像全体（黒余白未検出）",
-                    THEME.palette.warning,
+                    THEME.palette.toolbar_muted,
                 )
             )
         return "補正: 画像全体", THEME.palette.toolbar_muted
@@ -3413,13 +3418,28 @@ class ImageOcrExcelApp:
                     "supplement_candidate": self.current_detection_reason,
                     "unknown": "会話を自動検出できませんでした。読み取り範囲を確認してください。",
                 }
-                self.status_var.set(
-                    labels.get(self.current_detection_layout, "自動検出を確認してください。")
+                status = labels.get(
+                    self.current_detection_layout,
+                    "自動検出を確認してください。",
                 )
+                if self.current_detection_layout == "unknown":
+                    self._set_warning_status(status)
+                else:
+                    self.status_var.set(status)
             else:
                 self.status_var.set(
                     "画像を読み込みました。認識テストで代表画像を試せます。"
                 )
+
+    def _reset_status_text_color(self, *_args) -> None:
+        label = getattr(self, "status_label", None)
+        if label is not None:
+            label.configure(text_color=THEME.palette.toolbar_text)
+
+    def _set_warning_status(self, message: str) -> None:
+        self.status_var.set(message)
+        if self.status_label is not None:
+            self.status_label.configure(text_color=THEME.palette.warning)
 
     def _apply_auto_detection_preview(self) -> None:
         if self.original_image is None or self.profile.dialogue_log_detection is None:
