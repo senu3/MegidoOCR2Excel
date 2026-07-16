@@ -764,13 +764,14 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertIsNone(app.drag_rect)
         app.canvas.delete.assert_called_once_with(42)
 
-    def test_export_settings_show_layout_summary_and_navigation(self) -> None:
+    def test_export_settings_exclude_layout_and_preflight_links_to_editor(self) -> None:
         root = ctk.CTk()
         root.withdraw()
         app = ImageOcrExcelApp(root)
         host = ctk.CTkFrame(root)
         try:
             app._render_excel_output_settings(host)
+            app._render_export_structure_summary(host, 3, 2)
             descendants = []
             pending = list(host.winfo_children())
             while pending:
@@ -795,10 +796,12 @@ class FieldNameInteractionTests(unittest.TestCase):
             ]
             self.assertNotIn(EXPORT_LAYOUT_OPTIONS, option_values)
             self.assertIn(app.export_layout_var.get(), labels)
+            self.assertIn("列構成", labels)
+            self.assertNotIn("出力形式", labels)
             navigation = next(
                 button
                 for button in buttons
-                if button.cget("text") == "1. 範囲・列で変更"
+                if button.cget("text") == "範囲・列で編集"
             )
             self.assertEqual(navigation.cget("fg_color"), COLOR_SECONDARY)
             self.assertEqual(navigation.cget("border_width"), 1)
@@ -817,9 +820,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.open_template_mode_from_export()
 
         app.mode_var.set.assert_called_once_with(MODE_TEMPLATE)
-        app.status_var.set.assert_called_once_with(
-            "出力形式と列構成を変更できます。"
-        )
+        app.status_var.set.assert_called_once_with("列構成を変更できます。")
         app._on_mode_change.assert_called_once_with()
 
     def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:

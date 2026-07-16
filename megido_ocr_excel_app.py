@@ -2406,16 +2406,7 @@ class ImageOcrExcelApp:
 
         enabled_count = len(self._enabled_fields())
         image_count = len(self.image_queue.included_files())
-        summary_text = f"{image_count}画像（自然順） / {self._export_unit_summary(enabled_count)} / {self._export_column_summary()}"
-        ctk.CTkLabel(
-            content,
-            text=summary_text,
-            anchor="w",
-            justify="left",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=330,
-        ).pack(fill="x", padx=18, pady=(0, 12))
+        self._render_export_structure_summary(content, image_count, enabled_count)
 
         actions = ctk.CTkFrame(body, fg_color=COLOR_SURFACE)
         actions.pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
@@ -2748,51 +2739,6 @@ class ImageOcrExcelApp:
             text_color=COLOR_TEXT,
         ).grid(row=2, column=1, sticky="ew", padx=(0, 12), pady=4)
 
-        ctk.CTkLabel(
-            panel,
-            text="出力形式",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=3, column=0, sticky="w", padx=(12, 8), pady=4)
-        layout_controls = ctk.CTkFrame(panel, fg_color="transparent")
-        layout_controls.grid(row=3, column=1, sticky="ew", padx=(0, 12), pady=4)
-        layout_controls.grid_columnconfigure(0, weight=1)
-        layout_summary = ctk.CTkFrame(
-            layout_controls,
-            height=THEME.layout.entry_height,
-            corner_radius=THEME.layout.control_radius,
-            fg_color=COLOR_INPUT,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        layout_summary.grid(row=0, column=0, sticky="ew", padx=(0, 6))
-        layout_summary.grid_columnconfigure(0, weight=1)
-        layout_summary.grid_propagate(False)
-        ctk.CTkLabel(
-            layout_summary,
-            text=self.export_layout_var.get(),
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew", padx=10, pady=4)
-        ctk.CTkButton(
-            layout_controls,
-            text="1. 範囲・列で変更",
-            image=ICONS.get("chevron_left", 14, COLOR_TEXT),
-            compound="left",
-            command=self.open_template_mode_from_export,
-            width=132,
-            height=THEME.layout.entry_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=1, sticky="e")
-
         ctk.CTkCheckBox(
             panel,
             text="ファイル名列",
@@ -2806,7 +2752,7 @@ class ImageOcrExcelApp:
             text_color=COLOR_TEXT,
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", padx=12, pady=(8, 4))
         ctk.CTkCheckBox(
             panel,
             text="ヘッダー行",
@@ -2820,11 +2766,61 @@ class ImageOcrExcelApp:
             text_color=COLOR_TEXT,
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
+
+    def _render_export_structure_summary(
+        self, parent, image_count: int, enabled_count: int
+    ) -> None:
+        summary = ctk.CTkFrame(parent, fg_color="transparent")
+        summary.pack(fill="x", padx=18, pady=(0, 12))
+        summary.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            summary,
+            text=(
+                f"{image_count}画像（自然順） / "
+                f"{self._export_unit_summary(enabled_count)} / "
+                f"{self._export_column_summary()}"
+            ),
+            anchor="w",
+            justify="left",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+            wraplength=330,
+        ).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 6))
+        ctk.CTkLabel(
+            summary,
+            text="列構成",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).grid(row=1, column=0, sticky="w", padx=(0, 8))
+        ctk.CTkLabel(
+            summary,
+            text=self.export_layout_var.get(),
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_TEXT,
+        ).grid(row=1, column=1, sticky="ew")
+        ctk.CTkButton(
+            summary,
+            text="範囲・列で編集",
+            image=ICONS.get("chevron_left", 14, COLOR_TEXT),
+            compound="left",
+            command=self.open_template_mode_from_export,
+            width=124,
+            height=THEME.layout.entry_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        ).grid(row=1, column=2, sticky="e")
 
     def open_template_mode_from_export(self) -> None:
         self.mode_var.set(MODE_TEMPLATE)
-        self.status_var.set("出力形式と列構成を変更できます。")
+        self.status_var.set("列構成を変更できます。")
         self._on_mode_change()
 
     def _export_column_summary(self) -> str:
