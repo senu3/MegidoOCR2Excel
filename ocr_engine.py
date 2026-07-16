@@ -531,6 +531,14 @@ class OcrEngine:
         self._content_rect_settings: CoordinateSettings | None = None
         self._content_rect_value: tuple[int, int, int, int] | None = None
 
+    def verify_paddle_environment(self, lang: str = FALLBACK_LANG) -> None:
+        """Initialize both PaddleOCR paths used by normal and line-split fields."""
+        backend = PaddleBackend()
+        sample = Image.new("RGB", (320, 96), "white")
+        backend.recognize(sample, lang)
+        backend.recognize_lines([sample], lang)
+        self.paddle_backend = backend
+
     def content_rect_for(self, image: Image.Image, settings: CoordinateSettings | None) -> tuple[int, int, int, int] | None:
         normalized = (settings or CoordinateSettings()).normalized()
         if normalized.coordinate_space != COORDINATE_SPACE_CONTENT:

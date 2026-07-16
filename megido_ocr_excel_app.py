@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 import threading
 from contextlib import contextmanager
 from dataclasses import replace
@@ -59,6 +61,15 @@ from ocr_engine import (
     detect_line_bands,
     fill_missing_field_source_size,
     scaled_field,
+)
+from ocr_environment import (
+    OCR_ENV_LOCATION_ERROR,
+    OCR_ENV_READY,
+    OCR_ENV_SETUP,
+    OCR_ENV_UNAVAILABLE,
+    OCR_ENV_VERIFY,
+    OcrEnvironmentManager,
+    OcrEnvironmentStatus,
 )
 from ocr_models import (
     COORDINATE_SPACE_CONTENT,
@@ -256,6 +267,12 @@ class ImageOcrExcelApp:
         self.empty_set_ids: set[int] = set()
         self.pending_dialogue_pair_id: int | None = None
         self.pending_dialogue_role: str = ""
+        self.ocr_environment = OcrEnvironmentManager()
+        self.ocr_environment_active_cache_dir = (
+            self.ocr_environment.apply_to_process().resolve()
+        )
+        self.ocr_environment_restart_required = False
+        self.ocr_environment_last_error = ""
         self.ocr_engine = OcrEngine()
         self.excel_exporter = ExcelExporter()
 
@@ -2256,6 +2273,14 @@ class ImageOcrExcelApp:
         value = " ".join(value.split())
         return value if len(value) <= limit else f"{value[:limit - 3]}..."
 
+    @staticmethod
+    def _compact_path(value: str, limit: int = 34) -> str:
+        if len(value) <= limit:
+            return value
+        head = (limit - 1) // 2
+        tail = limit - head - 1
+        return f"{value[:head]}…{value[-tail:]}"
+
     def _postprocess_summary(self, field: TemplateField) -> str:
         parts = [self._line_split_display(field.ocr_line_split)]
         if field.ocr_line_split == "detected":
@@ -3903,20 +3928,190 @@ class ImageOcrExcelApp:
             text_color=COLOR_TEXT,
         )
         lang_combo.grid(row=1, column=0, sticky="ew")
+
+        environment_row = ctk.CTkFrame(content, fg_color="transparent")
+        environment_row.grid(row=2, column=0, sticky="ew", pady=(18, 0))
+        environment_row.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            environment_row,
+            text="OCR環境",
+            anchor="w",
+            font=UI_FONT_BOLD,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=0, sticky="w")
+        environment_status_label = ctk.CTkLabel(
+            environment_row,
+            text="",
+            anchor="e",
+            compound="left",
+            font=UI_FONT_SMALL,
+        )
+        environment_status_label.grid(row=0, column=1, sticky="e", padx=(12, 8))
+        details_button = ctk.CTkButton(
+            environment_row,
+            text="詳細",
+            image=ICONS.get("chevron_down", 14, COLOR_MUTED),
+            compound="right",
+            width=72,
+            height=28,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+            text_color=COLOR_TEXT,
+        )
+        details_button.grid(row=0, column=2, sticky="e")
+
+        environment_details = ctk.CTkFrame(
+            content,
+            fg_color=COLOR_SURFACE_ALT,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            corner_radius=THEME.layout.control_radius,
+        )
+        environment_details.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        environment_details.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            environment_details,
+            text="OCR方式",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).grid(row=0, column=0, sticky="w", padx=(14, 12), pady=(12, 4))
+        ctk.CTkLabel(
+            environment_details,
+            text="PaddleOCR（固定）",
+            anchor="e",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=1, sticky="e", padx=(0, 14), pady=(12, 4))
+        ctk.CTkLabel(
+            environment_details,
+            text="モデル保存先",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).grid(row=1, column=0, sticky="w", padx=(14, 12), pady=4)
+        cache_mode_label = ctk.CTkLabel(
+            environment_details,
+            text="",
+            anchor="e",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_TEXT,
+        )
+        cache_mode_label.grid(row=1, column=1, sticky="e", padx=(0, 14), pady=4)
+        cache_path_row = ctk.CTkFrame(
+            environment_details,
+            height=34,
+            fg_color=COLOR_INPUT,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            corner_radius=THEME.layout.control_radius,
+        )
+        cache_path_row.grid(
+            row=2, column=0, columnspan=2, sticky="ew", padx=14, pady=(4, 8)
+        )
+        cache_path_row.grid_columnconfigure(0, weight=1)
+        cache_path_label = ctk.CTkLabel(
+            cache_path_row,
+            text="",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        )
+        cache_path_label.grid(
+            row=0, column=0, sticky="ew", padx=(10, 6), pady=3
+        )
+        cache_path_tooltip = add_tooltip(cache_path_label, "")
+        open_cache_button = ctk.CTkButton(
+            cache_path_row,
+            text="開く",
+            width=48,
+            height=26,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+            text_color=COLOR_TEXT,
+        )
+        open_cache_button.grid(row=0, column=1, padx=(0, 4), pady=3)
+        change_cache_button = ctk.CTkButton(
+            cache_path_row,
+            text="変更",
+            width=52,
+            height=26,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        )
+        change_cache_button.grid(row=0, column=2, padx=(0, 4), pady=3)
+        environment_note_label = ctk.CTkLabel(
+            environment_details,
+            text="",
+            anchor="w",
+            justify="left",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+            wraplength=390,
+        )
+        environment_note_label.grid(
+            row=3, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 10)
+        )
+        automatic_cache_button = ctk.CTkButton(
+            environment_details,
+            text="自動設定に戻す",
+            height=30,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        )
+        verify_environment_button = ctk.CTkButton(
+            environment_details,
+            text="再確認",
+            image=ICONS.get("refresh", 15, COLOR_TEXT),
+            compound="left",
+            height=32,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        )
+        verify_environment_button.grid(
+            row=4, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 8)
+        )
+        automatic_cache_button.grid(
+            row=5, column=0, columnspan=2, sticky="ew", padx=14, pady=(0, 14)
+        )
+        automatic_cache_button.grid_remove()
+        environment_details.grid_remove()
+
         ctk.CTkLabel(
             content,
             text="テキスト整形（行切り出し共通）",
             anchor="w",
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
-        ).grid(row=2, column=0, sticky="ew", pady=(18, 8))
+        ).grid(row=4, column=0, sticky="ew", pady=(18, 8))
         ctk.CTkLabel(
             content,
             text="行のつなぎ方",
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
-        ).grid(row=3, column=0, sticky="ew", pady=(0, 6))
+        ).grid(row=5, column=0, sticky="ew", pady=(0, 6))
         line_join_menu = ctk.CTkOptionMenu(
             content,
             variable=dialog_line_join,
@@ -3930,7 +4125,7 @@ class ImageOcrExcelApp:
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
         )
-        line_join_menu.grid(row=4, column=0, sticky="ew")
+        line_join_menu.grid(row=6, column=0, sticky="ew")
         fullwidth_checkbox = ctk.CTkCheckBox(
             content,
             text="半角の英数字・記号を全角に統一",
@@ -3942,9 +4137,9 @@ class ImageOcrExcelApp:
             corner_radius=4,
             border_width=1,
         )
-        fullwidth_checkbox.grid(row=5, column=0, sticky="w", pady=(14, 0))
+        fullwidth_checkbox.grid(row=7, column=0, sticky="w", pady=(14, 0))
         buttons = ctk.CTkFrame(content, fg_color="transparent")
-        buttons.grid(row=6, column=0, sticky="e", pady=(24, 0))
+        buttons.grid(row=8, column=0, sticky="e", pady=(24, 0))
         cancel_button = ctk.CTkButton(
             buttons,
             text="キャンセル",
@@ -3978,17 +4173,201 @@ class ImageOcrExcelApp:
         )
         save_button.pack(side=LEFT, padx=(8, 0))
 
-        modal.set_focus_order(
-            [
-                lang_combo,
-                line_join_menu,
-                fullwidth_checkbox,
-                cancel_button,
-                save_button,
-                close_button,
-            ],
-            default=lang_combo,
-        )
+        details_expanded = False
+
+        def environment_style(
+            status: OcrEnvironmentStatus,
+        ) -> tuple[str, str]:
+            if self.ocr_environment_restart_required:
+                return "alert_circle", THEME.palette.warning
+            if status.state == OCR_ENV_READY:
+                return "check_circle", THEME.palette.success
+            if status.state in {OCR_ENV_SETUP, OCR_ENV_VERIFY}:
+                return "alert_circle", THEME.palette.warning
+            if status.state in {OCR_ENV_LOCATION_ERROR, OCR_ENV_UNAVAILABLE}:
+                return "alert_circle", THEME.palette.danger
+            return "circle", COLOR_MUTED
+
+        def visible_environment_status() -> tuple[OcrEnvironmentStatus, str, str]:
+            status = self.ocr_environment.quick_status()
+            if self.ocr_environment_restart_required:
+                return status, "再起動が必要", "保存先は次回起動時に反映されます。"
+            note = self.ocr_environment_last_error or status.detail
+            return status, status.label, note
+
+        def sync_focus_order() -> None:
+            focus_order = [lang_combo, details_button]
+            if details_expanded:
+                focus_order.extend(
+                    [
+                        open_cache_button,
+                        change_cache_button,
+                        verify_environment_button,
+                    ]
+                )
+                if self.ocr_environment.settings.cache_mode == "custom":
+                    focus_order.append(automatic_cache_button)
+            focus_order.extend(
+                [
+                    line_join_menu,
+                    fullwidth_checkbox,
+                    cancel_button,
+                    save_button,
+                    close_button,
+                ]
+            )
+            modal.set_focus_order(focus_order, default=lang_combo)
+
+        def refresh_environment_ui() -> None:
+            status, label, note = visible_environment_status()
+            icon_name, color = environment_style(status)
+            environment_status_label.configure(
+                text=label,
+                image=ICONS.get(icon_name, 15, color),
+                text_color=color,
+            )
+            cache_mode_label.configure(text=self.ocr_environment.cache_mode_label)
+            cache_path = str(status.cache_dir)
+            cache_path_label.configure(text=self._compact_path(cache_path))
+            cache_path_tooltip.text = cache_path
+            environment_note_label.configure(text=note)
+            open_cache_button.configure(
+                state="normal" if status.cache_dir.is_dir() else "disabled"
+            )
+            verify_environment_button.configure(
+                text=(
+                    "OCRを準備する"
+                    if status.state == OCR_ENV_SETUP
+                    else "再確認"
+                ),
+                state=(
+                    "disabled"
+                    if self.ocr_environment_restart_required
+                    or status.state in {OCR_ENV_LOCATION_ERROR, OCR_ENV_UNAVAILABLE}
+                    else "normal"
+                ),
+            )
+            if self.ocr_environment.settings.cache_mode == "custom":
+                automatic_cache_button.grid()
+            else:
+                automatic_cache_button.grid_remove()
+            sync_focus_order()
+            modal.refresh_geometry()
+
+        def toggle_environment_details() -> None:
+            nonlocal details_expanded
+            details_expanded = not details_expanded
+            if details_expanded:
+                environment_details.grid()
+            else:
+                environment_details.grid_remove()
+            details_button.configure(
+                text="閉じる" if details_expanded else "詳細",
+                image=ICONS.get(
+                    "chevron_up" if details_expanded else "chevron_down",
+                    14,
+                    COLOR_MUTED,
+                ),
+            )
+            refresh_environment_ui()
+
+        def open_cache_folder() -> None:
+            cache_dir = self.ocr_environment.cache_dir
+            if not cache_dir.is_dir():
+                self.dialogs.showinfo(
+                    "保存先なし", "OCRモデルの保存先はまだ作成されていません。"
+                )
+                return
+            try:
+                startfile = getattr(os, "startfile")
+                startfile(str(cache_dir))
+            except (AttributeError, OSError) as exc:
+                self.dialogs.showerror(
+                    "フォルダーを開けません",
+                    f"OCRモデルの保存先を開けませんでした。\n{exc}",
+                )
+
+        def cache_change_requires_restart() -> bool:
+            target = self.ocr_environment.cache_dir.resolve()
+            paddle_loaded = (
+                "paddlex" in sys.modules
+                or self.ocr_engine.paddle_backend is not None
+            )
+            if not paddle_loaded:
+                self.ocr_environment_active_cache_dir = target
+                return False
+            return target != self.ocr_environment_active_cache_dir
+
+        def choose_cache_folder() -> None:
+            current = self.ocr_environment.cache_dir
+            initial = current if current.is_dir() else current.parent
+            selected = filedialog.askdirectory(
+                title="OCRモデルの保存先を選択",
+                initialdir=str(initial) if initial.exists() else None,
+            )
+            if not selected:
+                return
+            try:
+                self.ocr_environment.use_custom_cache(Path(selected))
+            except (OSError, ValueError) as exc:
+                self.dialogs.showerror("保存先エラー", str(exc))
+                return
+            self.ocr_environment_last_error = ""
+            self.ocr_environment_restart_required = cache_change_requires_restart()
+            refresh_environment_ui()
+
+        def reset_automatic_cache() -> None:
+            try:
+                self.ocr_environment.use_automatic_cache()
+            except OSError as exc:
+                self.dialogs.showerror("保存先エラー", str(exc))
+                return
+            self.ocr_environment_last_error = ""
+            self.ocr_environment_restart_required = cache_change_requires_restart()
+            refresh_environment_ui()
+
+        def verify_environment() -> None:
+            if self.ocr_environment_restart_required:
+                return
+            self.ocr_environment_last_error = ""
+            modal.hide()
+
+            def work() -> OcrEnvironmentStatus:
+                return self.ocr_environment.verify(
+                    lambda: self.ocr_engine.verify_paddle_environment(
+                        self._lang_value(dialog_lang_display.get())
+                    )
+                )
+
+            def on_success(_status: OcrEnvironmentStatus) -> None:
+                self.status_var.set("OCR環境を確認しました。")
+
+            def on_error(error: Exception) -> None:
+                self.ocr_environment.invalidate_verification()
+                self.ocr_environment_last_error = f"確認に失敗しました: {error}"
+                self.status_var.set("OCR環境を確認できませんでした。")
+
+            def restore_settings() -> None:
+                if self.settings_modal is not modal:
+                    return
+                refresh_environment_ui()
+                modal.show(focus=verify_environment_button)
+
+            self._run_background(
+                "OCR環境を確認しています。初回はモデルを取得します。",
+                work,
+                on_success,
+                on_error,
+                lambda: self.root.after(50, restore_settings),
+            )
+
+        details_button.configure(command=toggle_environment_details)
+        open_cache_button.configure(command=open_cache_folder)
+        change_cache_button.configure(command=choose_cache_folder)
+        automatic_cache_button.configure(command=reset_automatic_cache)
+        verify_environment_button.configure(command=verify_environment)
+        refresh_environment_ui()
+
         modal.set_escape_handler(close_modal)
         modal.window.bind(
             "<Control-Return>",

@@ -545,6 +545,38 @@ class PaddleBackendPolicyTests(unittest.TestCase):
             root.destroy()
 
 
+class OcrEnvironmentUiPolicyTests(unittest.TestCase):
+    def test_long_environment_path_is_compacted_from_the_middle(self) -> None:
+        value = r"C:\Users\player\AppData\Local\MegidoOCR2Excel\models"
+
+        compact = ImageOcrExcelApp._compact_path(value, limit=30)
+
+        self.assertEqual(len(compact), 30)
+        self.assertIn("…", compact)
+        self.assertTrue(compact.startswith("C:\\Users"))
+        self.assertTrue(compact.endswith("models"))
+
+    def test_environment_cache_is_applied_before_engine_use(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        with patch(
+            "megido_ocr_excel_app.OcrEnvironmentManager"
+        ) as manager_type:
+            manager = manager_type.return_value
+            manager.apply_to_process.return_value = Path("C:/models")
+            app = ImageOcrExcelApp(root)
+        try:
+            manager.apply_to_process.assert_called_once_with()
+            self.assertEqual(
+                app.ocr_environment_active_cache_dir,
+                Path("C:/models").resolve(),
+            )
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
+
 class TemplateToolbarTests(unittest.TestCase):
     def test_toolbar_is_persistent_and_save_emphasizes_pending_changes(self) -> None:
         root = ctk.CTk()
@@ -626,8 +658,55 @@ class ModalConsistencyTests(unittest.TestCase):
             ]
             self.assertIn("基本設定", labels)
             self.assertIn("OCR言語", labels)
+            self.assertIn("OCR環境", labels)
+            self.assertIn("PaddleOCR（固定）", labels)
             self.assertNotIn("OCRバックエンド", labels)
             self.assertNotIn("Tesseractパス", labels)
+
+            buttons = [
+                widget
+                for widget in descendants_of(modal.panel)
+                if isinstance(widget, ctk.CTkButton)
+            ]
+            details_button = next(
+                button for button in buttons if button.cget("text") == "詳細"
+            )
+            paddle_label = next(
+                widget
+                for widget in descendants_of(modal.panel)
+                if isinstance(widget, ctk.CTkLabel)
+                and widget.cget("text") == "PaddleOCR（固定）"
+            )
+            self.assertEqual(paddle_label.master.winfo_manager(), "")
+
+            details_button.invoke()
+            root.update()
+
+            self.assertEqual(paddle_label.master.winfo_manager(), "grid")
+            self.assertEqual(details_button.cget("text"), "閉じる")
+            self.assertLessEqual(modal.window.winfo_height(), root.winfo_height())
+            button_texts = [button.cget("text") for button in buttons]
+            self.assertIn("開く", button_texts)
+            self.assertIn("変更", button_texts)
+            self.assertTrue(
+                any(
+                    text in {"再確認", "OCRを準備する"}
+                    for text in button_texts
+                )
+            )
+            open_button = next(
+                button for button in buttons if button.cget("text") == "開く"
+            )
+            change_button = next(
+                button for button in buttons if button.cget("text") == "変更"
+            )
+            verify_button = next(
+                button
+                for button in buttons
+                if button.cget("text") in {"再確認", "OCRを準備する"}
+            )
+            self.assertIs(open_button.master, change_button.master)
+            self.assertIsNot(open_button.master, verify_button.master)
 
             modal.window.event_generate("<Escape>", when="tail")
             root.update()
