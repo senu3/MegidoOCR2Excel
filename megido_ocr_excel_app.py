@@ -266,6 +266,7 @@ class ImageOcrExcelApp:
         self.template_var = StringVar(value=THEME.copy.new_template_label)
         self.image_count_var = StringVar(value="0 / 0")
         self.status_var = StringVar(value=THEME.copy.initial_status)
+        self.coordinate_status_var = StringVar(value="")
         self.progress_var = StringVar(value="")
         self.loading_var = StringVar(value="")
         self.loading_note_var = StringVar(value="")
@@ -305,6 +306,7 @@ class ImageOcrExcelApp:
         self.template_fields_scroller: AutoHideScrollableFrame | None = None
         self.canvas: Canvas
         self.canvas_frame: ctk.CTkFrame | None = None
+        self.coordinate_status_label: ctk.CTkLabel | None = None
         self.workflow_choice_modal: ModalOverlay | None = None
         self.settings_modal: ModalOverlay | None = None
         self.workflow_choice_overlay: ctk.CTkFrame | None = None
@@ -464,20 +466,33 @@ class ImageOcrExcelApp:
         )
         status_bar.pack(side=BOTTOM, fill="x")
         status_bar.pack_propagate(False)
+        status_bar.grid_rowconfigure(0, weight=1)
+        status_bar.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             status_bar,
             textvariable=self.status_var,
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=THEME.palette.toolbar_text,
-        ).pack(side=LEFT, fill="x", expand=True, padx=12)
+        ).grid(row=0, column=0, sticky="ew", padx=(12, 8))
+        self.coordinate_status_label = ctk.CTkLabel(
+            status_bar,
+            textvariable=self.coordinate_status_var,
+            anchor="e",
+            font=UI_FONT_SMALL,
+            text_color=THEME.palette.toolbar_muted,
+        )
+        self.coordinate_status_label.grid(
+            row=0, column=1, sticky="e", padx=(8, 0)
+        )
+        self.coordinate_status_label.grid_remove()
         ctk.CTkLabel(
             status_bar,
             textvariable=self.progress_var,
             anchor="e",
             font=UI_FONT_SMALL,
             text_color=THEME.palette.toolbar_muted,
-        ).pack(side=RIGHT, padx=12)
+        ).grid(row=0, column=2, sticky="e", padx=(8, 12))
 
         side = ctk.CTkFrame(
             main,
@@ -1029,6 +1044,7 @@ class ImageOcrExcelApp:
             self.canvas.configure(cursor="arrow")
             if had_edit_preview:
                 self.redraw()
+        self._update_coordinate_status_display()
         self._schedule_side_body_render()
 
     def _render_side_body(self) -> None:
@@ -1064,6 +1080,7 @@ class ImageOcrExcelApp:
         previous_body.pack_forget()
         replacement_body.pack(side=TOP, fill=BOTH, expand=True)
         previous_body.destroy()
+        self._update_coordinate_status_display()
 
     def _schedule_side_body_render(self) -> None:
         if self._side_render_job is not None:
@@ -1596,7 +1613,7 @@ class ImageOcrExcelApp:
 
         ctk.CTkLabel(
             body,
-            text=self._recognition_test_help_text(),
+            text=THEME.copy.recognition_test_note,
             anchor="w",
             justify="left",
             font=UI_FONT_SMALL,
@@ -1630,16 +1647,34 @@ class ImageOcrExcelApp:
         self.review_detail_host.pack(side=BOTTOM, fill="x")
         self._render_postprocess_panel(self.review_detail_host)
 
-    def _recognition_test_help_text(self) -> str:
+    def _coordinate_status_presentation(self) -> tuple[str, str]:
         if self.coordinate_settings.coordinate_space == COORDINATE_SPACE_CONTENT:
-            coordinate_status = (
-                "黒余白補正: 適用"
+            return (
+                ("補正: 黒余白基準", THEME.palette.toolbar_muted)
                 if self.current_content_rect
-                else "黒余白補正: 検出できないため画像全体で補正"
+                else (
+                    "補正: 画像全体（黒余白未検出）",
+                    THEME.palette.warning,
+                )
             )
-        else:
-            coordinate_status = "座標補正: 画像全体"
-        return f"{THEME.copy.recognition_test_note}\n{coordinate_status}"
+        return "補正: 画像全体", THEME.palette.toolbar_muted
+
+    def _update_coordinate_status_display(self) -> None:
+        label = getattr(self, "coordinate_status_label", None)
+        if label is None:
+            return
+        visible = (
+            self.mode_var.get() == MODE_REVIEW
+            and self.original_image is not None
+        )
+        if not visible:
+            self.coordinate_status_var.set("")
+            label.grid_remove()
+            return
+        text, color = self._coordinate_status_presentation()
+        self.coordinate_status_var.set(text)
+        label.configure(text_color=color)
+        label.grid()
 
     def _review_result_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
@@ -3431,15 +3466,18 @@ class ImageOcrExcelApp:
             self.original_image is None
             or self.coordinate_settings.coordinate_space != COORDINATE_SPACE_CONTENT
         ):
+            self._update_coordinate_status_display()
             return
         detected = detect_content_rect(self.original_image, self.coordinate_settings)
         if detected is None:
+            self._update_coordinate_status_display()
             return
         self.current_content_rect = detected
         if self.coordinate_settings.source_content_rect is None or not self.fields:
             self.coordinate_settings = replace(
                 self.coordinate_settings, source_content_rect=detected
             )
+        self._update_coordinate_status_display()
 
     def _scaled_field(self, field: TemplateField) -> TemplateField:
         return scaled_field(

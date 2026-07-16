@@ -14,6 +14,7 @@ from atomic_io import atomic_save_workbook, atomic_write_text
 from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_EXPORT, MODE_REVIEW, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
 from megido_ocr_excel_app import COLOR_PRIMARY, COLOR_SECONDARY
+from megido_ui_theme import THEME
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
@@ -82,6 +83,52 @@ class AutoHideScrollableFrameTests(unittest.TestCase):
         frame._parent_canvas.bbox.return_value = (0, 0, 260, 324)
         frame._update_scrollbar_visibility()
         frame._scrollbar.grid.assert_called_once()
+
+
+class CoordinateStatusTests(unittest.TestCase):
+    def _logic_only_app(self) -> ImageOcrExcelApp:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.mode_var = MagicMock()
+        app.mode_var.get.return_value = MODE_REVIEW
+        app.original_image = object()
+        app.coordinate_settings = APP_PROFILE.coordinate_settings()
+        app.current_content_rect = (0, 0, 100, 100)
+        app.coordinate_status_var = MagicMock()
+        app.coordinate_status_label = MagicMock()
+        return app
+
+    def test_content_correction_is_shown_in_review_status_bar(self) -> None:
+        app = self._logic_only_app()
+
+        app._update_coordinate_status_display()
+
+        app.coordinate_status_var.set.assert_called_once_with("補正: 黒余白基準")
+        app.coordinate_status_label.configure.assert_called_once_with(
+            text_color=THEME.palette.toolbar_muted
+        )
+        app.coordinate_status_label.grid.assert_called_once_with()
+
+    def test_detection_fallback_uses_warning_status(self) -> None:
+        app = self._logic_only_app()
+        app.current_content_rect = None
+
+        app._update_coordinate_status_display()
+
+        app.coordinate_status_var.set.assert_called_once_with(
+            "補正: 画像全体（黒余白未検出）"
+        )
+        app.coordinate_status_label.configure.assert_called_once_with(
+            text_color=THEME.palette.warning
+        )
+
+    def test_coordinate_status_is_hidden_outside_review(self) -> None:
+        app = self._logic_only_app()
+        app.mode_var.get.return_value = MODE_EXPORT
+
+        app._update_coordinate_status_display()
+
+        app.coordinate_status_var.set.assert_called_once_with("")
+        app.coordinate_status_label.grid_remove.assert_called_once_with()
 
 
 class WorkflowChoiceTests(unittest.TestCase):
