@@ -18,6 +18,16 @@ from megido_ui_theme import THEME
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
+def descendants_of(widget):
+    descendants = []
+    pending = [widget]
+    while pending:
+        current = pending.pop()
+        descendants.append(current)
+        pending.extend(current.winfo_children())
+    return descendants
+
+
 class _FailingWorkbook:
     def save(self, filename: str | Path) -> None:
         Path(filename).write_bytes(b"partial workbook")
@@ -358,8 +368,6 @@ class DirtyStateTests(unittest.TestCase):
             app._apply_settings(
                 settings_window,
                 app._lang_display(app.lang_var.get()),
-                app.backend_var.get(),
-                app.tesseract_var.get(),
                 "改行",
                 True,
             )
@@ -469,6 +477,74 @@ class DirtyStateTests(unittest.TestCase):
             root.destroy()
 
 
+class PaddleBackendPolicyTests(unittest.TestCase):
+    def _logic_only_app(self) -> ImageOcrExcelApp:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.profile = APP_PROFILE
+        app.dialogs = MagicMock()
+        return app
+
+    def test_non_paddle_template_is_rejected(self) -> None:
+        app = self._logic_only_app()
+        field = TemplateField(
+            "本文", 0, 0, 10, 10, ocr_backend="tesseract"
+        )
+        data = {"ocr_backend": "tesseract"}
+
+        error = app._template_backend_error(data, [field])
+
+        self.assertIn("PaddleOCR用テンプレートだけ", error)
+        self.assertEqual(field.ocr_backend, "tesseract")
+
+    def test_paddle_template_is_accepted(self) -> None:
+        app = self._logic_only_app()
+        field = TemplateField("本文", 0, 0, 10, 10, ocr_backend="paddle")
+
+        self.assertEqual(
+            app._template_backend_error({"ocr_backend": "paddle"}, [field]),
+            "",
+        )
+
+    def test_ocr_field_copy_ignores_item_level_backend_override(self) -> None:
+        field = TemplateField(
+            "本文", 0, 0, 10, 10, ocr_backend="tesseract"
+        )
+
+        ocr_field = ImageOcrExcelApp._field_for_ocr(field)
+
+        self.assertEqual(ocr_field.ocr_backend, "default")
+        self.assertEqual(field.ocr_backend, "tesseract")
+
+    def test_template_save_uses_profile_backend_and_no_executable_path(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app.fields = [
+                TemplateField(
+                    "本文", 0, 0, 10, 10, ocr_backend="tesseract"
+                )
+            ]
+            with tempfile.TemporaryDirectory() as temp_dir:
+                app.template_path = Path(temp_dir) / "template.json"
+                with (
+                    patch(
+                        "megido_ocr_excel_app.build_template_data",
+                        return_value={},
+                    ) as builder,
+                    patch("megido_ocr_excel_app.save_template"),
+                ):
+                    self.assertTrue(app.save_template())
+
+            self.assertEqual(builder.call_args.kwargs["ocr_backend"], "paddle")
+            self.assertEqual(builder.call_args.kwargs["tesseract_path"], "")
+            self.assertEqual(app.fields[0].ocr_backend, "default")
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
+
 class TemplateToolbarTests(unittest.TestCase):
     def test_toolbar_is_persistent_and_save_emphasizes_pending_changes(self) -> None:
         root = ctk.CTk()
@@ -545,10 +621,13 @@ class ModalConsistencyTests(unittest.TestCase):
 
             labels = [
                 widget.cget("text")
-                for widget in modal.panel.winfo_children()
+                for widget in descendants_of(modal.panel)
                 if isinstance(widget, ctk.CTkLabel)
             ]
             self.assertIn("基本設定", labels)
+            self.assertIn("OCR言語", labels)
+            self.assertNotIn("OCRバックエンド", labels)
+            self.assertNotIn("Tesseractパス", labels)
 
             modal.window.event_generate("<Escape>", when="tail")
             root.update()

@@ -10,22 +10,7 @@
 uv sync
 ```
 
-OCRバックエンドはPaddleOCRを標準で使用します。初回OCR時にPaddleOCRのモデルが自動ダウンロードされるため、初回だけ時間がかかります。モデルはユーザーディレクトリにキャッシュされます。
-
-Tesseract OCRを比較用または退避用に使う場合のみ、追加依存とTesseract OCR本体をインストールしてください。
-
-```powershell
-uv sync --extra tesseract
-```
-
-- Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki
-- インストール時にJapanese language dataを選択
-
-Tesseractのパスが自動検出されない場合は、アプリ内の「設定」でバックエンドを `tesseract` にしたうえで、実行ファイルのパスを指定してください。
-
-```text
-C:\Program Files\Tesseract-OCR\tesseract.exe
-```
+このアプリはPaddleOCRを使用します。初回OCR時に認識モデルが自動ダウンロードされるため、初回だけ時間がかかります。モデルはユーザーディレクトリにキャッシュされます。
 
 ## 起動
 

@@ -57,7 +57,6 @@ from ocr_engine import (
     apply_postprocess,
     detect_content_rect,
     detect_line_bands,
-    detect_tesseract,
     fill_missing_field_source_size,
     scaled_field,
 )
@@ -74,7 +73,6 @@ from ocr_models import (
     LINE_JOIN_FULLWIDTH_SPACE,
     LINE_JOIN_NEWLINE,
     LINE_JOIN_NONE,
-    OCR_BACKEND_OPTIONS,
     SET_PRESET_CONVERSATION,
     SET_PRESET_DISPLAY,
     SET_PRESET_OPTIONS,
@@ -276,8 +274,6 @@ class ImageOcrExcelApp:
         self.lang_display_var = StringVar(
             value=self._lang_display(self.profile.default_lang)
         )
-        self.backend_var = StringVar(value=self.profile.default_backend)
-        self.tesseract_var = StringVar(value=detect_tesseract())
         self.export_sheet_var = StringVar(value="OCR")
         self.export_write_mode_var = StringVar(value="上書き")
         self.export_start_cell_var = StringVar(value="A1")
@@ -953,8 +949,6 @@ class ImageOcrExcelApp:
     def _bind_dirty_tracking(self) -> None:
         variables = [
             self.lang_var,
-            self.backend_var,
-            self.tesseract_var,
             self.export_sheet_var,
             self.export_write_mode_var,
             self.export_start_cell_var,
@@ -3702,11 +3696,12 @@ class ImageOcrExcelApp:
             path = Path(file_name)
         if self.original_image:
             fill_missing_field_source_size(self.fields, self.original_image.size)
+        self._normalize_fields_to_profile_backend(self.fields)
         data = build_template_data(
             fields=self.fields,
             lang=self.lang_var.get(),
-            tesseract_path=self.tesseract_var.get(),
-            ocr_backend=self.backend_var.get(),
+            tesseract_path="",
+            ocr_backend=self.profile.default_backend,
             output_settings=self._export_settings_dict(),
             correction_rules=self.correction_rules,
             coordinate_settings=self.coordinate_settings,
@@ -3747,6 +3742,11 @@ class ImageOcrExcelApp:
         if not fields:
             self.dialogs.showerror("テンプレートエラー", "読み取り項目がありません。")
             return
+        backend_error = self._template_backend_error(data, fields)
+        if backend_error:
+            self.dialogs.showerror("テンプレートエラー", backend_error)
+            return
+        self._normalize_fields_to_profile_backend(fields)
         if not self._confirm_unsaved_changes("別のテンプレートを読み込む"):
             return
         with self._without_dirty_tracking():
@@ -3774,20 +3774,38 @@ class ImageOcrExcelApp:
             self.template_path = path
             self.lang_var.set(data.get("lang") or self.profile.default_lang)
             self.lang_display_var.set(self._lang_display(self.lang_var.get()))
-            backend = str(data.get("ocr_backend") or self.profile.default_backend)
-            self.backend_var.set(
-                backend
-                if backend in OCR_BACKEND_OPTIONS and backend != "default"
-                else self.profile.default_backend
-            )
             self._apply_output_settings(data.get("output_settings") or {})
-            if data.get("tesseract_path"):
-                self.tesseract_var.set(data["tesseract_path"])
         self._mark_clean()
         self._hide_workflow_choice()
         self.status_var.set(f"テンプレートを読み込みました: {path.name}")
         self._render_side_body()
         self.redraw()
+
+    def _template_backend_error(
+        self, data: dict, fields: list[TemplateField]
+    ) -> str:
+        backend = self.profile.default_backend
+        template_backend = str(data.get("ocr_backend") or backend)
+        field_backends = {
+            field.ocr_backend
+            for field in fields
+            if field.ocr_backend not in {"", "default", backend}
+        }
+        if template_backend == backend and not field_backends:
+            return ""
+        backend_name = "PaddleOCR" if backend == "paddle" else backend
+        return (
+            f"このアプリでは{backend_name}用テンプレートだけを読み込めます。"
+        )
+
+    @staticmethod
+    def _normalize_fields_to_profile_backend(fields: list[TemplateField]) -> None:
+        for field in fields:
+            field.ocr_backend = "default"
+
+    @staticmethod
+    def _field_for_ocr(field: TemplateField) -> TemplateField:
+        return replace(field, ocr_backend="default")
 
     def open_settings_modal(self) -> None:
         if self.settings_modal is not None and self.settings_modal.visible:
@@ -3813,8 +3831,6 @@ class ImageOcrExcelApp:
         dialog_lang_display = StringVar(
             window, value=self._lang_display(self.lang_var.get())
         )
-        dialog_backend = StringVar(window, value=self.backend_var.get())
-        dialog_tesseract = StringVar(window, value=self.tesseract_var.get())
         dialog_line_join = StringVar(
             window, value=LINE_JOIN_DISPLAY[self.text_formatting.line_join]
         )
@@ -3889,60 +3905,18 @@ class ImageOcrExcelApp:
         lang_combo.grid(row=1, column=0, sticky="ew")
         ctk.CTkLabel(
             content,
-            text="OCRバックエンド",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_TEXT,
-        ).grid(row=2, column=0, sticky="ew", pady=(14, 6))
-        backend_menu = ctk.CTkOptionMenu(
-            content,
-            variable=dialog_backend,
-            values=[value for value in OCR_BACKEND_OPTIONS if value != "default"],
-            height=THEME.layout.entry_height,
-            font=UI_FONT,
-            fg_color=COLOR_SECONDARY,
-            button_color=COLOR_PRIMARY,
-            button_hover_color=COLOR_PRIMARY_HOVER,
-            dropdown_fg_color=COLOR_SURFACE_ALT,
-            dropdown_hover_color=COLOR_SECONDARY_HOVER,
-            text_color=COLOR_TEXT,
-        )
-        backend_menu.grid(row=3, column=0, sticky="ew")
-        tesseract_frame = ctk.CTkFrame(content, fg_color="transparent")
-        tesseract_frame.grid(row=4, column=0, sticky="ew", pady=(14, 0))
-        tesseract_frame.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            tesseract_frame,
-            text="Tesseractパス",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        tesseract_entry = ctk.CTkEntry(
-            tesseract_frame,
-            textvariable=dialog_tesseract,
-            height=THEME.layout.entry_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT,
-            fg_color=COLOR_INPUT,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        )
-        tesseract_entry.grid(row=1, column=0, sticky="ew")
-        ctk.CTkLabel(
-            content,
             text="テキスト整形（行切り出し共通）",
             anchor="w",
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
-        ).grid(row=5, column=0, sticky="ew", pady=(18, 8))
+        ).grid(row=2, column=0, sticky="ew", pady=(18, 8))
         ctk.CTkLabel(
             content,
             text="行のつなぎ方",
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
-        ).grid(row=6, column=0, sticky="ew", pady=(0, 6))
+        ).grid(row=3, column=0, sticky="ew", pady=(0, 6))
         line_join_menu = ctk.CTkOptionMenu(
             content,
             variable=dialog_line_join,
@@ -3956,7 +3930,7 @@ class ImageOcrExcelApp:
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
         )
-        line_join_menu.grid(row=7, column=0, sticky="ew")
+        line_join_menu.grid(row=4, column=0, sticky="ew")
         fullwidth_checkbox = ctk.CTkCheckBox(
             content,
             text="半角の英数字・記号を全角に統一",
@@ -3968,9 +3942,9 @@ class ImageOcrExcelApp:
             corner_radius=4,
             border_width=1,
         )
-        fullwidth_checkbox.grid(row=8, column=0, sticky="w", pady=(14, 0))
+        fullwidth_checkbox.grid(row=5, column=0, sticky="w", pady=(14, 0))
         buttons = ctk.CTkFrame(content, fg_color="transparent")
-        buttons.grid(row=9, column=0, sticky="e", pady=(24, 0))
+        buttons.grid(row=6, column=0, sticky="e", pady=(24, 0))
         cancel_button = ctk.CTkButton(
             buttons,
             text="キャンセル",
@@ -3992,8 +3966,6 @@ class ImageOcrExcelApp:
             command=lambda: self._apply_settings(
                 modal,
                 dialog_lang_display.get(),
-                dialog_backend.get(),
-                dialog_tesseract.get(),
                 dialog_line_join.get(),
                 dialog_fullwidth_ascii.get(),
             ),
@@ -4006,29 +3978,17 @@ class ImageOcrExcelApp:
         )
         save_button.pack(side=LEFT, padx=(8, 0))
 
-        def sync_backend_fields(_value: str | None = None) -> None:
-            show_tesseract = dialog_backend.get() == "tesseract"
-            if show_tesseract:
-                tesseract_frame.grid()
-            else:
-                tesseract_frame.grid_remove()
-            focus_order = [lang_combo, backend_menu]
-            if show_tesseract:
-                focus_order.append(tesseract_entry)
-            focus_order.extend(
-                [
-                    line_join_menu,
-                    fullwidth_checkbox,
-                    cancel_button,
-                    save_button,
-                    close_button,
-                ]
-            )
-            modal.set_focus_order(focus_order, default=lang_combo)
-            modal.refresh_geometry()
-
-        backend_menu.configure(command=sync_backend_fields)
-        sync_backend_fields()
+        modal.set_focus_order(
+            [
+                lang_combo,
+                line_join_menu,
+                fullwidth_checkbox,
+                cancel_button,
+                save_button,
+                close_button,
+            ],
+            default=lang_combo,
+        )
         modal.set_escape_handler(close_modal)
         modal.window.bind(
             "<Control-Return>",
@@ -4040,16 +4000,9 @@ class ImageOcrExcelApp:
         self,
         window: ModalOverlay,
         lang_display: str,
-        backend: str,
-        tesseract_path: str,
         line_join_display: str,
         fullwidth_ascii_enabled: bool,
     ) -> None:
-        backend = (
-            backend
-            if backend in OCR_BACKEND_OPTIONS and backend != "default"
-            else self.profile.default_backend
-        )
         lang = self._lang_value(lang_display)
         line_join = next(
             (
@@ -4063,17 +4016,13 @@ class ImageOcrExcelApp:
             line_join=line_join,
             fullwidth_ascii=fullwidth_ascii_enabled,
         ).normalized()
-        changed = (lang, backend, tesseract_path, text_formatting) != (
+        changed = (lang, text_formatting) != (
             self.lang_var.get(),
-            self.backend_var.get(),
-            self.tesseract_var.get(),
             self.text_formatting,
         )
         with self._without_dirty_tracking():
             self.lang_var.set(lang)
             self.lang_display_var.set(self._lang_display(lang))
-            self.backend_var.set(backend)
-            self.tesseract_var.set(tesseract_path)
             self.text_formatting = text_formatting
         if changed:
             self.current_results = [""] * len(self.fields)
@@ -5883,10 +5832,13 @@ class ImageOcrExcelApp:
             self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
             return
         image = self.original_image.copy()
-        fields = [(idx, replace(field)) for idx, field in enumerate(self.fields)]
+        fields = [
+            (idx, self._field_for_ocr(field))
+            for idx, field in enumerate(self.fields)
+        ]
         lang = self.lang_var.get()
-        tesseract_path = self.tesseract_var.get().strip()
-        backend = self.backend_var.get()
+        tesseract_path = ""
+        backend = self.profile.default_backend
         correction_rules = [replace(rule) for rule in self.correction_rules]
 
         def work() -> tuple[list[str], list[str]]:
@@ -5938,10 +5890,10 @@ class ImageOcrExcelApp:
         if not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
             return
         image = self.original_image.copy()
-        field = replace(self.fields[idx])
+        field = self._field_for_ocr(self.fields[idx])
         lang = self.lang_var.get()
-        tesseract_path = self.tesseract_var.get().strip()
-        backend = self.backend_var.get()
+        tesseract_path = ""
+        backend = self.profile.default_backend
         correction_rules = [replace(rule) for rule in self.correction_rules]
 
         def work() -> tuple[int, str, str]:
@@ -6003,10 +5955,10 @@ class ImageOcrExcelApp:
     ) -> tuple[str | None, str | None]:
         raw_text, text, error = self.ocr_engine.recognize_field_detail(
             image,
-            field,
+            self._field_for_ocr(field),
             self.lang_var.get(),
-            self.tesseract_var.get().strip(),
-            self.backend_var.get(),
+            "",
+            self.profile.default_backend,
             self.correction_rules,
             self.coordinate_settings,
             self.text_formatting,
@@ -6099,11 +6051,11 @@ class ImageOcrExcelApp:
         self.status_var.set("Excel出力を開始しました。")
         output_path = self.output_path
         image_files = list(image_files)
-        export_fields = [replace(field) for field in fields]
+        export_fields = [self._field_for_ocr(field) for field in fields]
         coordinate_settings = replace(self.coordinate_settings)
         lang = self.lang_var.get()
-        tesseract_path = self.tesseract_var.get().strip()
-        backend = self.backend_var.get()
+        tesseract_path = ""
+        backend = self.profile.default_backend
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
         text_formatting = self.text_formatting
@@ -6261,11 +6213,11 @@ class ImageOcrExcelApp:
 
         output_path = self.last_export_output_path
         previous_result = self.last_export_result
-        export_fields = [replace(field) for field in fields]
+        export_fields = [self._field_for_ocr(field) for field in fields]
         coordinate_settings = replace(self.coordinate_settings)
         lang = self.lang_var.get()
-        tesseract_path = self.tesseract_var.get().strip()
-        backend = self.backend_var.get()
+        tesseract_path = ""
+        backend = self.profile.default_backend
         correction_rules = [replace(rule) for rule in self.correction_rules]
         dialogue_detection = self.profile.dialogue_log_detection
         text_formatting = self.text_formatting
