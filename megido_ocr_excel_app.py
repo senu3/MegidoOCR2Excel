@@ -1227,6 +1227,7 @@ class ImageOcrExcelApp:
                 "項目がありません",
                 "画像上で範囲をドラッグ",
                 THEME.copy.saved_template_hint,
+                icon="scan",
             )
         elif self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
             self._render_dialogue_pair_fields(scroller)
@@ -1606,6 +1607,7 @@ class ImageOcrExcelApp:
                 scroller,
                 "読み取り項目がありません",
                 "「範囲・列」で読み取り範囲を作成してください。",
+                icon="table",
             )
             return
         if not self.original_image:
@@ -1613,6 +1615,7 @@ class ImageOcrExcelApp:
                 scroller,
                 "画像がありません",
                 "上部から画像フォルダを選択してください。",
+                icon="folder",
             )
             return
 
@@ -1736,7 +1739,12 @@ class ImageOcrExcelApp:
             or not (0 <= idx < len(self.fields))
             or not self.fields[idx].enabled
         ):
-            self._empty_state(parent, "確認対象がありません", "有効な項目を選択")
+            self._empty_state(
+                parent,
+                "確認対象がありません",
+                "有効な項目を選択",
+                icon="circle",
+            )
             return
 
         panel = ctk.CTkFrame(
@@ -2807,14 +2815,20 @@ class ImageOcrExcelApp:
         return f"{enabled_count}項目"
 
     def _empty_state(
-        self, parent, title: str, note: str, hint: str = ""
+        self,
+        parent,
+        title: str,
+        note: str,
+        hint: str = "",
+        *,
+        icon: str,
     ) -> None:
         box = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
         box.pack(fill=BOTH, expand=True, padx=12, pady=20)
         ctk.CTkLabel(
             box,
             text=title,
-            image=ICONS.get("scan", 20, COLOR_MUTED),
+            image=ICONS.get(icon, 20, COLOR_MUTED),
             compound="top",
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
