@@ -88,9 +88,22 @@ class Layout:
 
 @dataclass(frozen=True)
 class Copy:
-    initial_status: str = "開始方法を選び、スクリーンショットの画像フォルダを選択してください。"
+    initial_status: str = "開始方法を選び、画像フォルダを選択してください。"
+    workflow_choice_note: str = (
+        "会話画面は自動検出できます。\n"
+        "その他の画面は、新規テンプレートで範囲を指定します。"
+    )
+    set_layout_note: str = (
+        "セットごとに1行出力。項目はドラッグでセット間を移動できます。"
+    )
+    recognition_test_note: str = (
+        "代表画像で認識結果を確認します。Excel出力時は全画像を再認識します。"
+    )
+    saved_template_hint: str = (
+        "保存済みテンプレートは右上のメニューから読み込めます。"
+    )
     empty_canvas_title: str = "画像フォルダが選択されていません"
-    empty_canvas_note: str = "上部の「画像フォルダを選択」からスクリーンショットのフォルダを選びます。"
+    empty_canvas_note: str = "上部のボタンから、スクリーンショットのフォルダを選択します。"
     new_template_label: str = "新規テンプレート（未保存）"
     default_template_name: str = "megido-novel-template.json"
 

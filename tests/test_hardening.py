@@ -185,7 +185,7 @@ class WorkflowChoiceTests(unittest.TestCase):
             self.assertIn("項目がありません", labels)
             self.assertIn("画像上で範囲をドラッグ", labels)
             self.assertIn(
-                "保存済みテンプレートは右上の「…」メニューから読み込めます。",
+                "保存済みテンプレートは右上のメニューから読み込めます。",
                 labels,
             )
         finally:

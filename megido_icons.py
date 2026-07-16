@@ -85,12 +85,14 @@ def _draw_scan(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
     _line(draw, [(11*scale, 3*scale), (15*scale, 3*scale), (15*scale, 7*scale)], scale)
     _line(draw, [(15*scale, 11*scale), (15*scale, 15*scale), (11*scale, 15*scale)], scale)
     _line(draw, [(7*scale, 15*scale), (3*scale, 15*scale), (3*scale, 11*scale)], scale)
-    _line(draw, [(6*scale, 7*scale), (12*scale, 7*scale), (6*scale, 10*scale), (12*scale, 10*scale)], scale)
+    _line(draw, [(6*scale, 7*scale), (12*scale, 7*scale)], scale)
+    _line(draw, [(6*scale, 10*scale), (12*scale, 10*scale)], scale)
 
 
 def _draw_table(draw: ImageDraw.ImageDraw, size: int, scale: int) -> None:
     _box(draw, (2.5*scale, 3*scale, 15.5*scale, 15*scale), scale)
-    _line(draw, [(3*scale, 7*scale), (15*scale, 7*scale), (3*scale, 11*scale), (15*scale, 11*scale)], scale)
+    _line(draw, [(3*scale, 7*scale), (15*scale, 7*scale)], scale)
+    _line(draw, [(3*scale, 11*scale), (15*scale, 11*scale)], scale)
     _line(draw, [(7*scale, 3*scale), (7*scale, 15*scale)], scale)
 
 

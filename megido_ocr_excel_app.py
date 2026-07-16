@@ -709,7 +709,7 @@ class ImageOcrExcelApp:
         ).grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 8))
         ctk.CTkLabel(
             overlay,
-            text="会話画面は読み取り範囲を自動検出できます。\n手動で範囲を指定する場合は、新規テンプレートを作成します。",
+            text=THEME.copy.workflow_choice_note,
             justify="center",
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
@@ -1134,7 +1134,7 @@ class ImageOcrExcelApp:
             preset_menu.grid(row=0, column=1, sticky="ew")
             ctk.CTkLabel(
                 body,
-                text="同じセット内の項目を1行に出力します。ハンドルをドラッグすると別のセットへ移動できます。",
+                text=THEME.copy.set_layout_note,
                 anchor="w",
                 justify="left",
                 font=UI_FONT_SMALL,
@@ -1204,7 +1204,7 @@ class ImageOcrExcelApp:
                 scroller,
                 "項目がありません",
                 "画像上で範囲をドラッグ",
-                "保存済みテンプレートは右上の「…」メニューから読み込めます。",
+                THEME.copy.saved_template_hint,
             )
         elif self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
             self._render_dialogue_pair_fields(scroller)
@@ -1401,7 +1401,7 @@ class ImageOcrExcelApp:
         if self.pending_dialogue_pair_id is None:
             return "セットを追加"
         slot_label = self.set_definition.slot_label(self.pending_dialogue_role)
-        return f"セット {self.pending_dialogue_pair_id}: {slot_label}範囲をCanvasでドラッグ"
+        return f"セット {self.pending_dialogue_pair_id}: {slot_label}範囲をプレビュー上でドラッグ"
 
     def begin_dialogue_pair_creation(self) -> None:
         if self.pending_dialogue_pair_id is None:
@@ -1425,7 +1425,7 @@ class ImageOcrExcelApp:
                 self.pending_dialogue_pair_id, self.pending_dialogue_role = incomplete
         slot_label = self.set_definition.slot_label(self.pending_dialogue_role)
         self.status_var.set(
-            f"セット {self.pending_dialogue_pair_id} の{slot_label}範囲をCanvasでドラッグしてください。"
+            f"セット {self.pending_dialogue_pair_id} の{slot_label}範囲をプレビュー上でドラッグしてください。"
         )
         self._schedule_side_body_render()
 
@@ -1495,7 +1495,7 @@ class ImageOcrExcelApp:
             if not indexes:
                 ctk.CTkLabel(
                     section,
-                    text="Canvasで最初の範囲をドラッグしてください。",
+                    text="プレビュー上で最初の範囲をドラッグしてください。",
                     anchor="w",
                     font=UI_FONT_SMALL,
                     text_color=COLOR_MUTED,
@@ -1639,10 +1639,7 @@ class ImageOcrExcelApp:
             )
         else:
             coordinate_status = "座標補正: 画像全体"
-        return (
-            "現在の画像で認識精度を試します。上部の前後ボタンで代表画像を切り替えてください。\n"
-            f"Excel出力時は、対象画像を改めて一括OCRします。 / {coordinate_status}"
-        )
+        return f"{THEME.copy.recognition_test_note}\n{coordinate_status}"
 
     def _review_result_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
@@ -2201,7 +2198,7 @@ class ImageOcrExcelApp:
             return
         self.mode_var.set(MODE_TEMPLATE)
         self.status_var.set(
-            f"{self.fields[self.selected_index].name} の範囲をCanvasで調整できます。"
+            f"{self.fields[self.selected_index].name} の範囲をプレビュー上で調整できます。"
         )
         self._schedule_side_body_render()
         self.redraw()
@@ -4602,7 +4599,7 @@ class ImageOcrExcelApp:
             if self.drag_rect:
                 self.canvas.delete(self.drag_rect)
                 self.drag_rect = None
-            self.status_var.set("Canvas操作をキャンセルしました。")
+            self.status_var.set("プレビュー操作をキャンセルしました。")
             self.redraw()
             return "break"
 
