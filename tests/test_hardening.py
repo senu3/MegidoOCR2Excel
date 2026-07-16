@@ -484,6 +484,7 @@ class TemplateToolbarTests(unittest.TestCase):
             app._mark_dirty()
             self.assertEqual(app.template_save_button.cget("state"), "normal")
             self.assertEqual(app.template_save_button.cget("fg_color"), COLOR_PRIMARY)
+            self.assertEqual(app.template_save_button.cget("border_width"), 0)
 
             app.mode_var.set(MODE_REVIEW)
             app._render_side_body()
@@ -494,6 +495,7 @@ class TemplateToolbarTests(unittest.TestCase):
             self.assertEqual(
                 app.template_save_button.cget("fg_color"), COLOR_SECONDARY
             )
+            self.assertEqual(app.template_save_button.cget("border_width"), 1)
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import customtkinter as ctk
 
@@ -80,6 +81,19 @@ class AppDialogsTests(unittest.TestCase):
             AppDialogs._appearance("info"),
             ("check_circle", THEME.palette.info),
         )
+
+    def test_discard_action_can_use_danger_role(self) -> None:
+        with patch.object(self.dialogs, "_show", return_value=None) as show:
+            self.dialogs.askyesnocancel(
+                "未保存の変更",
+                "変更を保存しますか。",
+                no_text="保存しない",
+                no_destructive=True,
+            )
+
+        actions = show.call_args.args[3]
+        discard = next(action for action in actions if action.text == "保存しない")
+        self.assertEqual(discard.emphasis, "danger")
 
 
 if __name__ == "__main__":

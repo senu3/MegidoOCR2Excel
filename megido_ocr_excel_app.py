@@ -166,6 +166,7 @@ COLOR_PRIMARY = THEME.palette.primary
 COLOR_PRIMARY_HOVER = THEME.palette.primary_hover
 COLOR_SECONDARY = THEME.palette.secondary
 COLOR_SECONDARY_HOVER = THEME.palette.secondary_hover
+COLOR_UTILITY_HOVER = THEME.palette.utility_hover
 COLOR_DANGER = THEME.palette.danger
 COLOR_DANGER_HOVER = THEME.palette.danger_hover
 COLOR_CTA = THEME.palette.cta
@@ -382,8 +383,8 @@ class ImageOcrExcelApp:
             "",
             "settings",
             self.open_settings_modal,
-            THEME.palette.toolbar_button,
-            THEME.palette.toolbar_button_hover,
+            "transparent",
+            COLOR_UTILITY_HOVER,
             34,
         ).pack(side=RIGHT, padx=(4, 12), pady=10)
         ctk.CTkFrame(
@@ -394,8 +395,8 @@ class ImageOcrExcelApp:
             "",
             "chevron_right",
             self.next_image,
-            THEME.palette.toolbar_button,
-            THEME.palette.toolbar_button_hover,
+            "transparent",
+            COLOR_UTILITY_HOVER,
             34,
         ).pack(side=RIGHT, padx=2, pady=10)
         ctk.CTkLabel(
@@ -411,8 +412,8 @@ class ImageOcrExcelApp:
             "",
             "chevron_left",
             self.previous_image,
-            THEME.palette.toolbar_button,
-            THEME.palette.toolbar_button_hover,
+            "transparent",
+            COLOR_UTILITY_HOVER,
             34,
         ).pack(side=RIGHT, padx=2, pady=10)
 
@@ -556,7 +557,7 @@ class ImageOcrExcelApp:
             height=THEME.layout.entry_height,
             corner_radius=THEME.layout.control_radius,
             fg_color="transparent",
-            hover_color=COLOR_SECONDARY_HOVER,
+            hover_color=COLOR_UTILITY_HOVER,
             border_width=0,
         )
         self.template_more_button.configure(
@@ -986,6 +987,7 @@ class ImageOcrExcelApp:
         has_fields = bool(self.fields)
         button.configure(
             state="normal" if has_fields else "disabled",
+            border_width=0 if self.dirty and has_fields else 1,
             fg_color=(
                 COLOR_PRIMARY
                 if self.dirty and has_fields
@@ -1010,6 +1012,7 @@ class ImageOcrExcelApp:
             "保存しない場合、変更内容は破棄されます。",
             yes_text="保存",
             no_text="保存しない",
+            no_destructive=True,
         )
         if response is None:
             return False
@@ -1210,6 +1213,8 @@ class ImageOcrExcelApp:
                     font=UI_FONT_SMALL,
                     fg_color=COLOR_SECONDARY,
                     hover_color=COLOR_SECONDARY_HOVER,
+                    border_width=1,
+                    border_color=COLOR_BORDER,
                 ).grid(row=0, column=1, padx=(6, 0))
 
         scroller = AutoHideScrollableFrame(
@@ -1482,8 +1487,9 @@ class ImageOcrExcelApp:
                 height=28,
                 state="normal" if position > 0 else "disabled",
                 corner_radius=THEME.layout.control_radius,
-                fg_color=COLOR_SECONDARY,
-                hover_color=COLOR_SECONDARY_HOVER,
+                fg_color="transparent",
+                hover_color=COLOR_UTILITY_HOVER,
+                border_width=0,
             ).grid(row=0, column=1, padx=(4, 2))
             ctk.CTkButton(
                 header,
@@ -1494,8 +1500,9 @@ class ImageOcrExcelApp:
                 height=28,
                 state="normal" if position < len(pair_ids) - 1 else "disabled",
                 corner_radius=THEME.layout.control_radius,
-                fg_color=COLOR_SECONDARY,
-                hover_color=COLOR_SECONDARY_HOVER,
+                fg_color="transparent",
+                hover_color=COLOR_UTILITY_HOVER,
+                border_width=0,
             ).grid(row=0, column=2, padx=(2, 0))
             indexes = [
                 idx for idx, field in enumerate(self.fields) if field.pair_id == pair_id
@@ -1803,9 +1810,11 @@ class ImageOcrExcelApp:
                 height=THEME.layout.entry_height,
                 corner_radius=THEME.layout.control_radius,
                 font=UI_FONT_SMALL,
-                fg_color=COLOR_PRIMARY,
-                hover_color=COLOR_PRIMARY_HOVER,
-                text_color=THEME.palette.on_color,
+                fg_color=COLOR_SECONDARY,
+                hover_color=COLOR_SECONDARY_HOVER,
+                border_width=1,
+                border_color=COLOR_BORDER,
+                text_color=COLOR_TEXT,
             ).grid(
                 row=3,
                 column=0,
@@ -1952,8 +1961,9 @@ class ImageOcrExcelApp:
             width=30,
             height=28,
             corner_radius=THEME.layout.control_radius,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
         ).grid(row=0, column=1, sticky="e")
 
         self._correction_result_preview(panel)
@@ -2030,8 +2040,11 @@ class ImageOcrExcelApp:
             height=THEME.layout.entry_height,
             corner_radius=THEME.layout.control_radius,
             font=UI_FONT_SMALL,
-            fg_color=COLOR_PRIMARY,
-            hover_color=COLOR_PRIMARY_HOVER,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
         ).pack(fill="x", padx=12, pady=(0, 12))
 
     def _correction_rule_row(self, parent, idx: int, rule: CorrectionRule) -> None:
@@ -2385,6 +2398,7 @@ class ImageOcrExcelApp:
             hover_color=COLOR_SECONDARY_HOVER,
             border_width=1,
             border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
         ).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
 
         self._render_image_queue(content)
@@ -2416,9 +2430,12 @@ class ImageOcrExcelApp:
             command=self.retry_failed_images,
             state="normal" if retry_count else "disabled",
             height=THEME.layout.primary_button_height,
+            corner_radius=THEME.layout.control_radius,
             font=UI_FONT_SMALL,
             fg_color=COLOR_SECONDARY,
             hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
         )
         self.retry_button.pack(fill="x", pady=(0, 6))
         ctk.CTkButton(
@@ -2461,8 +2478,10 @@ class ImageOcrExcelApp:
             width=58,
             height=26,
             font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+            text_color=COLOR_MUTED,
         ).grid(row=0, column=1, padx=(4, 2))
         ctk.CTkButton(
             header,
@@ -2471,8 +2490,10 @@ class ImageOcrExcelApp:
             width=58,
             height=26,
             font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+            text_color=COLOR_MUTED,
         ).grid(row=0, column=2, padx=(2, 0))
 
         queue_frame = ctk.CTkScrollableFrame(
@@ -3142,7 +3163,7 @@ class ImageOcrExcelApp:
             height=28,
             corner_radius=THEME.layout.control_radius,
             fg_color="transparent",
-            hover_color=COLOR_SECONDARY_HOVER,
+            hover_color=COLOR_UTILITY_HOVER,
             border_width=0,
         )
 

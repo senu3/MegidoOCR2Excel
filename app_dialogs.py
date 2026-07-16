@@ -97,6 +97,7 @@ class AppDialogs:
         yes_text: str = "はい",
         no_text: str = "いいえ",
         cancel_text: str = "キャンセル",
+        no_destructive: bool = False,
     ) -> bool | None:
         result = self._show(
             "question",
@@ -104,7 +105,11 @@ class AppDialogs:
             message,
             [
                 DialogAction(cancel_text, None),
-                DialogAction(no_text, False),
+                DialogAction(
+                    no_text,
+                    False,
+                    "danger" if no_destructive else "secondary",
+                ),
                 DialogAction(yes_text, True, "primary"),
             ],
             default_value=True,
