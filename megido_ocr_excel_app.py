@@ -325,8 +325,14 @@ class ImageOcrExcelApp:
         self.coordinate_status_label: ctk.CTkLabel | None = None
         self.workflow_choice_modal: ModalOverlay | None = None
         self.settings_modal: ModalOverlay | None = None
+        self.ocr_setup_modal: ModalOverlay | None = None
         self.workflow_choice_overlay: ctk.CTkFrame | None = None
         self.workflow_choice_primary_button: ctk.CTkButton | None = None
+        self.ocr_setup_status_label: ctk.CTkLabel | None = None
+        self.ocr_setup_note_label: ctk.CTkLabel | None = None
+        self.ocr_setup_primary_button: ctk.CTkButton | None = None
+        self.ocr_setup_secondary_button: ctk.CTkButton | None = None
+        self._pending_ocr_action = None
         self.hbar: ctk.CTkScrollbar | None = None
         self.vbar: ctk.CTkScrollbar | None = None
         self.loading_modal: ModalOverlay | None = None
@@ -606,6 +612,8 @@ class ImageOcrExcelApp:
         self._render_side_body()
         self._build_loading_overlay()
         self._build_workflow_choice_overlay()
+        self._build_ocr_setup_overlay()
+        self._show_initial_overlay()
 
     def _toolbar_button(
         self,
@@ -812,7 +820,131 @@ class ImageOcrExcelApp:
         self.workflow_choice_modal = modal
         self.workflow_choice_overlay = overlay
         self.workflow_choice_primary_button = primary_button
-        modal.show()
+
+    def _build_ocr_setup_overlay(self) -> None:
+        modal = ModalOverlay(
+            self.root,
+            width=470,
+            backdrop_color=THEME.palette.modal_backdrop,
+            backdrop_alpha=THEME.layout.modal_backdrop_alpha,
+            surface_color=COLOR_SURFACE,
+            border_color=THEME.palette.warning,
+            corner_radius=THEME.layout.panel_radius,
+        )
+        panel = modal.panel
+        panel.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            panel,
+            text="OCRを準備",
+            image=ICONS.get("scan", 26, COLOR_PRIMARY),
+            compound="top",
+            font=UI_FONT_TITLE,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 8))
+        ctk.CTkLabel(
+            panel,
+            text=(
+                "このアプリはPaddleOCRを使用します。\n"
+                "初回のみ認識モデルの取得と確認が必要です。"
+            ),
+            justify="center",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+            wraplength=390,
+        ).grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 16))
+        status_frame = ctk.CTkFrame(
+            panel,
+            fg_color=COLOR_SURFACE_ALT,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            corner_radius=THEME.layout.control_radius,
+        )
+        status_frame.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 18))
+        status_frame.grid_columnconfigure(0, weight=1)
+        self.ocr_setup_status_label = ctk.CTkLabel(
+            status_frame,
+            text="",
+            image=ICONS.get("alert_circle", 17, THEME.palette.warning),
+            compound="left",
+            anchor="w",
+            font=UI_FONT_BOLD,
+            text_color=THEME.palette.warning,
+        )
+        self.ocr_setup_status_label.grid(
+            row=0, column=0, sticky="ew", padx=14, pady=(12, 4)
+        )
+        self.ocr_setup_note_label = ctk.CTkLabel(
+            status_frame,
+            text="",
+            anchor="w",
+            justify="left",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+            wraplength=370,
+        )
+        self.ocr_setup_note_label.grid(
+            row=1, column=0, sticky="ew", padx=14, pady=(0, 12)
+        )
+        self.ocr_setup_primary_button = ctk.CTkButton(
+            panel,
+            text="OCRを準備する",
+            image=ICONS.get("refresh", 17, THEME.palette.on_color),
+            compound="left",
+            command=self.prepare_ocr_environment,
+            height=THEME.layout.primary_button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_BOLD,
+            fg_color=COLOR_PRIMARY,
+            hover_color=COLOR_PRIMARY_HOVER,
+        )
+        self.ocr_setup_primary_button.grid(
+            row=3, column=0, sticky="ew", padx=28, pady=(0, 8)
+        )
+        self.ocr_setup_secondary_button = ctk.CTkButton(
+            panel,
+            text="あとで行う",
+            command=self.defer_ocr_setup,
+            height=THEME.layout.primary_button_height,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        )
+        self.ocr_setup_secondary_button.grid(
+            row=4, column=0, sticky="ew", padx=28, pady=(0, 8)
+        )
+        settings_button = ctk.CTkButton(
+            panel,
+            text="保存先の設定",
+            command=self.open_ocr_environment_settings,
+            height=30,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+            text_color=COLOR_MUTED,
+        )
+        settings_button.grid(row=5, column=0, pady=(0, 20))
+        modal.set_focus_order(
+            [
+                self.ocr_setup_primary_button,
+                self.ocr_setup_secondary_button,
+                settings_button,
+            ],
+            default=self.ocr_setup_primary_button,
+        )
+        modal.set_escape_handler(self.defer_ocr_setup)
+        self.ocr_setup_modal = modal
+
+    def _show_initial_overlay(self) -> None:
+        if self.ocr_environment.quick_status().ready:
+            self._show_workflow_choice()
+        else:
+            self.show_ocr_setup()
 
     def _show_loading(self, message: str) -> None:
         self.loading_var.set(message)
@@ -957,6 +1089,9 @@ class ImageOcrExcelApp:
 
     def _dispatch_shortcut(self, command, event):
         if getattr(self, "busy", False):
+            return "break"
+        ocr_setup_modal = getattr(self, "ocr_setup_modal", None)
+        if ocr_setup_modal is not None and ocr_setup_modal.visible:
             return "break"
         if not self.workflow_started:
             self._show_workflow_choice()
@@ -3421,6 +3556,9 @@ class ImageOcrExcelApp:
         self._mark_clean()
 
     def _show_workflow_choice(self) -> None:
+        ocr_setup_modal = getattr(self, "ocr_setup_modal", None)
+        if ocr_setup_modal is not None and ocr_setup_modal.visible:
+            return
         if self.workflow_choice_modal is not None:
             self.workflow_choice_modal.show(
                 focus=self.workflow_choice_primary_button
@@ -3429,6 +3567,144 @@ class ImageOcrExcelApp:
     def _hide_workflow_choice(self) -> None:
         if self.workflow_choice_modal is not None:
             self.workflow_choice_modal.hide()
+
+    def show_ocr_setup(self, pending_action=None) -> None:
+        if pending_action is not None:
+            self._pending_ocr_action = pending_action
+        self._refresh_ocr_setup_overlay()
+        self._hide_workflow_choice()
+        if self.ocr_setup_modal is not None:
+            self.ocr_setup_modal.show(focus=self.ocr_setup_primary_button)
+
+    def _refresh_ocr_setup_overlay(self) -> None:
+        if (
+            self.ocr_setup_status_label is None
+            or self.ocr_setup_note_label is None
+            or self.ocr_setup_primary_button is None
+        ):
+            return
+        status = self.ocr_environment.quick_status()
+        label = status.label
+        note = self.ocr_environment_last_error or status.detail
+        icon_name = "alert_circle"
+        color = THEME.palette.warning
+        primary_text = "状態を確認する"
+        primary_command = self.prepare_ocr_environment
+        if self.ocr_environment_restart_required:
+            label = "再起動が必要"
+            note = "変更したモデル保存先は、アプリの再起動後に使用できます。"
+            primary_text = "保存先を確認"
+            primary_command = self.open_ocr_environment_settings
+        elif status.state == OCR_ENV_SETUP:
+            primary_text = "OCRを準備する"
+        elif status.state == OCR_ENV_VERIFY:
+            primary_text = "状態を確認する"
+        elif status.state == OCR_ENV_LOCATION_ERROR:
+            color = THEME.palette.danger
+            primary_text = "保存先を確認"
+            primary_command = self.open_ocr_environment_settings
+        elif status.state == OCR_ENV_UNAVAILABLE:
+            color = THEME.palette.danger
+            primary_text = "状態を再確認"
+        elif status.state == OCR_ENV_READY:
+            icon_name = "check_circle"
+            color = THEME.palette.success
+            primary_text = "続ける"
+            primary_command = self._finish_ocr_setup_success
+        self.ocr_setup_status_label.configure(
+            text=label,
+            image=ICONS.get(icon_name, 17, color),
+            text_color=color,
+        )
+        self.ocr_setup_note_label.configure(text=note)
+        self.ocr_setup_primary_button.configure(
+            text=primary_text, command=primary_command
+        )
+        if self.ocr_setup_modal is not None:
+            self.ocr_setup_modal.refresh_geometry()
+
+    def defer_ocr_setup(self) -> None:
+        self._pending_ocr_action = None
+        if self.ocr_setup_modal is not None:
+            self.ocr_setup_modal.hide()
+        if not self.workflow_started:
+            self._show_workflow_choice()
+        else:
+            self.status_var.set(
+                "OCRは未準備です。範囲編集は続けられます。"
+            )
+
+    def open_ocr_environment_settings(self) -> None:
+        if self.ocr_setup_modal is not None:
+            self.ocr_setup_modal.hide()
+        self.open_settings_modal(
+            show_ocr_environment=True,
+            after_close=self._return_from_ocr_environment_settings,
+        )
+
+    def _return_from_ocr_environment_settings(self) -> None:
+        if self.ocr_environment.quick_status().ready:
+            self._finish_ocr_setup_success()
+        else:
+            self.show_ocr_setup()
+
+    def prepare_ocr_environment(self) -> None:
+        if self.busy:
+            return
+        self.ocr_environment_last_error = ""
+        if self.ocr_setup_modal is not None:
+            self.ocr_setup_modal.hide()
+        completed = {"ready": False}
+
+        def work() -> OcrEnvironmentStatus:
+            return self.ocr_environment.verify(
+                lambda: self.ocr_engine.verify_paddle_environment(
+                    self.lang_var.get()
+                )
+            )
+
+        def on_success(_status: OcrEnvironmentStatus) -> None:
+            completed["ready"] = True
+            self.status_var.set("OCRの準備が完了しました。")
+
+        def on_error(error: Exception) -> None:
+            self.ocr_environment.invalidate_verification()
+            self.ocr_environment_last_error = f"準備に失敗しました: {error}"
+            self.status_var.set("OCRを準備できませんでした。")
+
+        def finish() -> None:
+            if completed["ready"]:
+                self._finish_ocr_setup_success()
+            else:
+                self.show_ocr_setup()
+
+        self._run_background(
+            "OCRを準備しています。初回は認識モデルを取得します。",
+            work,
+            on_success,
+            on_error,
+            lambda: self.root.after(50, finish),
+            lambda: self.status_var.set("OCRの準備をキャンセルしました。"),
+        )
+
+    def _finish_ocr_setup_success(self) -> None:
+        if self.ocr_setup_modal is not None:
+            self.ocr_setup_modal.hide()
+        pending_action = self._pending_ocr_action
+        self._pending_ocr_action = None
+        if pending_action is not None:
+            self.root.after(0, pending_action)
+        elif not self.workflow_started:
+            self._show_workflow_choice()
+
+    def _require_ocr_ready(self, pending_action) -> bool:
+        if (
+            self.ocr_environment.quick_status().ready
+            and not self.ocr_environment_restart_required
+        ):
+            return True
+        self.show_ocr_setup(pending_action)
+        return False
 
     def open_image_folder(self) -> bool:
         if not self.workflow_started:
@@ -3832,7 +4108,9 @@ class ImageOcrExcelApp:
     def _field_for_ocr(field: TemplateField) -> TemplateField:
         return replace(field, ocr_backend="default")
 
-    def open_settings_modal(self) -> None:
+    def open_settings_modal(
+        self, *, show_ocr_environment: bool = False, after_close=None
+    ) -> None:
         if self.settings_modal is not None and self.settings_modal.visible:
             self.settings_modal.show()
             return
@@ -3851,6 +4129,8 @@ class ImageOcrExcelApp:
             if self.settings_modal is modal:
                 self.settings_modal = None
             modal.destroy()
+            if after_close is not None:
+                self.root.after(0, after_close)
 
         window = modal.window
         dialog_lang_display = StringVar(
@@ -4163,6 +4443,7 @@ class ImageOcrExcelApp:
                 dialog_lang_display.get(),
                 dialog_line_join.get(),
                 dialog_fullwidth_ascii.get(),
+                after_close,
             ),
             width=112,
             height=THEME.layout.primary_button_height,
@@ -4173,7 +4454,13 @@ class ImageOcrExcelApp:
         )
         save_button.pack(side=LEFT, padx=(8, 0))
 
-        details_expanded = False
+        details_expanded = show_ocr_environment
+        if details_expanded:
+            details_button.configure(
+                text="閉じる",
+                image=ICONS.get("chevron_up", 14, COLOR_MUTED),
+            )
+            environment_details.grid()
 
         def environment_style(
             status: OcrEnvironmentStatus,
@@ -4381,6 +4668,7 @@ class ImageOcrExcelApp:
         lang_display: str,
         line_join_display: str,
         fullwidth_ascii_enabled: bool,
+        after_close=None,
     ) -> None:
         lang = self._lang_value(lang_display)
         line_join = next(
@@ -4417,6 +4705,8 @@ class ImageOcrExcelApp:
             self.settings_modal = None
         if changed:
             self._render_side_body()
+        if after_close is not None:
+            self.root.after(0, after_close)
 
     def select_field(self, idx: int) -> None:
         if not (0 <= idx < len(self.fields)):
@@ -6210,6 +6500,8 @@ class ImageOcrExcelApp:
         if not self._enabled_fields():
             self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
             return
+        if not self._require_ocr_ready(self.ocr_current_image):
+            return
         image = self.original_image.copy()
         fields = [
             (idx, self._field_for_ocr(field))
@@ -6267,6 +6559,10 @@ class ImageOcrExcelApp:
             )
             return
         if not (0 <= idx < len(self.fields)) or not self.fields[idx].enabled:
+            return
+        if not self._require_ocr_ready(
+            lambda field_index=idx: self.ocr_field_at(field_index)
+        ):
             return
         image = self.original_image.copy()
         field = self._field_for_ocr(self.fields[idx])
@@ -6401,6 +6697,8 @@ class ImageOcrExcelApp:
             self.dialogs.showerror(
                 "処理対象なし", "画像キューで処理する画像を1枚以上選択してください。"
             )
+            return
+        if not self._require_ocr_ready(self.export_to_excel):
             return
         if not self.output_path:
             self.select_output_file()
@@ -6588,6 +6886,8 @@ class ImageOcrExcelApp:
                 "再実行できません",
                 "出力先、シート、開始セル、列構成のいずれかが前回の出力から変更されています。\n全画像をExcel出力し直してください。",
             )
+            return
+        if not self._require_ocr_ready(self.retry_failed_images):
             return
 
         output_path = self.last_export_output_path

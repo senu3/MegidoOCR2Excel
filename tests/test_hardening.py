@@ -15,6 +15,7 @@ from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_EXPORT, MODE_REVIEW, MODE_TEMPLATE, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
 from megido_ocr_excel_app import COLOR_PRIMARY, COLOR_SECONDARY
 from megido_ui_theme import THEME
+from ocr_environment import OCR_ENV_READY, OCR_ENV_SETUP, OcrEnvironmentStatus
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
@@ -212,6 +213,8 @@ class WorkflowChoiceTests(unittest.TestCase):
         root.withdraw()
         app = ImageOcrExcelApp(root)
         try:
+            if app.ocr_setup_modal is not None and app.ocr_setup_modal.visible:
+                app.defer_ocr_setup()
             modal = app.workflow_choice_modal
             self.assertIsNotNone(modal)
             self.assertIs(modal.backdrop.master, root)
@@ -268,6 +271,8 @@ class WorkflowChoiceTests(unittest.TestCase):
                 labels,
             )
         finally:
+            if app.ocr_setup_modal is not None:
+                app.ocr_setup_modal.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
             root.destroy()
@@ -351,6 +356,132 @@ class WorkflowChoiceTests(unittest.TestCase):
             destroy.assert_called_once()
         finally:
             root.destroy()
+
+
+class OcrSetupOnboardingTests(unittest.TestCase):
+    @staticmethod
+    def _status(state: str, *, ready: bool) -> OcrEnvironmentStatus:
+        labels = {
+            OCR_ENV_READY: ("準備完了", "PaddleOCRを使用できます。"),
+            OCR_ENV_SETUP: ("準備が必要", "初回の認識モデル取得が必要です。"),
+        }
+        label, detail = labels[state]
+        status = OcrEnvironmentStatus(
+            state,
+            label,
+            detail,
+            Path("C:/models"),
+            "auto",
+        )
+        self_ready = status.ready
+        if self_ready != ready:
+            raise AssertionError("test status readiness mismatch")
+        return status
+
+    def _app_with_status(
+        self, root: ctk.CTk, status: OcrEnvironmentStatus
+    ) -> tuple[ImageOcrExcelApp, MagicMock]:
+        with patch(
+            "megido_ocr_excel_app.OcrEnvironmentManager"
+        ) as manager_type:
+            manager = manager_type.return_value
+            manager.apply_to_process.return_value = status.cache_dir
+            manager.quick_status.return_value = status
+            app = ImageOcrExcelApp(root)
+        return app, manager
+
+    @staticmethod
+    def _destroy(app: ImageOcrExcelApp, root: ctk.CTk) -> None:
+        if app.ocr_setup_modal is not None:
+            app.ocr_setup_modal.destroy()
+        if app.workflow_choice_modal is not None:
+            app.workflow_choice_modal.destroy()
+        root.destroy()
+
+    def test_unprepared_startup_precedes_workflow_and_can_be_deferred(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        status = self._status(OCR_ENV_SETUP, ready=False)
+        app, _manager = self._app_with_status(root, status)
+        try:
+            self.assertTrue(app.ocr_setup_modal.visible)
+            self.assertFalse(app.workflow_choice_modal.visible)
+            labels = [
+                widget.cget("text")
+                for widget in descendants_of(app.ocr_setup_modal.panel)
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            buttons = [
+                widget.cget("text")
+                for widget in descendants_of(app.ocr_setup_modal.panel)
+                if isinstance(widget, ctk.CTkButton)
+            ]
+            self.assertIn("OCRを準備", labels)
+            self.assertIn("準備が必要", labels)
+            self.assertIn("OCRを準備する", buttons)
+            self.assertIn("あとで行う", buttons)
+
+            command = MagicMock()
+            self.assertEqual(app._dispatch_shortcut(command, object()), "break")
+            command.assert_not_called()
+            self.assertFalse(app.workflow_choice_modal.visible)
+
+            app.defer_ocr_setup()
+
+            self.assertFalse(app.ocr_setup_modal.visible)
+            self.assertTrue(app.workflow_choice_modal.visible)
+        finally:
+            self._destroy(app, root)
+
+    def test_ready_startup_shows_workflow_directly(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        status = self._status(OCR_ENV_READY, ready=True)
+        app, _manager = self._app_with_status(root, status)
+        try:
+            self.assertFalse(app.ocr_setup_modal.visible)
+            self.assertTrue(app.workflow_choice_modal.visible)
+        finally:
+            self._destroy(app, root)
+
+    def test_gated_action_resumes_after_success(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        setup = self._status(OCR_ENV_SETUP, ready=False)
+        ready = self._status(OCR_ENV_READY, ready=True)
+        app, manager = self._app_with_status(root, setup)
+        action = MagicMock()
+        try:
+            self.assertFalse(app._require_ocr_ready(action))
+            self.assertTrue(app.ocr_setup_modal.visible)
+            manager.quick_status.return_value = ready
+
+            app._finish_ocr_setup_success()
+            root.update()
+
+            action.assert_called_once_with()
+            self.assertIsNone(app._pending_ocr_action)
+        finally:
+            self._destroy(app, root)
+
+    def test_defer_discards_a_gated_action(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        setup = self._status(OCR_ENV_SETUP, ready=False)
+        app, _manager = self._app_with_status(root, setup)
+        action = MagicMock()
+        app.workflow_started = True
+        try:
+            self.assertFalse(app._require_ocr_ready(action))
+
+            app.defer_ocr_setup()
+            root.update()
+
+            action.assert_not_called()
+            self.assertIsNone(app._pending_ocr_action)
+            self.assertIn("範囲編集", app.status_var.get())
+        finally:
+            self._destroy(app, root)
 
 
 class DirtyStateTests(unittest.TestCase):
