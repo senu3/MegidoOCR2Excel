@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import unittest
 
 import customtkinter as ctk
@@ -33,7 +34,7 @@ class ModalOverlayTests(unittest.TestCase):
             modal.destroy()
             root.destroy()
 
-    def test_show_covers_the_root_and_owns_the_input_grab(self) -> None:
+    def test_show_covers_the_root_without_blocking_windows_title_bar(self) -> None:
         root = ctk.CTk()
         root.geometry("800x600+10000+10000")
         modal = ModalOverlay(
@@ -50,7 +51,10 @@ class ModalOverlayTests(unittest.TestCase):
             root.update()
             self.assertEqual(modal.backdrop.state(), "normal")
             self.assertEqual(modal.window.state(), "normal")
-            self.assertEqual(modal.window.grab_current(), modal.window)
+            if sys.platform.startswith("win"):
+                self.assertIsNone(root.grab_current())
+            else:
+                self.assertEqual(modal.window.grab_current(), modal.window)
             self.assertTrue(modal.backdrop.geometry().startswith("800x600"))
 
             modal.hide()

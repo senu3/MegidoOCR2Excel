@@ -204,10 +204,15 @@ class ModalOverlay:
             self.window.deiconify()
             self.backdrop.lift()
             self.window.lift()
-            try:
-                self.window.grab_set()
-            except TclError:
-                return
+            # On Windows, a Tk input grab also blocks the owner's native title-bar
+            # controls.  The backdrop already covers the root's client area, so
+            # keeping the grab there only prevents users from closing the app via
+            # its own close button while a modal is visible.
+            if not sys.platform.startswith("win"):
+                try:
+                    self.window.grab_set()
+                except TclError:
+                    return
             self._schedule_focus()
         finally:
             self._showing = False

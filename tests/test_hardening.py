@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import threading
 import unittest
@@ -427,7 +428,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             ]
             self.assertIn("OCRを準備", labels)
             self.assertIn("準備が必要", labels)
-            self.assertIn("PaddleOCRを使用します。", labels)
+            self.assertIn("このアプリはPaddleOCRを使用します。", labels)
             self.assertFalse(any("初回のみ" in text for text in labels))
             self.assertIn("OCRを準備する", buttons)
             self.assertIn("あとで行う", buttons)
@@ -441,6 +442,29 @@ class OcrSetupOnboardingTests(unittest.TestCase):
 
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
+        finally:
+            self._destroy(app, root)
+
+    def test_app_close_from_ocr_setup_keeps_unsaved_confirmation(self) -> None:
+        root = ctk.CTk()
+        root.geometry("900x700+10000+10000")
+        status = self._status(OCR_ENV_SETUP, ready=False)
+        app, _manager = self._app_with_status(root, status)
+        try:
+            root.update()
+            self.assertTrue(app.ocr_setup_modal.visible)
+            if sys.platform.startswith("win"):
+                self.assertIsNone(root.grab_current())
+
+            app._mark_dirty()
+            with patch.object(
+                app.dialogs, "askyesnocancel", return_value=None
+            ) as ask_unsaved:
+                root.tk.eval(root.protocol("WM_DELETE_WINDOW"))
+
+            ask_unsaved.assert_called_once()
+            self.assertTrue(root.winfo_exists())
+            self.assertTrue(app.ocr_setup_modal.visible)
         finally:
             self._destroy(app, root)
 
@@ -848,7 +872,10 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertIsNotNone(modal)
             self.assertTrue(modal.visible)
             self.assertTrue(bool(modal.window.overrideredirect()))
-            self.assertEqual(modal.window.grab_current(), modal.window)
+            if sys.platform.startswith("win"):
+                self.assertIsNone(root.grab_current())
+            else:
+                self.assertEqual(modal.window.grab_current(), modal.window)
 
             labels = [
                 widget.cget("text")
@@ -933,8 +960,21 @@ class ModalConsistencyTests(unittest.TestCase):
             modal = app.loading_modal
             self.assertIsNotNone(modal)
             self.assertTrue(modal.visible)
-            self.assertEqual(modal.window.grab_current(), modal.window)
+            if sys.platform.startswith("win"):
+                self.assertIsNone(root.grab_current())
+            else:
+                self.assertEqual(modal.window.grab_current(), modal.window)
             self.assertEqual(modal.backdrop.state(), "normal")
+
+            with patch.object(
+                app.dialogs, "askyesno", return_value=True
+            ) as ask_cancel:
+                root.tk.eval(root.protocol("WM_DELETE_WINDOW"))
+
+            ask_cancel.assert_called_once()
+            self.assertTrue(app._operation_cancel_event.is_set())
+            self.assertTrue(app._close_after_cancel)
+            self.assertTrue(root.winfo_exists())
 
             app._hide_loading()
             root.update()
