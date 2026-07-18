@@ -6,10 +6,10 @@ from typing import Literal
 
 import customtkinter as ctk
 
-from megido_icons import ICONS
-from megido_ui_theme import THEME
-from modal_overlay import ModalOverlay
-from ui_tooltip import add_tooltip
+from megido_ocr_excel.ui.icons import ICONS
+from megido_ocr_excel.ui.theme import THEME
+from megido_ocr_excel.ui.modal import ModalOverlay
+from megido_ocr_excel.ui.tooltip import add_tooltip
 
 
 DialogKind = Literal["info", "warning", "error", "question"]

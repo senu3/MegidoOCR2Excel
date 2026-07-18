@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import customtkinter as ctk
 
-from app_dialogs import AppDialogs
-from megido_ui_theme import THEME
+from megido_ocr_excel.ui.dialogs import AppDialogs
+from megido_ocr_excel.ui.theme import THEME
 
 
 class AppDialogsTests(unittest.TestCase):

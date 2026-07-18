@@ -24,8 +24,8 @@ from tkinter import (
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
-from app_dialogs import AppDialogs
-from batch_queue import (
+from megido_ocr_excel.ui.dialogs import AppDialogs
+from megido_ocr_excel.export.queue import (
     STATUS_EXCLUDED,
     STATUS_FAILED,
     STATUS_PENDING,
@@ -34,26 +34,26 @@ from batch_queue import (
     ImageQueue,
     ImageQueueItem,
 )
-from dialogue_log_detector import (
+from megido_ocr_excel.ocr.dialogue_detector import (
     detect_complete_dialogue_pairs,
     include_supplement_candidates,
 )
-from excel_exporter import (
+from megido_ocr_excel.export.excel import (
     ExcelExporter,
     ExportResult,
     ExportSettings,
     validate_export_settings,
 )
-from megido_app_config import (
+from megido_ocr_excel.config import (
     APP_PROFILE,
     APP_TITLE,
     IMAGE_EXTENSIONS,
     natural_image_sort_key,
 )
-from megido_icons import ICONS
-from megido_ui_theme import THEME
-from modal_overlay import ModalOverlay
-from ocr_engine import (
+from megido_ocr_excel.ui.icons import ICONS
+from megido_ocr_excel.ui.theme import THEME
+from megido_ocr_excel.ui.modal import ModalOverlay
+from megido_ocr_excel.ocr.engine import (
     OcrEngine,
     apply_correction_rules,
     apply_postprocess,
@@ -62,7 +62,7 @@ from ocr_engine import (
     fill_missing_field_source_size,
     scaled_field,
 )
-from ocr_environment import (
+from megido_ocr_excel.ocr.environment import (
     OCR_ENV_LOCATION_ERROR,
     OCR_ENV_READY,
     OCR_ENV_SETUP,
@@ -71,7 +71,7 @@ from ocr_environment import (
     OcrEnvironmentManager,
     OcrEnvironmentStatus,
 )
-from ocr_models import (
+from megido_ocr_excel.models import (
     COORDINATE_SPACE_CONTENT,
     COORDINATE_SPACE_IMAGE,
     CORRECTION_ALL_TARGET,
@@ -97,9 +97,9 @@ from ocr_models import (
     set_definition_for_preset,
     set_validation_error,
 )
-from operation_control import OperationCancelled, raise_if_cancelled
-from profiles.base import OcrProfile
-from template_store import (
+from megido_ocr_excel.operations import OperationCancelled, raise_if_cancelled
+from megido_ocr_excel.profiles.base import OcrProfile
+from megido_ocr_excel.templates import (
     build_template_data,
     coordinate_settings_from_template,
     correction_rules_from_template,
@@ -109,7 +109,7 @@ from template_store import (
     set_definition_from_template,
     text_formatting_from_template,
 )
-from ui_tooltip import add_tooltip
+from megido_ocr_excel.ui.tooltip import add_tooltip
 
 
 class AutoHideScrollableFrame(ctk.CTkScrollableFrame):

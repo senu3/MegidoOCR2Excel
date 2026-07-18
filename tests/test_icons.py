@@ -4,7 +4,7 @@ import unittest
 
 from PIL import Image, ImageDraw
 
-from megido_icons import _DRAWERS
+from megido_ocr_excel.ui.icons import _DRAWERS
 
 
 class IconDrawingTests(unittest.TestCase):

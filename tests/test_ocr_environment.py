@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from ocr_engine import OcrEngine
-from ocr_environment import (
+from megido_ocr_excel.ocr.engine import OcrEngine
+from megido_ocr_excel.ocr.environment import (
     OCR_ENV_LOCATION_ERROR,
     OCR_ENV_READY,
     OCR_ENV_SETUP,
@@ -114,7 +114,7 @@ class OcrEnvironmentManagerTests(unittest.TestCase):
 class OcrEnvironmentProbeTests(unittest.TestCase):
     def test_full_probe_initializes_normal_and_line_recognition_paths(self) -> None:
         backend = MagicMock()
-        with patch("ocr_engine.PaddleBackend", return_value=backend):
+        with patch("megido_ocr_excel.ocr.engine.PaddleBackend", return_value=backend):
             engine = OcrEngine()
 
             engine.verify_paddle_environment("jpn+eng")

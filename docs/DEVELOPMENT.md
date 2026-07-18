@@ -61,7 +61,7 @@ OCR環境マネージャーは、依存パッケージ、モデル保存先、�
 
 ## プロファイル
 
-ゲーム固有設定は共通の `OcrProfile` から分離しています。現在の設定は `profiles/megido_novel.py` にあります。
+ゲーム固有設定は共通の `OcrProfile` から分離しています。現在の設定は `megido_ocr_excel/profiles/megido_novel.py` にあります。
 
 別ゲームへ対応する場合は、次を定義します。
 
@@ -69,8 +69,8 @@ OCR環境マネージャーは、依存パッケージ、モデル保存先、�
 - 既定OCRバックエンドと言語
 - 座標変換の既定値
 - 項目名の接頭辞と項目別OCRプリセット
-- `profiles/__init__.py` のレジストリ登録
-- `megido_app_config.py` の有効プロファイル指定
+- `megido_ocr_excel/profiles/__init__.py` のレジストリ登録
+- `megido_ocr_excel/config.py` の有効プロファイル指定
 
 プロファイルには検証用サンプルのパスを含めません。共有しないサンプルは精度測定スクリプトの引数で指定します。
 
@@ -86,16 +86,15 @@ OCR環境マネージャーは、依存パッケージ、モデル保存先、�
 
 ## 主な構成
 
-- `megido_ocr_excel_app.py`: CustomTkinter UI
-- `megido_ui_theme.py`: テーマ、寸法、主要文言
-- `profiles/`: ゲーム固有設定と共通プロファイル
-- `ocr_models.py`: テンプレート項目モデル
-- `ocr_engine.py`: OCR、画像前処理、後処理、範囲補正
-- `ocr_environment.py`: OCRモデル保存先と準備状態
-- `excel_exporter.py`: Excel出力
-- `batch_queue.py`: 画像キューと処理状態
-- `template_store.py`: テンプレートの保存・読み込み
-- `atomic_io.py`: アトミック保存
+- `main.py`: 起動と配布ビルドのスモークテスト入口
+- `megido_ocr_excel/application.py`: CustomTkinter UIと画面遷移
+- `megido_ocr_excel/ui/`: テーマ、アイコン、ダイアログ、ツールチップ
+- `megido_ocr_excel/ocr/`: OCR実行、画像処理、準備状態、会話検出
+- `megido_ocr_excel/export/`: Excel出力と画像キュー
+- `megido_ocr_excel/profiles/`: ゲーム固有設定と共通プロファイル
+- `megido_ocr_excel/models.py`: テンプレート項目モデル
+- `megido_ocr_excel/templates.py`: テンプレートの保存・読み込み
+- `megido_ocr_excel/persistence.py`: アトミック保存
 
 ## OCR精度測定
 

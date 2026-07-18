@@ -6,7 +6,7 @@ import traceback
 from importlib.metadata import version
 from pathlib import Path
 
-from atomic_io import atomic_write_text
+from megido_ocr_excel.persistence import atomic_write_text
 
 
 def run_packaging_smoke_test(report_path: str | Path) -> int:

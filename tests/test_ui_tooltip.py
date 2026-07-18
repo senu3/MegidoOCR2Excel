@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
-from ui_tooltip import UiTooltip, add_tooltip
+from megido_ocr_excel.ui.tooltip import UiTooltip, add_tooltip
 
 
 class UiTooltipTests(unittest.TestCase):

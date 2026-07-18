@@ -10,17 +10,17 @@ from unittest.mock import MagicMock
 from openpyxl import Workbook, load_workbook
 from PIL import Image
 
-from batch_queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
-from dialogue_log_detector import detect_complete_dialogue_pairs, include_supplement_candidates
-from excel_exporter import ExcelExporter, ExportSettings
-from operation_control import OperationCancelled
-from megido_app_config import natural_image_sort_key
-from ocr_engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
-from ocr_models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_SET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, SET_PRESET_HEADING_TEXT, SET_PRESET_SINGLE_LINE, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error, set_definition_for_preset
+from megido_ocr_excel.export.queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
+from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs, include_supplement_candidates
+from megido_ocr_excel.export.excel import ExcelExporter, ExportSettings
+from megido_ocr_excel.operations import OperationCancelled
+from megido_ocr_excel.config import natural_image_sort_key
+from megido_ocr_excel.ocr.engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
+from megido_ocr_excel.models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_SET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, SET_PRESET_HEADING_TEXT, SET_PRESET_SINGLE_LINE, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error, set_definition_for_preset
 from scripts.ocr_accuracy_common import build_accuracy_row, expected_values_for_field, measurement_fields, read_expected_sets, recognize_with_engine
-from template_store import coordinate_settings_from_template, load_template
-from template_store import fields_from_template
-from profiles.megido_novel import PROFILE
+from megido_ocr_excel.templates import coordinate_settings_from_template, load_template
+from megido_ocr_excel.templates import fields_from_template
+from megido_ocr_excel.profiles.megido_novel import PROFILE
 
 
 class BatchWorkflowTests(unittest.TestCase):

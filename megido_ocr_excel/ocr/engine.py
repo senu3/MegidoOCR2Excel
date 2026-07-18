@@ -13,7 +13,7 @@ from typing import Any
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
-from ocr_models import COORDINATE_SPACE_CONTENT, CORRECTION_ALL_TARGET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, CoordinateSettings, CorrectionRule, TemplateField, TextFormattingSettings
+from megido_ocr_excel.models import COORDINATE_SPACE_CONTENT, CORRECTION_ALL_TARGET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, CoordinateSettings, CorrectionRule, TemplateField, TextFormattingSettings
 
 try:
     import pytesseract

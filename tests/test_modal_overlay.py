@@ -5,7 +5,7 @@ import unittest
 
 import customtkinter as ctk
 
-from modal_overlay import ModalOverlay
+from megido_ocr_excel.ui.modal import ModalOverlay
 
 
 class ModalOverlayTests(unittest.TestCase):

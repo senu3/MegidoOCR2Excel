@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from excel_exporter import ExportResult
+    from megido_ocr_excel.export.excel import ExportResult
 
 
 STATUS_PENDING = "pending"

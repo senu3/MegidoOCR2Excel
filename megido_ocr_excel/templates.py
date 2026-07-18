@@ -4,8 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from atomic_io import atomic_write_text
-from ocr_models import EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, LINE_JOIN_OPTIONS, OCR_LINE_SPLIT_OPTIONS, SET_PRESET_OPTIONS, CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, SetDefinition, TemplateField, TextFormattingSettings, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict, set_definition_for_preset, set_definition_from_dict, set_validation_error, text_formatting_settings_from_dict
+from megido_ocr_excel.persistence import atomic_write_text
+from megido_ocr_excel.models import EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, LINE_JOIN_OPTIONS, OCR_LINE_SPLIT_OPTIONS, SET_PRESET_OPTIONS, CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, SetDefinition, TemplateField, TextFormattingSettings, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict, set_definition_for_preset, set_definition_from_dict, set_validation_error, text_formatting_settings_from_dict
 
 
 TEMPLATE_FORMAT = "image-ocr-to-excel-template"

@@ -9,10 +9,10 @@ from openpyxl.styles import Alignment
 from openpyxl.utils.cell import coordinate_to_tuple
 from PIL import Image
 
-from atomic_io import atomic_save_workbook
-from dialogue_log_detector import DialoguePairDetectionResult
-from ocr_models import EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, SET_SLOT_SPEAKER, SET_SLOT_TEXT, SetDefinition, TemplateField, set_definition_for_preset, set_groups, set_validation_error
-from operation_control import CancelCheck, raise_if_cancelled
+from megido_ocr_excel.persistence import atomic_save_workbook
+from megido_ocr_excel.ocr.dialogue_detector import DialoguePairDetectionResult
+from megido_ocr_excel.models import EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, SET_SLOT_SPEAKER, SET_SLOT_TEXT, SetDefinition, TemplateField, set_definition_for_preset, set_groups, set_validation_error
+from megido_ocr_excel.operations import CancelCheck, raise_if_cancelled
 
 
 @dataclass

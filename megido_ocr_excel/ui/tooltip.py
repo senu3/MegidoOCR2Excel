@@ -4,7 +4,7 @@ from tkinter import Misc, TclError, Toplevel
 
 import customtkinter as ctk
 
-from megido_ui_theme import THEME
+from megido_ocr_excel.ui.theme import THEME
 
 
 class UiTooltip:

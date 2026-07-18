@@ -17,7 +17,7 @@
 
 ## Color Tokens
 
-Conceptual tokens are OKLCH. Tkinter implementation values live in `megido_ui_theme.py` as hex because CustomTkinter expects Tk-compatible colors.
+Conceptual tokens are OKLCH. Tkinter implementation values live in `megido_ocr_excel/ui/theme.py` as hex because CustomTkinter expects Tk-compatible colors.
 
 ```css
 :root {
@@ -71,7 +71,7 @@ Canvas permissions follow the workflow: `1. 範囲・列` allows creation, movem
 - Tabs carry the section label; do not repeat tab headings or explanatory text inside the tab body.
 - Tab changes build the next side-panel surface offscreen and swap it in atomically. They do not clear the visible panel first or redraw the unchanged screenshot Canvas.
 - Persistent path displays should use compact names, not full filesystem paths. Keep full paths for dialogs and transient status messages only.
-- Use icon-plus-short-label buttons for frequent actions, and icon-only buttons for compact global controls when the icon is familiar. Icons come from the local monochrome outline system in `megido_icons.py`: 1.75px-equivalent stroke, gently rounded joins, 16/18/20px sizes, and no emoji or Unicode-symbol mixing.
+- Use icon-plus-short-label buttons for frequent actions, and icon-only buttons for compact global controls when the icon is familiar. Icons come from the local monochrome outline system in `megido_ocr_excel/ui/icons.py`: 1.75px-equivalent stroke, gently rounded joins, 16/18/20px sizes, and no emoji or Unicode-symbol mixing.
 - Buttons use four roles. Primary is purple with no border and marks the main action on a surface; `画像フォルダを選択` remains Primary at all times as the global input action. Secondary uses a dark fill with a full border for supporting, retry, change, cancel, and local configuration actions. Utility is transparent until hover and is reserved for navigation, menus, disclosure, reordering, row actions, and bulk selection controls; icon-only Utility controls require tooltips. Danger is red and is reserved for deletion, discard, and destructive cancellation. Do not add a separate Tertiary role. Standard controls are 32–34px high with 6px corners; final actions are 40px high.
 - Icon-only controls show a shared tooltip after a 500ms pointer delay and immediately on keyboard focus. Tooltips use the dark surface vocabulary, stay within the active desktop bounds, and disappear on leave, focus loss, click, or widget destruction.
 - Queue status combines a monochrome state icon, semantic color, and a text label. Color is never the only status channel.
@@ -111,14 +111,14 @@ Canvas permissions follow the workflow: `1. 範囲・列` allows creation, movem
 
 UI direction should be changed in these files first:
 
-- `megido_ui_theme.py`: colors, fonts, dimensions, visible UI copy.
-- `megido_icons.py`: the local, dependency-free outline icon renderer and icon cache.
-- `profiles/base.py`: profile interface shared by every game.
-- `profiles/<game>.py`: game-specific defaults and field preset rules.
+- `megido_ocr_excel/ui/theme.py`: colors, fonts, dimensions, visible UI copy.
+- `megido_ocr_excel/ui/icons.py`: the local, dependency-free outline icon renderer and icon cache.
+- `megido_ocr_excel/profiles/base.py`: profile interface shared by every game.
+- `megido_ocr_excel/profiles/<game>.py`: game-specific defaults and field preset rules.
 - `DESIGN.md`: rationale and product-level design rules.
 - `PRODUCT.md`: audience, purpose, anti-references, and strategic principles.
 
-Keep OCR behavior, template serialization, and Excel export independent from visual choices. Avoid adding new colors directly inside `megido_ocr_excel_app.py`; add a named token to `megido_ui_theme.py` instead.
+Keep OCR behavior, template serialization, and Excel export independent from visual choices. Avoid adding new colors directly inside `megido_ocr_excel/application.py`; add a named token to `megido_ocr_excel/ui/theme.py` instead.
 
 ## Motion
 

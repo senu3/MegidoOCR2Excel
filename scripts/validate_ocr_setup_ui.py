@@ -11,8 +11,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import megido_ocr_excel_app as app_module
-from ocr_environment import (
+import megido_ocr_excel.application as app_module
+from megido_ocr_excel.ocr.environment import (
     OCR_ENV_LOCATION_ERROR,
     OCR_ENV_READY,
     OCR_ENV_SETUP,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from profiles.base import OcrProfile
-from profiles.megido_novel import PROFILE as MEGIDO_NOVEL_PROFILE
+from megido_ocr_excel.profiles.base import OcrProfile
+from megido_ocr_excel.profiles.megido_novel import PROFILE as MEGIDO_NOVEL_PROFILE
 
 
 _PROFILES = {

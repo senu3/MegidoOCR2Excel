@@ -11,19 +11,19 @@ from unittest.mock import MagicMock, patch
 import customtkinter as ctk
 from PIL import Image
 
-from atomic_io import atomic_save_workbook, atomic_write_text
-from megido_app_config import APP_PROFILE
-from megido_ocr_excel_app import APP_TITLE, MODE_EXPORT, MODE_REVIEW, MODE_TEMPLATE, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
-from megido_ocr_excel_app import COLOR_PRIMARY, COLOR_SECONDARY
-from megido_ui_theme import THEME
-from ocr_environment import (
+from megido_ocr_excel.persistence import atomic_save_workbook, atomic_write_text
+from megido_ocr_excel.config import APP_PROFILE
+from megido_ocr_excel.application import APP_TITLE, MODE_EXPORT, MODE_REVIEW, MODE_TEMPLATE, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
+from megido_ocr_excel.application import COLOR_PRIMARY, COLOR_SECONDARY
+from megido_ocr_excel.ui.theme import THEME
+from megido_ocr_excel.ocr.environment import (
     OCR_ENV_READY,
     OCR_ENV_SETUP,
     OCR_ENV_VERIFY,
     OcrEnvironmentStatus,
 )
-from operation_control import OperationCancelled
-from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
+from megido_ocr_excel.operations import OperationCancelled
+from megido_ocr_excel.models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
 def descendants_of(widget):
@@ -75,7 +75,7 @@ class AtomicSaveTests(unittest.TestCase):
             output = root / "template.json"
             output.write_text("original", encoding="utf-8")
 
-            with patch("atomic_io.os.replace", side_effect=PermissionError("locked")):
+            with patch("megido_ocr_excel.persistence.os.replace", side_effect=PermissionError("locked")):
                 with self.assertRaisesRegex(PermissionError, "locked"):
                     atomic_write_text(output, "replacement")
 
@@ -393,7 +393,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         self, root: ctk.CTk, status: OcrEnvironmentStatus
     ) -> tuple[ImageOcrExcelApp, MagicMock]:
         with patch(
-            "megido_ocr_excel_app.OcrEnvironmentManager"
+            "megido_ocr_excel.application.OcrEnvironmentManager"
         ) as manager_type:
             manager = manager_type.return_value
             manager.apply_to_process.return_value = status.cache_dir
@@ -501,7 +501,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
 
             manager.quick_status.return_value = ready
             manager.verify.return_value = ready
-            with patch("megido_ocr_excel_app.threading.Thread") as thread_type:
+            with patch("megido_ocr_excel.application.threading.Thread") as thread_type:
                 app._start_ocr_environment_startup_check()
                 worker = thread_type.call_args.kwargs["target"]
                 worker()
@@ -660,8 +660,8 @@ class DirtyStateTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as temp_dir:
                 app.template_path = Path(temp_dir) / "existing.json"
                 with (
-                    patch("megido_ocr_excel_app.filedialog.asksaveasfilename") as save_dialog,
-                    patch("megido_ocr_excel_app.save_template") as template_writer,
+                    patch("megido_ocr_excel.application.filedialog.asksaveasfilename") as save_dialog,
+                    patch("megido_ocr_excel.application.save_template") as template_writer,
                 ):
                     saved = app.save_template()
 
@@ -673,10 +673,10 @@ class DirtyStateTests(unittest.TestCase):
                 save_as_path = Path(temp_dir) / "renamed.json"
                 with (
                     patch(
-                        "megido_ocr_excel_app.filedialog.asksaveasfilename",
+                        "megido_ocr_excel.application.filedialog.asksaveasfilename",
                         return_value=str(save_as_path),
                     ) as save_dialog,
-                    patch("megido_ocr_excel_app.save_template") as template_writer,
+                    patch("megido_ocr_excel.application.save_template") as template_writer,
                 ):
                     saved = app.save_template_as()
 
@@ -689,7 +689,7 @@ class DirtyStateTests(unittest.TestCase):
 
                 app._mark_dirty()
                 with (
-                    patch("megido_ocr_excel_app.save_template", side_effect=PermissionError("locked")),
+                    patch("megido_ocr_excel.application.save_template", side_effect=PermissionError("locked")),
                     patch.object(app.dialogs, "showerror") as showerror,
                 ):
                     saved = app.save_template()
@@ -719,7 +719,7 @@ class BackgroundOperationStateTests(unittest.TestCase):
 
     @staticmethod
     def _run_worker(app: ImageOcrExcelApp, *args, **kwargs) -> None:
-        with patch("megido_ocr_excel_app.threading.Thread") as thread_type:
+        with patch("megido_ocr_excel.application.threading.Thread") as thread_type:
             app._run_background(*args, **kwargs)
             thread_type.return_value.start.assert_called_once_with()
             thread_type.call_args.kwargs["target"]()
@@ -864,10 +864,10 @@ class PaddleBackendPolicyTests(unittest.TestCase):
                 app.template_path = Path(temp_dir) / "template.json"
                 with (
                     patch(
-                        "megido_ocr_excel_app.build_template_data",
+                        "megido_ocr_excel.application.build_template_data",
                         return_value={},
                     ) as builder,
-                    patch("megido_ocr_excel_app.save_template"),
+                    patch("megido_ocr_excel.application.save_template"),
                 ):
                     self.assertTrue(app.save_template())
 
@@ -895,7 +895,7 @@ class OcrEnvironmentUiPolicyTests(unittest.TestCase):
         root = ctk.CTk()
         root.withdraw()
         with patch(
-            "megido_ocr_excel_app.OcrEnvironmentManager"
+            "megido_ocr_excel.application.OcrEnvironmentManager"
         ) as manager_type:
             manager = manager_type.return_value
             manager.apply_to_process.return_value = Path("C:/models")

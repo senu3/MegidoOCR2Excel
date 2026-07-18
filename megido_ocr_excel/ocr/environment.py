@@ -8,7 +8,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping
 
-from atomic_io import atomic_write_text
+from megido_ocr_excel.persistence import atomic_write_text
 
 
 OCR_ENV_READY = "ready"

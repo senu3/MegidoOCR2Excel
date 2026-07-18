@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from profiles.base import FieldPreset, OcrProfile
-from ocr_models import DialogueLogDetectionConfig
+from megido_ocr_excel.profiles.base import FieldPreset, OcrProfile
+from megido_ocr_excel.models import DialogueLogDetectionConfig
 
 COORDINATE_DEFAULTS = {
     "coordinate_space": "content",

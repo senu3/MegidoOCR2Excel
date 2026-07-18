@@ -15,11 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from megido_app_config import APP_PROFILE
-from dialogue_log_detector import detect_complete_dialogue_pairs, include_supplement_candidates
-from ocr_engine import OcrEngine, apply_correction_rules, apply_postprocess, clean_text, detect_tesseract, format_detected_text, prepare_for_ocr, scaled_field
-from ocr_models import CoordinateSettings, OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField
-from template_store import coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, text_formatting_from_template
+from megido_ocr_excel.config import APP_PROFILE
+from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs, include_supplement_candidates
+from megido_ocr_excel.ocr.engine import OcrEngine, apply_correction_rules, apply_postprocess, clean_text, detect_tesseract, format_detected_text, prepare_for_ocr, scaled_field
+from megido_ocr_excel.models import CoordinateSettings, OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField
+from megido_ocr_excel.templates import coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, text_formatting_from_template
 
 try:
     import pytesseract

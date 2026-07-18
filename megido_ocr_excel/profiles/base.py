@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-from ocr_models import CoordinateSettings, DialogueLogDetectionConfig, TextFormattingSettings, text_formatting_settings_from_dict
+from megido_ocr_excel.models import CoordinateSettings, DialogueLogDetectionConfig, TextFormattingSettings, text_formatting_settings_from_dict
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from ocr_environment import (
+from megido_ocr_excel.ocr.environment import (
     OCR_ENV_LOCATION_ERROR,
     OCR_ENV_READY,
     OCR_ENV_SETUP,

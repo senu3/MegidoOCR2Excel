@@ -5,10 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ocr_models import LINE_JOIN_NEWLINE, SET_SLOT_SPEAKER, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
-from profiles import get_profile, registered_profiles
-from profiles.base import FieldPreset, OcrProfile
-from template_store import TemplateValidationError, build_template_data, load_template, save_template, text_formatting_from_template
+from megido_ocr_excel.models import LINE_JOIN_NEWLINE, SET_SLOT_SPEAKER, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
+from megido_ocr_excel.profiles import get_profile, registered_profiles
+from megido_ocr_excel.profiles.base import FieldPreset, OcrProfile
+from megido_ocr_excel.templates import TemplateValidationError, build_template_data, load_template, save_template, text_formatting_from_template
 
 
 def valid_template(profile_id: str = "megido_novel") -> dict:

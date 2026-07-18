@@ -4,8 +4,8 @@ from dataclasses import dataclass, replace
 
 from PIL import Image
 
-from ocr_engine import detect_content_rect, scaled_field
-from ocr_models import (
+from megido_ocr_excel.ocr.engine import detect_content_rect, scaled_field
+from megido_ocr_excel.models import (
     CoordinateSettings,
     SET_SLOT_SPEAKER,
     SET_SLOT_SUPPLEMENT,
