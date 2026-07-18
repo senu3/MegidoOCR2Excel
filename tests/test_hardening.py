@@ -15,7 +15,12 @@ from megido_app_config import APP_PROFILE
 from megido_ocr_excel_app import APP_TITLE, MODE_EXPORT, MODE_REVIEW, MODE_TEMPLATE, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
 from megido_ocr_excel_app import COLOR_PRIMARY, COLOR_SECONDARY
 from megido_ui_theme import THEME
-from ocr_environment import OCR_ENV_READY, OCR_ENV_SETUP, OcrEnvironmentStatus
+from ocr_environment import (
+    OCR_ENV_READY,
+    OCR_ENV_SETUP,
+    OCR_ENV_VERIFY,
+    OcrEnvironmentStatus,
+)
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
@@ -363,7 +368,11 @@ class OcrSetupOnboardingTests(unittest.TestCase):
     def _status(state: str, *, ready: bool) -> OcrEnvironmentStatus:
         labels = {
             OCR_ENV_READY: ("準備完了", "PaddleOCRを使用できます。"),
-            OCR_ENV_SETUP: ("準備が必要", "初回の認識モデル取得が必要です。"),
+            OCR_ENV_SETUP: (
+                "準備が必要",
+                "認識モデルを取得します。初回は時間がかかります。",
+            ),
+            OCR_ENV_VERIFY: ("確認が必要", "認識モデルを一度確認してください。"),
         }
         label, detail = labels[state]
         status = OcrEnvironmentStatus(
@@ -418,6 +427,8 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             ]
             self.assertIn("OCRを準備", labels)
             self.assertIn("準備が必要", labels)
+            self.assertIn("PaddleOCRを使用します。", labels)
+            self.assertFalse(any("初回のみ" in text for text in labels))
             self.assertIn("OCRを準備する", buttons)
             self.assertIn("あとで行う", buttons)
 
@@ -441,6 +452,63 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         try:
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
+        finally:
+            self._destroy(app, root)
+
+    def test_unverified_models_are_checked_automatically(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        verify = self._status(OCR_ENV_VERIFY, ready=False)
+        ready = self._status(OCR_ENV_READY, ready=True)
+        app, manager = self._app_with_status(root, verify)
+        try:
+            self.assertTrue(app.ocr_setup_modal.visible)
+            self.assertTrue(app.ocr_startup_check_running)
+            self.assertEqual(
+                app.ocr_setup_primary_button.cget("text"), "確認中…"
+            )
+            self.assertEqual(
+                app.ocr_setup_primary_button.cget("state"), "disabled"
+            )
+            self.assertEqual(
+                app.ocr_setup_primary_button.winfo_manager(), ""
+            )
+
+            manager.quick_status.return_value = ready
+            manager.verify.return_value = ready
+            with patch("megido_ocr_excel_app.threading.Thread") as thread_type:
+                app._start_ocr_environment_startup_check()
+                worker = thread_type.call_args.kwargs["target"]
+                worker()
+            root.update()
+
+            manager.verify.assert_called_once()
+            self.assertFalse(app.ocr_startup_check_running)
+            self.assertEqual(app.status_var.get(), "OCRの確認が完了しました。")
+            app._complete_ocr_startup_check_transition()
+            self.assertFalse(app.ocr_setup_modal.visible)
+            self.assertTrue(app.workflow_choice_modal.visible)
+        finally:
+            self._destroy(app, root)
+
+    def test_deferred_automatic_check_does_not_interrupt_workflow(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        verify = self._status(OCR_ENV_VERIFY, ready=False)
+        ready = self._status(OCR_ENV_READY, ready=True)
+        app, manager = self._app_with_status(root, verify)
+        try:
+            app.defer_ocr_setup()
+            self.assertFalse(app.ocr_setup_modal.visible)
+            self.assertTrue(app.workflow_choice_modal.visible)
+
+            manager.quick_status.return_value = ready
+            app._finish_ocr_startup_check_success(ready)
+            app._complete_ocr_startup_check_transition()
+
+            self.assertFalse(app.ocr_setup_modal.visible)
+            self.assertTrue(app.workflow_choice_modal.visible)
+            self.assertTrue(app.ocr_startup_check_deferred)
         finally:
             self._destroy(app, root)
 

@@ -330,8 +330,14 @@ class ImageOcrExcelApp:
         self.workflow_choice_primary_button: ctk.CTkButton | None = None
         self.ocr_setup_status_label: ctk.CTkLabel | None = None
         self.ocr_setup_note_label: ctk.CTkLabel | None = None
+        self.ocr_setup_progress: ctk.CTkProgressBar | None = None
         self.ocr_setup_primary_button: ctk.CTkButton | None = None
         self.ocr_setup_secondary_button: ctk.CTkButton | None = None
+        self.ocr_setup_settings_button: ctk.CTkButton | None = None
+        self.ocr_startup_check_running = False
+        self.ocr_startup_check_started = False
+        self.ocr_startup_check_deferred = False
+        self._ocr_environment_ui_refresher = None
         self._pending_ocr_action = None
         self.hbar: ctk.CTkScrollbar | None = None
         self.vbar: ctk.CTkScrollbar | None = None
@@ -843,10 +849,7 @@ class ImageOcrExcelApp:
         ).grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 8))
         ctk.CTkLabel(
             panel,
-            text=(
-                "このアプリはPaddleOCRを使用します。\n"
-                "初回のみ認識モデルの取得と確認が必要です。"
-            ),
+            text="このアプリはPaddleOCRを使用します。",
             justify="center",
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
@@ -885,6 +888,18 @@ class ImageOcrExcelApp:
         self.ocr_setup_note_label.grid(
             row=1, column=0, sticky="ew", padx=14, pady=(0, 12)
         )
+        self.ocr_setup_progress = ctk.CTkProgressBar(
+            status_frame,
+            height=4,
+            corner_radius=2,
+            fg_color=THEME.palette.border_subtle,
+            progress_color=THEME.palette.info,
+            mode="indeterminate",
+        )
+        self.ocr_setup_progress.grid(
+            row=2, column=0, sticky="ew", padx=14, pady=(2, 12)
+        )
+        self.ocr_setup_progress.grid_remove()
         self.ocr_setup_primary_button = ctk.CTkButton(
             panel,
             text="OCRを準備する",
@@ -916,7 +931,7 @@ class ImageOcrExcelApp:
         self.ocr_setup_secondary_button.grid(
             row=4, column=0, sticky="ew", padx=28, pady=(0, 8)
         )
-        settings_button = ctk.CTkButton(
+        self.ocr_setup_settings_button = ctk.CTkButton(
             panel,
             text="保存先の設定",
             command=self.open_ocr_environment_settings,
@@ -928,12 +943,12 @@ class ImageOcrExcelApp:
             border_width=0,
             text_color=COLOR_MUTED,
         )
-        settings_button.grid(row=5, column=0, pady=(0, 20))
+        self.ocr_setup_settings_button.grid(row=5, column=0, pady=(0, 20))
         modal.set_focus_order(
             [
                 self.ocr_setup_primary_button,
                 self.ocr_setup_secondary_button,
-                settings_button,
+                self.ocr_setup_settings_button,
             ],
             default=self.ocr_setup_primary_button,
         )
@@ -941,8 +956,14 @@ class ImageOcrExcelApp:
         self.ocr_setup_modal = modal
 
     def _show_initial_overlay(self) -> None:
-        if self.ocr_environment.quick_status().ready:
+        status = self.ocr_environment.quick_status()
+        if status.ready:
             self._show_workflow_choice()
+        elif status.state == OCR_ENV_VERIFY:
+            self.ocr_startup_check_running = True
+            self.ocr_startup_check_deferred = False
+            self.show_ocr_setup()
+            self.root.after(150, self._start_ocr_environment_startup_check)
         else:
             self.show_ocr_setup()
 
@@ -3571,10 +3592,16 @@ class ImageOcrExcelApp:
     def show_ocr_setup(self, pending_action=None) -> None:
         if pending_action is not None:
             self._pending_ocr_action = pending_action
+            self.ocr_startup_check_deferred = False
         self._refresh_ocr_setup_overlay()
         self._hide_workflow_choice()
         if self.ocr_setup_modal is not None:
-            self.ocr_setup_modal.show(focus=self.ocr_setup_primary_button)
+            focus = (
+                self.ocr_setup_secondary_button
+                if self.ocr_startup_check_running
+                else self.ocr_setup_primary_button
+            )
+            self.ocr_setup_modal.show(focus=focus)
 
     def _refresh_ocr_setup_overlay(self) -> None:
         if (
@@ -3590,7 +3617,17 @@ class ImageOcrExcelApp:
         color = THEME.palette.warning
         primary_text = "状態を確認する"
         primary_command = self.prepare_ocr_environment
-        if self.ocr_environment_restart_required:
+        primary_state = "normal"
+        settings_state = "normal"
+        if self.ocr_startup_check_running:
+            label = "OCRを確認しています"
+            note = "準備済みの認識モデルを自動で確認しています。"
+            icon_name = "refresh"
+            color = THEME.palette.info
+            primary_text = "確認中…"
+            primary_state = "disabled"
+            settings_state = "disabled"
+        elif self.ocr_environment_restart_required:
             label = "再起動が必要"
             note = "変更したモデル保存先は、アプリの再起動後に使用できます。"
             primary_text = "保存先を確認"
@@ -3618,12 +3655,119 @@ class ImageOcrExcelApp:
         )
         self.ocr_setup_note_label.configure(text=note)
         self.ocr_setup_primary_button.configure(
-            text=primary_text, command=primary_command
+            text=primary_text,
+            command=primary_command,
+            state=primary_state,
         )
+        if self.ocr_setup_settings_button is not None:
+            self.ocr_setup_settings_button.configure(state=settings_state)
+        if self.ocr_setup_progress is not None:
+            if self.ocr_startup_check_running:
+                self.ocr_setup_note_label.grid_configure(pady=(0, 0))
+                self.ocr_setup_progress.grid()
+                self.ocr_setup_progress.start()
+                self.ocr_setup_primary_button.grid_remove()
+            else:
+                self.ocr_setup_progress.stop()
+                self.ocr_setup_progress.grid_remove()
+                self.ocr_setup_note_label.grid_configure(pady=(0, 12))
+                self.ocr_setup_primary_button.grid()
         if self.ocr_setup_modal is not None:
+            self.ocr_setup_modal.panel.configure(border_color=color)
+            focus_order = (
+                [self.ocr_setup_secondary_button]
+                if self.ocr_startup_check_running
+                else [
+                    self.ocr_setup_primary_button,
+                    self.ocr_setup_secondary_button,
+                    self.ocr_setup_settings_button,
+                ]
+            )
+            self.ocr_setup_modal.set_focus_order(
+                [widget for widget in focus_order if widget is not None],
+                default=(
+                    self.ocr_setup_secondary_button
+                    if self.ocr_startup_check_running
+                    else self.ocr_setup_primary_button
+                ),
+            )
             self.ocr_setup_modal.refresh_geometry()
 
+    def _start_ocr_environment_startup_check(self) -> None:
+        if (
+            not self.ocr_startup_check_running
+            or self.ocr_startup_check_started
+        ):
+            return
+        self.ocr_startup_check_started = True
+        language = self.lang_var.get()
+
+        def worker() -> None:
+            try:
+                status = self.ocr_environment.verify(
+                    lambda: self.ocr_engine.verify_paddle_environment(
+                        language
+                    )
+                )
+            except Exception as error:
+                def callback(value=error) -> None:
+                    self._finish_ocr_startup_check_error(value)
+            else:
+                def callback(value=status) -> None:
+                    self._finish_ocr_startup_check_success(value)
+            try:
+                self.root.after(0, callback)
+            except Exception:
+                return
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_ocr_startup_check_success(
+        self, status: OcrEnvironmentStatus
+    ) -> None:
+        self.ocr_startup_check_running = False
+        self.ocr_startup_check_started = False
+        self.ocr_environment_last_error = ""
+        if not status.ready:
+            self._finish_ocr_startup_check_error(
+                RuntimeError("OCRの準備完了を確認できませんでした。")
+            )
+            return
+        self.status_var.set("OCRの確認が完了しました。")
+        self._refresh_ocr_setup_overlay()
+        self._refresh_open_ocr_environment_settings()
+        if (
+            self.ocr_setup_modal is not None
+            and self.ocr_setup_modal.visible
+            and not self.ocr_startup_check_deferred
+        ):
+            self.root.after(250, self._complete_ocr_startup_check_transition)
+
+    def _complete_ocr_startup_check_transition(self) -> None:
+        if (
+            self.ocr_setup_modal is not None
+            and self.ocr_setup_modal.visible
+            and not self.ocr_startup_check_deferred
+        ):
+            self._finish_ocr_setup_success()
+
+    def _finish_ocr_startup_check_error(self, error: Exception) -> None:
+        self.ocr_startup_check_running = False
+        self.ocr_startup_check_started = False
+        self.ocr_environment.invalidate_verification()
+        self.ocr_environment_last_error = f"自動確認に失敗しました: {error}"
+        self.status_var.set("OCRを自動確認できませんでした。")
+        if self.ocr_setup_modal is not None and self.ocr_setup_modal.visible:
+            self._refresh_ocr_setup_overlay()
+        self._refresh_open_ocr_environment_settings()
+
+    def _refresh_open_ocr_environment_settings(self) -> None:
+        refresher = self._ocr_environment_ui_refresher
+        if refresher is not None:
+            refresher()
+
     def defer_ocr_setup(self) -> None:
+        self.ocr_startup_check_deferred = True
         self._pending_ocr_action = None
         if self.ocr_setup_modal is not None:
             self.ocr_setup_modal.hide()
@@ -3649,9 +3793,10 @@ class ImageOcrExcelApp:
             self.show_ocr_setup()
 
     def prepare_ocr_environment(self) -> None:
-        if self.busy:
+        if self.busy or self.ocr_startup_check_running:
             return
         self.ocr_environment_last_error = ""
+        language = self.lang_var.get()
         if self.ocr_setup_modal is not None:
             self.ocr_setup_modal.hide()
         completed = {"ready": False}
@@ -3659,7 +3804,7 @@ class ImageOcrExcelApp:
         def work() -> OcrEnvironmentStatus:
             return self.ocr_environment.verify(
                 lambda: self.ocr_engine.verify_paddle_environment(
-                    self.lang_var.get()
+                    language
                 )
             )
 
@@ -4128,6 +4273,7 @@ class ImageOcrExcelApp:
         def close_modal() -> None:
             if self.settings_modal is modal:
                 self.settings_modal = None
+                self._ocr_environment_ui_refresher = None
             modal.destroy()
             if after_close is not None:
                 self.root.after(0, after_close)
@@ -4465,6 +4611,8 @@ class ImageOcrExcelApp:
         def environment_style(
             status: OcrEnvironmentStatus,
         ) -> tuple[str, str]:
+            if self.ocr_startup_check_running:
+                return "refresh", THEME.palette.info
             if self.ocr_environment_restart_required:
                 return "alert_circle", THEME.palette.warning
             if status.state == OCR_ENV_READY:
@@ -4477,6 +4625,8 @@ class ImageOcrExcelApp:
 
         def visible_environment_status() -> tuple[OcrEnvironmentStatus, str, str]:
             status = self.ocr_environment.quick_status()
+            if self.ocr_startup_check_running:
+                return status, "確認中", "起動時のOCR確認を実行しています。"
             if self.ocr_environment_restart_required:
                 return status, "再起動が必要", "保存先は次回起動時に反映されます。"
             note = self.ocr_environment_last_error or status.detail
@@ -4485,14 +4635,15 @@ class ImageOcrExcelApp:
         def sync_focus_order() -> None:
             focus_order = [lang_combo, details_button]
             if details_expanded:
-                focus_order.extend(
-                    [
-                        open_cache_button,
-                        change_cache_button,
-                        verify_environment_button,
-                    ]
-                )
-                if self.ocr_environment.settings.cache_mode == "custom":
+                focus_order.append(open_cache_button)
+                if not self.ocr_startup_check_running:
+                    focus_order.extend(
+                        [change_cache_button, verify_environment_button]
+                    )
+                if (
+                    not self.ocr_startup_check_running
+                    and self.ocr_environment.settings.cache_mode == "custom"
+                ):
                     focus_order.append(automatic_cache_button)
             focus_order.extend(
                 [
@@ -4521,6 +4672,13 @@ class ImageOcrExcelApp:
             open_cache_button.configure(
                 state="normal" if status.cache_dir.is_dir() else "disabled"
             )
+            change_cache_button.configure(
+                state=(
+                    "disabled"
+                    if self.ocr_startup_check_running
+                    else "normal"
+                )
+            )
             verify_environment_button.configure(
                 text=(
                     "OCRを準備する"
@@ -4529,10 +4687,18 @@ class ImageOcrExcelApp:
                 ),
                 state=(
                     "disabled"
-                    if self.ocr_environment_restart_required
+                    if self.ocr_startup_check_running
+                    or self.ocr_environment_restart_required
                     or status.state in {OCR_ENV_LOCATION_ERROR, OCR_ENV_UNAVAILABLE}
                     else "normal"
                 ),
+            )
+            automatic_cache_button.configure(
+                state=(
+                    "disabled"
+                    if self.ocr_startup_check_running
+                    else "normal"
+                )
             )
             if self.ocr_environment.settings.cache_mode == "custom":
                 automatic_cache_button.grid()
@@ -4586,6 +4752,8 @@ class ImageOcrExcelApp:
             return target != self.ocr_environment_active_cache_dir
 
         def choose_cache_folder() -> None:
+            if self.ocr_startup_check_running:
+                return
             current = self.ocr_environment.cache_dir
             initial = current if current.is_dir() else current.parent
             selected = filedialog.askdirectory(
@@ -4604,6 +4772,8 @@ class ImageOcrExcelApp:
             refresh_environment_ui()
 
         def reset_automatic_cache() -> None:
+            if self.ocr_startup_check_running:
+                return
             try:
                 self.ocr_environment.use_automatic_cache()
             except OSError as exc:
@@ -4614,7 +4784,10 @@ class ImageOcrExcelApp:
             refresh_environment_ui()
 
         def verify_environment() -> None:
-            if self.ocr_environment_restart_required:
+            if (
+                self.ocr_startup_check_running
+                or self.ocr_environment_restart_required
+            ):
                 return
             self.ocr_environment_last_error = ""
             modal.hide()
@@ -4653,6 +4826,7 @@ class ImageOcrExcelApp:
         change_cache_button.configure(command=choose_cache_folder)
         automatic_cache_button.configure(command=reset_automatic_cache)
         verify_environment_button.configure(command=verify_environment)
+        self._ocr_environment_ui_refresher = refresh_environment_ui
         refresh_environment_ui()
 
         modal.set_escape_handler(close_modal)
@@ -4703,6 +4877,7 @@ class ImageOcrExcelApp:
         window.destroy()
         if self.settings_modal is window:
             self.settings_modal = None
+            self._ocr_environment_ui_refresher = None
         if changed:
             self._render_side_body()
         if after_close is not None:

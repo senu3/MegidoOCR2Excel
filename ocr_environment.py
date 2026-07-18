@@ -173,7 +173,7 @@ class OcrEnvironmentManager:
             return OcrEnvironmentStatus(
                 OCR_ENV_SETUP,
                 "準備が必要",
-                "初回の認識モデル取得が必要です。",
+                "認識モデルを取得します。初回は時間がかかります。",
                 cache_dir,
                 self.settings.cache_mode,
             )

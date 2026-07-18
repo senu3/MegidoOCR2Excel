@@ -420,7 +420,9 @@ class PaddleBackend:
             with _quiet_paddle_import():
                 from paddleocr import PaddleOCR
         except ImportError as exc:
-            raise RuntimeError("PaddleOCRがインストールされていません。`uv sync` で依存関係を同期してください。") from exc
+            raise RuntimeError(
+                "PaddleOCRを読み込めません。アプリの再インストールまたはREADMEの実行方法を確認してください。"
+            ) from exc
 
         candidates = [
             {
@@ -453,7 +455,9 @@ class PaddleBackend:
             with _quiet_paddle_import():
                 from paddleocr import TextRecognition
         except ImportError as exc:
-            raise RuntimeError("PaddleOCRがインストールされていません。`uv sync` で依存関係を同期してください。") from exc
+            raise RuntimeError(
+                "PaddleOCRを読み込めません。アプリの再インストールまたはREADMEの実行方法を確認してください。"
+            ) from exc
 
         candidates = [
             {"model_name": "PP-OCRv6_medium_rec"},
