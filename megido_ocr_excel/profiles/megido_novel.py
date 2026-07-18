@@ -5,6 +5,7 @@ from megido_ocr_excel.models import DialogueLogDetectionConfig
 
 COORDINATE_DEFAULTS = {
     "coordinate_space": "content",
+    "source_content_rect": (0, 219, 1080, 2087),
     "black_threshold": 8,
     "min_nonblack_ratio": 0.01,
     "stable_run": 6,

@@ -984,6 +984,13 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertIsNotNone(modal)
             self.assertTrue(modal.visible)
             self.assertTrue(bool(modal.window.overrideredirect()))
+            texts = [
+                str(widget.cget("text"))
+                for widget in descendants_of(modal.panel)
+                if "text" in widget.keys()
+            ]
+            self.assertIn("診断ログ", texts)
+            self.assertIn("フォルダーを開く", texts)
             if sys.platform.startswith("win"):
                 self.assertIsNone(root.grab_current())
             else:

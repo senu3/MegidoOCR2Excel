@@ -18,9 +18,12 @@ from megido_ocr_excel.config import natural_image_sort_key
 from megido_ocr_excel.ocr.engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
 from megido_ocr_excel.models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_SET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, SET_PRESET_HEADING_TEXT, SET_PRESET_SINGLE_LINE, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error, set_definition_for_preset
 from scripts.ocr_accuracy_common import build_accuracy_row, expected_values_for_field, measurement_fields, read_expected_sets, recognize_with_engine
-from megido_ocr_excel.templates import coordinate_settings_from_template, load_template
-from megido_ocr_excel.templates import fields_from_template
+from megido_ocr_excel.templates import coordinate_settings_from_template
 from megido_ocr_excel.profiles.megido_novel import PROFILE
+
+
+def auto_detection_context() -> tuple[list[TemplateField], CoordinateSettings]:
+    return PROFILE.auto_detection_fields(), PROFILE.coordinate_settings()
 
 
 class BatchWorkflowTests(unittest.TestCase):
@@ -98,12 +101,7 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertGreaterEqual(sheet.row_dimensions[2].height or 0, 30)
 
     def test_log_detector_tracks_shifted_complete_pairs_and_skips_fragments(self) -> None:
-        template = load_template(
-            Path(".samples/megido_novellog_template.json"),
-            expected_profile_id="megido_novel",
-        )
-        fields = fields_from_template(template)
-        settings = coordinate_settings_from_template(template)
+        fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
 
         b1 = detect_complete_dialogue_pairs(
@@ -132,12 +130,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertGreater(b1.groups[0][2].x2 - b1.groups[0][2].x1, 700)
 
     def test_dynamic_log_export_writes_only_complete_pairs_and_notices(self) -> None:
-        template = load_template(
-            Path(".samples/megido_novellog_template.json"),
-            expected_profile_id="megido_novel",
-        )
-        fields = fields_from_template(template)
-        coordinate_settings = coordinate_settings_from_template(template)
+        fields, coordinate_settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "log.xlsx"
@@ -214,12 +207,7 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual(result.errors, [])
 
     def test_single_screen_patterns_are_classified_safely(self) -> None:
-        template = load_template(
-            Path(".samples/megido_novel_template.json"),
-            expected_profile_id="megido_novel",
-        )
-        fields = fields_from_template(template)
-        settings = coordinate_settings_from_template(template)
+        fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
 
         normal = detect_complete_dialogue_pairs(
@@ -319,12 +307,7 @@ class BatchWorkflowTests(unittest.TestCase):
             )
 
     def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:
-        template = load_template(
-            Path(".samples/megido_novel_template.json"),
-            expected_profile_id="megido_novel",
-        )
-        fields = fields_from_template(template)
-        settings = coordinate_settings_from_template(template)
+        fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
 
         layouts = [
@@ -340,12 +323,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(layouts, ["normal"] * 9)
 
     def test_special_conversation_samples_are_outside_auto_detection(self) -> None:
-        template = load_template(
-            Path(".samples/megido_novellog_template.json"),
-            expected_profile_id="megido_novel",
-        )
-        fields = fields_from_template(template)
-        settings = coordinate_settings_from_template(template)
+        fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
 
         results = [
@@ -378,12 +356,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertIn("意訳", supplement[1].text)
 
     def test_accuracy_measurement_uses_the_same_dynamic_groups_as_export(self) -> None:
-        template = load_template(
-            Path(".samples/megido_novel_template.json"),
-            expected_profile_id="megido_novel",
-        )
-        fields = fields_from_template(template)
-        settings = coordinate_settings_from_template(template)
+        fields, settings = auto_detection_context()
         speaker = next(field for field in fields if field.slot_key == SET_SLOT_SPEAKER)
         dialogue = next(field for field in fields if field.slot_key == SET_SLOT_TEXT)
 
@@ -454,12 +427,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertFalse(failed.normalized_match)
 
     def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
-        template = load_template(
-            Path(".samples/megido_novellog_template.json"),
-            expected_profile_id="megido_novel",
-        )
-        fields = fields_from_template(template)
-        coordinate_settings = coordinate_settings_from_template(template)
+        fields, coordinate_settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "blank.xlsx"
@@ -503,11 +471,8 @@ class BatchWorkflowTests(unittest.TestCase):
 
         self.assertEqual((mapped.x1, mapped.y1, mapped.x2, mapped.y2), (10, 40, 90, 60))
 
-    def test_sample_template_enables_content_coordinates(self) -> None:
-        template = load_template(Path(".samples/megido_novel_template.json"), expected_profile_id="megido_novel")
-
-        settings = coordinate_settings_from_template(template)
-        fields = fields_from_template(template)
+    def test_profile_enables_content_coordinates_and_field_presets(self) -> None:
+        fields, settings = auto_detection_context()
 
         self.assertEqual(settings.coordinate_space, COORDINATE_SPACE_CONTENT)
         self.assertEqual(settings.source_content_rect, (0, 219, 1080, 2087))

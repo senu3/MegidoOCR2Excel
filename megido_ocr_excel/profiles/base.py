@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Mapping
 
-from megido_ocr_excel.models import CoordinateSettings, DialogueLogDetectionConfig, TextFormattingSettings, text_formatting_settings_from_dict
+from megido_ocr_excel.models import CoordinateSettings, DialogueLogDetectionConfig, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, TextFormattingSettings, text_formatting_settings_from_dict
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,27 @@ class OcrProfile:
         if preset:
             values.update(preset.ocr)
         return values
+
+    def auto_detection_fields(self) -> list[TemplateField]:
+        fields = [
+            TemplateField(
+                "話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER
+            ),
+            TemplateField(
+                "セリフ本文",
+                0,
+                0,
+                1,
+                1,
+                set_id=1,
+                slot_key=SET_SLOT_TEXT,
+                ocr_line_split="detected",
+            ),
+        ]
+        for field in fields:
+            for key, value in self.field_ocr_preset(field.name).items():
+                setattr(field, key, value)
+        return fields
 
     def _matching_preset(self, field_name: str) -> FieldPreset | None:
         return next((preset for preset in self.field_presets if preset.matches(field_name)), None)

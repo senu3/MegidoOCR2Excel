@@ -59,7 +59,12 @@ def build_parser(
 ) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=f"{field_name} のOCR精度を測定します。")
     parser.add_argument("--samples-dir", type=Path, default=ROOT / ".samples")
-    parser.add_argument("--template", type=Path, default=ROOT / ".samples" / "megido_novel_template.json")
+    parser.add_argument(
+        "--template",
+        type=Path,
+        default=None,
+        help="任意のテンプレートで測定する場合だけ指定します。",
+    )
     parser.add_argument("--field", default=field_name)
     parser.add_argument("--lang", default=default_lang)
     parser.add_argument("--backend", choices=["tesseract", "paddle"], default=APP_PROFILE.default_backend)
@@ -116,17 +121,26 @@ def run_accuracy(
         print("pytesseract がインストールされていません。", file=sys.stderr)
         return 2
 
-    template = load_template(args.template, expected_profile_id=APP_PROFILE.profile_id)
-    args.coordinate_settings = coordinate_settings_from_template(template)
-    args.text_formatting = text_formatting_from_template(
-        template, APP_PROFILE.text_formatting_settings()
-    )
-    args.correction_rules = correction_rules_from_template(template)
-    fields = fields_from_template(template)
+    template: dict = {}
+    if args.template is not None:
+        template = load_template(
+            args.template, expected_profile_id=APP_PROFILE.profile_id
+        )
+        args.coordinate_settings = coordinate_settings_from_template(template)
+        args.text_formatting = text_formatting_from_template(
+            template, APP_PROFILE.text_formatting_settings()
+        )
+        args.correction_rules = correction_rules_from_template(template)
+        fields = fields_from_template(template)
+    else:
+        args.coordinate_settings = APP_PROFILE.coordinate_settings()
+        args.text_formatting = APP_PROFILE.text_formatting_settings()
+        args.correction_rules = []
+        fields = APP_PROFILE.auto_detection_fields()
     field = find_field(fields, args.field)
     if field is None:
         names = ", ".join(item.name for item in fields)
-        print(f"テンプレートに項目がありません: {args.field}（候補: {names}）", file=sys.stderr)
+        print(f"測定対象の項目がありません: {args.field}（候補: {names}）", file=sys.stderr)
         return 2
 
     tesseract = args.tesseract or str(template.get("tesseract_path") or "") or detect_tesseract()

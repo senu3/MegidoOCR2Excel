@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import threading
@@ -25,6 +26,13 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from megido_ocr_excel.ui.dialogs import AppDialogs
+from megido_ocr_excel.diagnostics import (
+    configure_logging,
+    current_log_path,
+    ensure_log_directory,
+    install_exception_hooks,
+    shutdown_logging,
+)
 from megido_ocr_excel.export.queue import (
     STATUS_EXCLUDED,
     STATUS_FAILED,
@@ -110,6 +118,9 @@ from megido_ocr_excel.templates import (
     text_formatting_from_template,
 )
 from megido_ocr_excel.ui.tooltip import add_tooltip
+
+
+logger = logging.getLogger(__name__)
 
 
 class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
@@ -205,6 +216,7 @@ class ImageOcrExcelApp:
         self.root.minsize(*THEME.layout.min_window_size)
         self.root.option_add("*Font", f"{{{UI_FONT_FAMILY}}} 10")
         self.dialogs = AppDialogs(root)
+        self.root.report_callback_exception = self._report_callback_exception
         self.dirty = False
         self._dirty_tracking_suspended = True
 
@@ -1004,6 +1016,7 @@ class ImageOcrExcelApp:
         self.busy = True
         self._operation_cancel_event = threading.Event()
         self._show_loading(loading_message)
+        logger.info("Background operation started | operation=%s", loading_message)
 
         def finish_common() -> bool:
             close_after_cancel = self._close_after_cancel
@@ -1024,6 +1037,7 @@ class ImageOcrExcelApp:
                     self.request_close()
 
         def finish_success(result) -> None:
+            logger.info("Background operation completed | operation=%s", loading_message)
             finish_result(on_success, result)
 
         def finish_error(error: Exception) -> None:
@@ -1042,6 +1056,7 @@ class ImageOcrExcelApp:
                 else:
                     self.status_var.set("処理をキャンセルしました。")
 
+            logger.info("Background operation cancelled | operation=%s", loading_message)
             finish_result(report_cancelled)
 
         def worker() -> None:
@@ -1050,11 +1065,28 @@ class ImageOcrExcelApp:
             except OperationCancelled:
                 self.root.after(0, finish_cancelled)
             except Exception as exc:
+                logger.exception(
+                    "Background operation failed | operation=%s", loading_message
+                )
                 self.root.after(0, lambda error=exc: finish_error(error))
             else:
                 self.root.after(0, lambda value=result: finish_success(value))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _report_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
+        logger.critical(
+            "Unhandled UI callback exception",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+        try:
+            self.dialogs.showerror(
+                "予期しないエラー",
+                "処理中にエラーが発生しました。\n"
+                "アプリを再起動しても解決しない場合は、基本設定から診断ログを確認してください。",
+            )
+        except Exception:
+            logger.exception("Failed to show the unexpected-error dialog")
 
     def _is_operation_cancelled(self) -> bool:
         event = self._operation_cancel_event
@@ -3521,23 +3553,7 @@ class ImageOcrExcelApp:
         self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
         if hasattr(self, "set_preset_var"):
             self.set_preset_var.set(SET_PRESET_DISPLAY[SET_PRESET_CONVERSATION])
-        speaker = TemplateField(
-            "話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER
-        )
-        dialogue = TemplateField(
-            "セリフ本文",
-            0,
-            0,
-            1,
-            1,
-            set_id=1,
-            slot_key=SET_SLOT_TEXT,
-            ocr_line_split="detected",
-        )
-        for field in (speaker, dialogue):
-            for key, value in self.profile.field_ocr_preset(field.name).items():
-                setattr(field, key, value)
-        self.auto_detection_base_fields = [speaker, dialogue]
+        self.auto_detection_base_fields = self.profile.auto_detection_fields()
         self.fields = [replace(field) for field in self.auto_detection_base_fields]
         self.selected_index = 0
         with self._without_dirty_tracking():
@@ -3713,6 +3729,7 @@ class ImageOcrExcelApp:
                     )
                 )
             except Exception as error:
+                logger.exception("Automatic OCR environment check failed")
                 def callback(value=error) -> None:
                     self._finish_ocr_startup_check_error(value)
             else:
@@ -3721,6 +3738,10 @@ class ImageOcrExcelApp:
             try:
                 self.root.after(0, callback)
             except Exception:
+                logger.debug(
+                    "OCR startup result was discarded because the UI is closing",
+                    exc_info=True,
+                )
                 return
 
         threading.Thread(target=worker, daemon=True).start()
@@ -3737,6 +3758,7 @@ class ImageOcrExcelApp:
             )
             return
         self.status_var.set("OCRの確認が完了しました。")
+        logger.info("Automatic OCR environment check completed")
         self._refresh_ocr_setup_overlay()
         self._refresh_open_ocr_environment_settings()
         if (
@@ -3770,6 +3792,7 @@ class ImageOcrExcelApp:
             refresher()
 
     def defer_ocr_setup(self) -> None:
+        logger.info("OCR setup deferred by user")
         self.ocr_startup_check_deferred = True
         self._pending_ocr_action = None
         if self.ocr_setup_modal is not None:
@@ -3879,6 +3902,7 @@ class ImageOcrExcelApp:
         self.source_folder = folder
         self.image_files = files
         self.image_queue.reset(files)
+        logger.info("Image folder selected | images=%d", len(files))
         self._clear_retry_context()
         self.folder_var.set(self._folder_status_text())
         self.current_image_index = 0
@@ -3914,6 +3938,7 @@ class ImageOcrExcelApp:
         try:
             self.original_image = Image.open(self.image_path).convert("RGB")
         except Exception as exc:
+            logger.exception("Failed to open image")
             self.dialogs.showerror("画像エラー", f"画像を開けませんでした。\n{exc}")
             return
         self._refresh_content_mapping()
@@ -4162,6 +4187,7 @@ class ImageOcrExcelApp:
         try:
             save_template(path, data)
         except Exception as exc:
+            logger.exception("Failed to save template")
             self.dialogs.showerror(
                 "テンプレート保存エラー",
                 f"テンプレートを保存できませんでした。元のファイルは変更されていません。\n\n{path}\n{exc}",
@@ -4169,6 +4195,7 @@ class ImageOcrExcelApp:
             return False
         self.template_path = path
         self._mark_clean()
+        logger.info("Template saved | fields=%d", len(self.fields))
         self.status_var.set(f"テンプレートを保存しました: {path.name}")
         return True
 
@@ -4184,6 +4211,7 @@ class ImageOcrExcelApp:
             data = load_template(path, expected_profile_id=self.profile.profile_id)
             fields = fields_from_template(data)
         except Exception as exc:
+            logger.exception("Failed to load template")
             self.dialogs.showerror(
                 "テンプレートエラー", f"テンプレートを読み込めませんでした。\n{exc}"
             )
@@ -4224,6 +4252,7 @@ class ImageOcrExcelApp:
             self.lang_var.set(data.get("lang") or self.profile.default_lang)
             self.lang_display_var.set(self._lang_display(self.lang_var.get()))
             self._apply_output_settings(data.get("output_settings") or {})
+        logger.info("Template loaded | fields=%d", len(fields))
         self._mark_clean()
         self._hide_workflow_choice()
         self.status_var.set(f"テンプレートを読み込みました: {path.name}")
@@ -4255,6 +4284,19 @@ class ImageOcrExcelApp:
     @staticmethod
     def _field_for_ocr(field: TemplateField) -> TemplateField:
         return replace(field, ocr_backend="default")
+
+    def open_diagnostic_log_folder(self) -> None:
+        try:
+            log_dir = ensure_log_directory()
+            startfile = getattr(os, "startfile")
+            startfile(str(log_dir))
+            logger.info("Diagnostic log directory opened")
+        except (AttributeError, OSError) as exc:
+            logger.exception("Failed to open diagnostic log directory")
+            self.dialogs.showerror(
+                "ログを開けません",
+                f"診断ログの保存先を開けませんでした。\n{exc}",
+            )
 
     def open_settings_modal(
         self, *, show_ocr_environment: bool = False, after_close=None
@@ -4567,8 +4609,37 @@ class ImageOcrExcelApp:
             border_width=1,
         )
         fullwidth_checkbox.grid(row=7, column=0, sticky="w", pady=(14, 0))
+        diagnostics_row = ctk.CTkFrame(content, fg_color="transparent")
+        diagnostics_row.grid(row=8, column=0, sticky="ew", pady=(18, 0))
+        diagnostics_row.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            diagnostics_row,
+            text="診断ログ",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_TEXT,
+        ).grid(row=0, column=0, sticky="w")
+        open_log_button = ctk.CTkButton(
+            diagnostics_row,
+            text="フォルダーを開く",
+            command=self.open_diagnostic_log_folder,
+            width=120,
+            height=30,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+            border_width=1,
+            border_color=COLOR_BORDER,
+            text_color=COLOR_TEXT,
+        )
+        open_log_button.grid(row=0, column=1, sticky="e")
+        add_tooltip(
+            open_log_button,
+            f"OCR結果は記録しません。保存先: {current_log_path().parent}",
+        )
         buttons = ctk.CTkFrame(content, fg_color="transparent")
-        buttons.grid(row=8, column=0, sticky="e", pady=(24, 0))
+        buttons.grid(row=9, column=0, sticky="e", pady=(24, 0))
         cancel_button = ctk.CTkButton(
             buttons,
             text="キャンセル",
@@ -4652,6 +4723,7 @@ class ImageOcrExcelApp:
                 [
                     line_join_menu,
                     fullwidth_checkbox,
+                    open_log_button,
                     cancel_button,
                     save_button,
                     close_button,
@@ -4738,6 +4810,7 @@ class ImageOcrExcelApp:
                 startfile = getattr(os, "startfile")
                 startfile(str(cache_dir))
             except (AttributeError, OSError) as exc:
+                logger.exception("Failed to open OCR model directory")
                 self.dialogs.showerror(
                     "フォルダーを開けません",
                     f"OCRモデルの保存先を開けませんでした。\n{exc}",
@@ -4768,6 +4841,7 @@ class ImageOcrExcelApp:
             try:
                 self.ocr_environment.use_custom_cache(Path(selected))
             except (OSError, ValueError) as exc:
+                logger.exception("Failed to change OCR model directory")
                 self.dialogs.showerror("保存先エラー", str(exc))
                 return
             self.ocr_environment_last_error = ""
@@ -4780,6 +4854,7 @@ class ImageOcrExcelApp:
             try:
                 self.ocr_environment.use_automatic_cache()
             except OSError as exc:
+                logger.exception("Failed to reset OCR model directory")
                 self.dialogs.showerror("保存先エラー", str(exc))
                 return
             self.ocr_environment_last_error = ""
@@ -6975,6 +7050,12 @@ class ImageOcrExcelApp:
             )
 
         def on_success(result: ExportResult) -> None:
+            logger.info(
+                "Excel export result | images=%d | errors=%d | notices=%d",
+                result.total_images,
+                len(result.errors),
+                len(result.notices),
+            )
             self.last_export_result = result
             self.last_export_signature = export_signature
             self.last_export_output_path = output_path
@@ -7139,6 +7220,11 @@ class ImageOcrExcelApp:
             )
 
         def on_success(result: ExportResult) -> None:
+            logger.info(
+                "Excel retry result | retried=%d | remaining_errors=%d",
+                total,
+                len(result.errors),
+            )
             self.last_export_result = result
             self.image_queue.apply_result(result)
             self._render_side_body()
@@ -7305,9 +7391,15 @@ class ImageOcrExcelApp:
 
 
 def main() -> None:
+    configure_logging()
+    install_exception_hooks()
     root = ctk.CTk()
     ImageOcrExcelApp(root)
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        logger.info("Application stopped")
+        shutdown_logging()
 
 
 if __name__ == "__main__":

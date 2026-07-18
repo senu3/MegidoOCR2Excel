@@ -123,7 +123,3 @@ Keep OCR behavior, template serialization, and Excel export independent from vis
 ## Motion
 
 No decorative motion. State changes should be immediate. Future progress feedback should prefer status text and determinate counts over spinners.
-
-## Sample Template
-
-`.samples/megido_novel_template.json` is a coordinate starter for actual novel screenshots. Treat it as a placeholder: users should load a real screenshot, drag exact regions, and save a corrected template.
