@@ -1005,41 +1005,44 @@ class ImageOcrExcelApp:
         self._operation_cancel_event = threading.Event()
         self._show_loading(loading_message)
 
-        def finish_success(result) -> None:
+        def finish_common() -> bool:
+            close_after_cancel = self._close_after_cancel
+            self._close_after_cancel = False
+            self.busy = False
+            self._operation_cancel_event = None
+            self._hide_loading()
+            if on_finally is not None:
+                on_finally()
+            return close_after_cancel
+
+        def finish_result(callback, *args) -> None:
+            close_after_cancel = finish_common()
             try:
-                on_success(result)
+                callback(*args)
             finally:
-                finish_common()
+                if close_after_cancel:
+                    self.request_close()
+
+        def finish_success(result) -> None:
+            finish_result(on_success, result)
 
         def finish_error(error: Exception) -> None:
-            try:
+            def report_error() -> None:
                 if on_error is not None:
                     on_error(error)
                 else:
                     self.dialogs.showerror("処理エラー", str(error))
-            finally:
-                finish_common()
+
+            finish_result(report_error)
 
         def finish_cancelled() -> None:
-            try:
+            def report_cancelled() -> None:
                 if on_cancel is not None:
                     on_cancel()
                 else:
                     self.status_var.set("処理をキャンセルしました。")
-            finally:
-                finish_common()
 
-        def finish_common() -> None:
-            try:
-                if on_finally is not None:
-                    on_finally()
-            finally:
-                self.busy = False
-                self._operation_cancel_event = None
-                self._hide_loading()
-                if self._close_after_cancel:
-                    self._close_after_cancel = False
-                    self.request_close()
+            finish_result(report_cancelled)
 
         def worker() -> None:
             try:

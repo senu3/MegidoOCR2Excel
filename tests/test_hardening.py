@@ -22,6 +22,7 @@ from ocr_environment import (
     OCR_ENV_VERIFY,
     OcrEnvironmentStatus,
 )
+from operation_control import OperationCancelled
 from ocr_models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
 
 
@@ -698,6 +699,117 @@ class DirtyStateTests(unittest.TestCase):
                 showerror.assert_called_once()
         finally:
             root.destroy()
+
+
+class BackgroundOperationStateTests(unittest.TestCase):
+    @staticmethod
+    def _logic_only_app() -> ImageOcrExcelApp:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.root = MagicMock()
+        app.root.after.side_effect = lambda _delay, callback: callback()
+        app.status_var = MagicMock()
+        app.dialogs = MagicMock()
+        app.busy = False
+        app._operation_cancel_event = None
+        app._close_after_cancel = False
+        app._show_loading = MagicMock()
+        app._hide_loading = MagicMock()
+        app._confirm_unsaved_changes = MagicMock(return_value=True)
+        return app
+
+    @staticmethod
+    def _run_worker(app: ImageOcrExcelApp, *args, **kwargs) -> None:
+        with patch("megido_ocr_excel_app.threading.Thread") as thread_type:
+            app._run_background(*args, **kwargs)
+            thread_type.return_value.start.assert_called_once_with()
+            thread_type.call_args.kwargs["target"]()
+
+    def test_success_is_finalized_before_completion_ui_and_app_close(self) -> None:
+        app = self._logic_only_app()
+        observations: list[tuple[str, bool, object, bool]] = []
+
+        def observe(stage: str) -> None:
+            observations.append(
+                (
+                    stage,
+                    app.busy,
+                    app._operation_cancel_event,
+                    app._hide_loading.called,
+                )
+            )
+
+        def on_success(result: str) -> None:
+            self.assertEqual(result, "complete")
+            observe("success")
+            app.request_close()
+
+        self._run_worker(
+            app,
+            "Excel出力中です。",
+            lambda: "complete",
+            on_success,
+            on_finally=lambda: observe("finally"),
+        )
+
+        self.assertEqual(
+            observations,
+            [
+                ("finally", False, None, True),
+                ("success", False, None, True),
+            ],
+        )
+        app.dialogs.askyesno.assert_not_called()
+        app.root.destroy.assert_called_once_with()
+
+    def test_error_ui_is_shown_after_operation_state_is_finalized(self) -> None:
+        app = self._logic_only_app()
+        observations: list[tuple[bool, object, bool]] = []
+
+        def work() -> None:
+            raise RuntimeError("simulated failure")
+
+        def on_error(error: Exception) -> None:
+            self.assertEqual(str(error), "simulated failure")
+            observations.append(
+                (
+                    app.busy,
+                    app._operation_cancel_event,
+                    app._hide_loading.called,
+                )
+            )
+
+        self._run_worker(app, "処理中です。", work, MagicMock(), on_error)
+
+        self.assertEqual(observations, [(False, None, True)])
+
+    def test_cancel_ui_is_finalized_before_deferred_app_close(self) -> None:
+        app = self._logic_only_app()
+        app._close_after_cancel = True
+        app.request_close = MagicMock()
+        observations: list[tuple[bool, object, bool]] = []
+
+        def work() -> None:
+            raise OperationCancelled()
+
+        def on_cancel() -> None:
+            observations.append(
+                (
+                    app.busy,
+                    app._operation_cancel_event,
+                    app.request_close.called,
+                )
+            )
+
+        self._run_worker(
+            app,
+            "処理中です。",
+            work,
+            MagicMock(),
+            on_cancel=on_cancel,
+        )
+
+        self.assertEqual(observations, [(False, None, False)])
+        app.request_close.assert_called_once_with()
 
 
 class PaddleBackendPolicyTests(unittest.TestCase):
