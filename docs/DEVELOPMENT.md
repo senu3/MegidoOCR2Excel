@@ -11,6 +11,13 @@ uv run python main.py
 
 Windowsでは `MegidoOCR2Excel.cmd` または `run_app.ps1` から専用ランチャーを起動できます。
 
+```powershell
+.\MegidoOCR2Excel.cmd --repair
+.\run_app.ps1 --repair
+```
+
+`--repair` は通常の同期と異なり `uv sync --reinstall` を実行し、依存パッケージを入れ直してから非モデル取得型のプローブを実行します。アプリ内の「ランチャーで修復」は、現在の実行環境に依存しないuvブートストラップでこの処理へ引き渡します。
+
 ## UI検証モード（一時）
 
 OCRモデルや端末設定を変更せず、OCR準備画面の状態を固定して確認できます。

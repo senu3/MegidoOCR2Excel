@@ -19,6 +19,7 @@ from megido_ocr_excel.ui.theme import THEME
 from megido_ocr_excel.ocr.environment import (
     OCR_ENV_READY,
     OCR_ENV_SETUP,
+    OCR_ENV_UNAVAILABLE,
     OCR_ENV_VERIFY,
     OcrEnvironmentStatus,
 )
@@ -378,6 +379,10 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                 "確認が必要",
                 "既存の認識モデルはまだこのアプリで確認されていません。",
             ),
+            OCR_ENV_UNAVAILABLE: (
+                "ランチャーで修復が必要",
+                "PaddleOCRの実行環境が不足しています。",
+            ),
         }
         label, detail = labels[state]
         status = OcrEnvironmentStatus(
@@ -584,6 +589,52 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             action.assert_not_called()
             self.assertIsNone(app._pending_ocr_action)
             self.assertIn("範囲編集", app.status_var.get())
+        finally:
+            self._destroy(app, root)
+
+    def test_unavailable_runtime_hands_repair_to_launcher_then_closes(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        unavailable = self._status(OCR_ENV_UNAVAILABLE, ready=False)
+        app, _manager = self._app_with_status(root, unavailable)
+        try:
+            self.assertEqual(
+                app.ocr_setup_primary_button.cget("text"),
+                "ランチャーで修復",
+            )
+            with (
+                patch.object(app.dialogs, "askyesno", return_value=True),
+                patch.object(app, "_confirm_unsaved_changes", return_value=True),
+                patch(
+                    "megido_ocr_excel.application.launch_repair_handoff"
+                ) as launch_repair,
+                patch.object(root, "destroy") as destroy,
+            ):
+                app.repair_ocr_runtime()
+
+            launch_repair.assert_called_once()
+            destroy.assert_called_once_with()
+        finally:
+            self._destroy(app, root)
+
+    def test_repair_handoff_keeps_app_open_when_unsaved_flow_is_cancelled(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        unavailable = self._status(OCR_ENV_UNAVAILABLE, ready=False)
+        app, _manager = self._app_with_status(root, unavailable)
+        try:
+            with (
+                patch.object(app.dialogs, "askyesno", return_value=True),
+                patch.object(app, "_confirm_unsaved_changes", return_value=False),
+                patch(
+                    "megido_ocr_excel.application.launch_repair_handoff"
+                ) as launch_repair,
+                patch.object(root, "destroy") as destroy,
+            ):
+                app.repair_ocr_runtime()
+
+            launch_repair.assert_not_called()
+            destroy.assert_not_called()
         finally:
             self._destroy(app, root)
 

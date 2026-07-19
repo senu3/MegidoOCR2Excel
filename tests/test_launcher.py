@@ -16,6 +16,8 @@ from megido_ocr_excel.launcher.core import (
     LauncherError,
     LauncherService,
     SingleInstanceLock,
+    launch_repair_handoff,
+    repair_handoff_command,
     launcher_paths,
     load_state,
     project_signature,
@@ -148,6 +150,56 @@ class LauncherCoreTests(unittest.TestCase):
         state = load_state(self.paths.state_path)
         self.assertEqual(state["project_signature"], project_signature(self.root))
 
+    def test_repair_forces_runtime_packages_to_be_reinstalled(self) -> None:
+        runner = FakeRunner()
+        service = self._service(runner)
+
+        service.prepare(force_reinstall=True)
+
+        self.assertIn("--reinstall", runner.commands[0])
+        self.assertNotIn("--reinstall", runner.commands[1])
+
+    def test_app_repair_handoff_uses_independent_uv_bootstrap(self) -> None:
+        (self.root / "launcher.py").write_text("# launcher\n")
+
+        command = repair_handoff_command(
+            self.root,
+            uv_path="C:/tools/uv.exe",
+            environ={"PATH": ""},
+        )
+
+        self.assertEqual(command[0], "C:/tools/uv.exe")
+        self.assertIn("--no-project", command)
+        self.assertIn("--repair", command)
+        self.assertIn("--from-app", command)
+        self.assertEqual(command[-3], str(self.root / "launcher.py"))
+
+    def test_repair_handoff_drops_active_project_environments(self) -> None:
+        process = MagicMock()
+        with (
+            patch(
+                "megido_ocr_excel.launcher.core.repair_handoff_command",
+                return_value=["uv", "run"],
+            ),
+            patch(
+                "megido_ocr_excel.launcher.core.subprocess.Popen",
+                return_value=process,
+            ) as popen,
+        ):
+            result = launch_repair_handoff(
+                self.root,
+                environ={
+                    "PATH": "C:/tools",
+                    "UV_PROJECT_ENVIRONMENT": "C:/broken-runtime",
+                    "VIRTUAL_ENV": "C:/wrong-environment",
+                },
+            )
+
+        self.assertIs(result, process)
+        child_environment = popen.call_args.kwargs["env"]
+        self.assertNotIn("UV_PROJECT_ENVIRONMENT", child_environment)
+        self.assertNotIn("VIRTUAL_ENV", child_environment)
+
     def test_failed_probe_does_not_mark_environment_ready(self) -> None:
         runner = FakeRunner(fail_at=2)
         service = self._service(runner)
@@ -229,6 +281,14 @@ class LauncherCoreTests(unittest.TestCase):
 
         self.assertIn("python launcher.py %*", text)
         self.assertNotIn("chcp", text.casefold())
+
+    def test_powershell_bootstrap_forwards_repair_arguments(self) -> None:
+        script_path = Path(__file__).resolve().parents[1] / "run_app.ps1"
+
+        text = script_path.read_text(encoding="utf-8")
+
+        self.assertIn("$LauncherArgs = $args", text)
+        self.assertIn("launcher.py @LauncherArgs", text)
 
 
 class LauncherProbeTests(unittest.TestCase):

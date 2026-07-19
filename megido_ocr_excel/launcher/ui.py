@@ -39,15 +39,18 @@ class LauncherWindow:
         status: LauncherStatus,
         *,
         force_repair: bool = False,
+        from_app: bool = False,
     ) -> None:
         self.root = root
         self.service = service
         self.status = status
         self.force_repair = force_repair
+        self.from_app = from_app
         self.running = False
         self.finished = False
         self.exit_code = 0
         self._output_lines: list[str] = []
+        self._auto_start_job: str | None = None
 
         self.root.title("Megido OCR to Excel — ランチャー")
         self.root.geometry("600x420")
@@ -60,6 +63,14 @@ class LauncherWindow:
         self._build()
         self._center_window()
         self.show_initial_state()
+        if self.from_app and self.force_repair and self.status.uv_path:
+            self._auto_start_job = self.root.after(
+                250, self._start_handoff_repair
+            )
+
+    def _start_handoff_repair(self) -> None:
+        self._auto_start_job = None
+        self.start_prepare()
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -263,7 +274,12 @@ class LauncherWindow:
         if self.force_repair:
             title = "実行環境を修復"
             note = (
-                "PaddleOCRを含む実行環境を、uv.lockに記録された構成へ戻します。"
+                (
+                    "アプリがPaddleOCR実行環境の不足を検出しました。\n"
+                    if self.from_app
+                    else ""
+                )
+                + "PaddleOCRを含む実行環境を、uv.lockに記録された構成へ戻します。"
                 "個人ファイルやOCR認識モデルは削除しません。"
             )
             action_text = "修復を開始"
@@ -296,13 +312,26 @@ class LauncherWindow:
         self._output_lines = []
         self._clear_actions()
         self._set_detail("", visible=False)
-        self.status_title.configure(text="実行環境を準備しています", foreground=PALETTE.info)
+        self.status_title.configure(
+            text=(
+                "実行環境を修復しています"
+                if self.force_repair
+                else "実行環境を準備しています"
+            ),
+            foreground=PALETTE.info,
+        )
         self.status_note.configure(
-            text="必要なパッケージを確認しています。この画面を閉じずにお待ちください。"
+            text=(
+                "必要なパッケージを再インストールしています。"
+                if self.force_repair
+                else "必要なパッケージを確認しています。"
+            )
+            + "この画面を閉じずにお待ちください。"
         )
         self.progress.grid()
         self.progress.start(12)
-        cancel = self._button("セットアップを中止", self.cancel_prepare)
+        operation = "修復" if self.force_repair else "セットアップ"
+        cancel = self._button(f"{operation}を中止", self.cancel_prepare)
         cancel.pack(side="right")
         cancel.focus_set()
 
@@ -312,7 +341,10 @@ class LauncherWindow:
 
         def worker() -> None:
             try:
-                self.service.prepare(on_output)
+                self.service.prepare(
+                    on_output,
+                    force_reinstall=self.force_repair,
+                )
             except LauncherCancelled as error:
                 self.root.after(0, lambda value=error: self.finish_cancelled(value))
             except Exception as error:
@@ -326,9 +358,10 @@ class LauncherWindow:
     def cancel_prepare(self) -> None:
         if not self.running:
             return
+        operation = "修復" if self.force_repair else "セットアップ"
         if not messagebox.askyesno(
-            "セットアップを中止",
-            "実行環境のセットアップを中止しますか？\n次回起動時にもう一度実行できます。",
+            f"{operation}を中止",
+            f"実行環境の{operation}を中止しますか？\n次回起動時にもう一度実行できます。",
             parent=self.root,
         ):
             return
@@ -343,7 +376,11 @@ class LauncherWindow:
         self.progress.stop()
         self.progress.grid_remove()
         self._clear_actions()
-        self.status_title.configure(text="セットアップを中止しました", foreground=PALETTE.warning)
+        operation = "修復" if self.force_repair else "セットアップ"
+        self.status_title.configure(
+            text=f"{operation}を中止しました",
+            foreground=PALETTE.warning,
+        )
         self.status_note.configure(text=str(error))
         retry = self._button("もう一度試す", self.start_prepare, primary=True)
         retry.pack(side="right")
@@ -364,7 +401,11 @@ class LauncherWindow:
 
     def show_error(self, detail: str, *, allow_retry: bool) -> None:
         self._clear_actions()
-        self.status_title.configure(text="実行環境を準備できませんでした", foreground=PALETTE.danger)
+        operation = "修復" if self.force_repair else "準備"
+        self.status_title.configure(
+            text=f"実行環境を{operation}できませんでした",
+            foreground=PALETTE.danger,
+        )
         self.status_note.configure(
             text="内容を確認して再試行してください。診断情報はランチャーログにも保存されています。"
         )
@@ -385,7 +426,11 @@ class LauncherWindow:
         self.progress.grid_remove()
         self._clear_actions()
         self._set_detail("", visible=False)
-        self.status_title.configure(text="準備が完了しました", foreground=PALETTE.success)
+        operation = "修復" if self.force_repair else "準備"
+        self.status_title.configure(
+            text=f"{operation}が完了しました",
+            foreground=PALETTE.success,
+        )
         self.status_note.configure(text="Megido OCR to Excelを起動します。")
         self.root.after(450, self.launch_application)
 
@@ -420,6 +465,9 @@ class LauncherWindow:
         if self.running:
             self.cancel_prepare()
             return
+        if self._auto_start_job is not None:
+            self.root.after_cancel(self._auto_start_job)
+            self._auto_start_job = None
         self.root.destroy()
 
 
@@ -428,9 +476,16 @@ def run_gui(
     status: LauncherStatus,
     *,
     force_repair: bool,
+    from_app: bool = False,
 ) -> int:
     root = tk.Tk()
-    window = LauncherWindow(root, service, status, force_repair=force_repair)
+    window = LauncherWindow(
+        root,
+        service,
+        status,
+        force_repair=force_repair,
+        from_app=from_app,
+    )
     root.mainloop()
     return window.exit_code
 
@@ -438,6 +493,7 @@ def run_gui(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Megido OCR to Excel launcher")
     parser.add_argument("--repair", action="store_true", help="実行環境を再同期する")
+    parser.add_argument("--from-app", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check", action="store_true", help="準備状態をJSONで表示する")
     parser.add_argument(
         "--project-root",
@@ -456,7 +512,8 @@ def main(argv: list[str] | None = None, *, project_root: Path | None = None) -> 
     )
     paths = launcher_paths(root_path)
     service = LauncherService(paths)
-    status = service.status(force_repair=args.repair)
+    force_repair = args.repair or args.from_app
+    status = service.status(force_repair=force_repair)
     if args.check:
         print(
             json.dumps(
@@ -483,10 +540,15 @@ def main(argv: list[str] | None = None, *, project_root: Path | None = None) -> 
         root.destroy()
         return 3
     try:
-        if status.ready and not args.repair:
+        if status.ready and not force_repair:
             service.launch_application()
             return 0
-        return run_gui(service, status, force_repair=args.repair)
+        return run_gui(
+            service,
+            status,
+            force_repair=force_repair,
+            from_app=args.from_app,
+        )
     finally:
         lock.release()
 

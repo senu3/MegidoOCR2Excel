@@ -58,8 +58,8 @@ def status_for_state(state: str) -> OcrEnvironmentStatus:
         ),
         "unavailable": (
             OCR_ENV_UNAVAILABLE,
-            "再インストールが必要",
-            "PaddleOCRの実行ファイルが不足しています。",
+            "ランチャーで修復が必要",
+            "PaddleOCRの実行環境が不足しています。",
         ),
         "ready": (
             OCR_ENV_READY,
@@ -116,6 +116,11 @@ class ValidationImageOcrExcelApp(app_module.ImageOcrExcelApp):
     def prepare_ocr_environment(self) -> None:
         self.status_var.set(
             "UI検証モードではOCRの取得・確認処理を実行しません。"
+        )
+
+    def repair_ocr_runtime(self) -> None:
+        self.status_var.set(
+            "UI検証モードではランチャー修復を実行しません。"
         )
 
 

@@ -65,6 +65,63 @@ class LauncherStatus:
     uv_path: str | None
 
 
+def repair_handoff_command(
+    project_root: Path,
+    *,
+    uv_path: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Build an independent launcher command for an in-app repair request."""
+    environment = dict(os.environ if environ is None else environ)
+    executable = uv_path or shutil.which("uv", path=environment.get("PATH"))
+    if not executable:
+        raise LauncherError(
+            "uvが見つかりません。uvをインストールしてターミナルを開き直した後、"
+            "MegidoOCR2Excel.cmdを実行してください。"
+        )
+    launcher_script = Path(project_root).resolve() / "launcher.py"
+    if not launcher_script.is_file():
+        raise LauncherError("修復用ランチャーが見つかりません。")
+    return [
+        executable,
+        "run",
+        "--no-project",
+        "--python",
+        DEFAULT_PYTHON_VERSION,
+        "--",
+        "python",
+        str(launcher_script),
+        "--repair",
+        "--from-app",
+    ]
+
+
+def launch_repair_handoff(
+    project_root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> subprocess.Popen[bytes]:
+    """Start the bootstrap launcher without depending on the app runtime."""
+    environment = dict(os.environ if environ is None else environ)
+    environment.pop("UV_PROJECT_ENVIRONMENT", None)
+    environment.pop("VIRTUAL_ENV", None)
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
+    command = repair_handoff_command(project_root, environ=environment)
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    return subprocess.Popen(
+        command,
+        cwd=Path(project_root).resolve(),
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+
+
 def launcher_paths(
     project_root: Path,
     *,
@@ -344,10 +401,10 @@ class LauncherService:
             return LauncherStatus(False, "実行環境を修復する必要があります。", False, self.uv_path)
         return LauncherStatus(True, "準備完了", False, self.uv_path)
 
-    def sync_command(self) -> list[str]:
+    def sync_command(self, *, reinstall: bool = False) -> list[str]:
         if not self.uv_path:
             raise LauncherError("uvが見つかりません。先にuvをインストールしてください。")
-        return [
+        command = [
             self.uv_path,
             "sync",
             "--project",
@@ -356,6 +413,9 @@ class LauncherService:
             "--no-dev",
             "--no-progress",
         ]
+        if reinstall:
+            command.append("--reinstall")
+        return command
 
     def probe_command(self) -> list[str]:
         if not self.uv_path:
@@ -389,12 +449,17 @@ class LauncherService:
             str(self.paths.project_root / "main.py"),
         ]
 
-    def prepare(self, on_output: Callable[[str], None] | None = None) -> None:
+    def prepare(
+        self,
+        on_output: Callable[[str], None] | None = None,
+        *,
+        force_reinstall: bool = False,
+    ) -> None:
         self.runner.reset_cancellation()
         self.paths.app_data_dir.mkdir(parents=True, exist_ok=True)
         signature = self.signature()
         self.runner.run(
-            self.sync_command(),
+            self.sync_command(reinstall=force_reinstall),
             cwd=self.paths.project_root,
             env=self.environment(),
             on_output=on_output,

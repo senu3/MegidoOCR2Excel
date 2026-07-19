@@ -80,6 +80,7 @@ from megido_ocr_excel.ocr.environment import (
     OcrEnvironmentStatus,
 )
 from megido_ocr_excel.ocr.setup import OcrSetupPhase, OcrSetupProcessRunner
+from megido_ocr_excel.launcher.core import LauncherError, launch_repair_handoff
 from megido_ocr_excel.models import (
     COORDINATE_SPACE_CONTENT,
     COORDINATE_SPACE_IMAGE,
@@ -3753,8 +3754,8 @@ class ImageOcrExcelApp:
                 "この画面からモデル取得は開始しません。"
             )
             color = THEME.palette.danger
-            primary_text = "状態を再確認"
-            primary_command = self._refresh_ocr_setup_overlay
+            primary_text = "ランチャーで修復"
+            primary_command = self.repair_ocr_runtime
         elif status.state == OCR_ENV_READY:
             title = "OCRの準備が完了しました"
             subtitle = "認識テストとExcel出力を利用できます。"
@@ -3899,6 +3900,34 @@ class ImageOcrExcelApp:
             lambda: self.root.after(50, finish),
             lambda: self.status_var.set("OCRの準備をキャンセルしました。"),
         )
+
+    def repair_ocr_runtime(self) -> None:
+        if self.busy:
+            return
+        if not self.dialogs.askyesno(
+            "OCR実行環境を修復",
+            "アプリを終了し、専用ランチャーでPaddleOCR実行環境を"
+            "再インストールします。\n\n"
+            "OCR認識モデル、テンプレート、端末設定は削除しません。"
+            "ネットワーク接続が必要です。",
+            yes_text="アプリを終了して修復",
+            no_text="戻る",
+        ):
+            return
+        if not self._confirm_unsaved_changes("修復のために終了する"):
+            return
+        project_root = Path(__file__).resolve().parents[1]
+        try:
+            launch_repair_handoff(project_root)
+        except (LauncherError, OSError) as error:
+            logger.exception("Failed to hand off OCR runtime repair")
+            self.dialogs.showerror(
+                "ランチャーを起動できません",
+                f"実行環境の修復を開始できませんでした。\n\n{error}",
+            )
+            return
+        logger.info("OCR runtime repair handed off to launcher")
+        self.root.destroy()
 
     def _finish_ocr_setup_success(self) -> None:
         if self.ocr_setup_modal is not None:
@@ -4799,15 +4828,24 @@ class ImageOcrExcelApp:
             )
             verify_environment_button.configure(
                 text=(
-                    "ダウンロードして準備"
-                    if status.state == OCR_ENV_SETUP
-                    else "確認して更新"
+                    "ランチャーで修復"
+                    if status.state == OCR_ENV_UNAVAILABLE
+                    else (
+                        "ダウンロードして準備"
+                        if status.state == OCR_ENV_SETUP
+                        else "確認して更新"
+                    )
+                ),
+                command=(
+                    self.repair_ocr_runtime
+                    if status.state == OCR_ENV_UNAVAILABLE
+                    else verify_environment
                 ),
                 state=(
                     "disabled"
                     if self.busy
                     or self.ocr_environment_restart_required
-                    or status.state in {OCR_ENV_LOCATION_ERROR, OCR_ENV_UNAVAILABLE}
+                    or status.state == OCR_ENV_LOCATION_ERROR
                     else "normal"
                 ),
             )

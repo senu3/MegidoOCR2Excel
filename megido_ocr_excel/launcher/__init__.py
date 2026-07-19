@@ -5,7 +5,9 @@ from megido_ocr_excel.launcher.core import (
     LauncherPaths,
     LauncherService,
     LauncherStatus,
+    launch_repair_handoff,
     launcher_paths,
+    repair_handoff_command,
 )
 
 __all__ = [
@@ -13,5 +15,7 @@ __all__ = [
     "LauncherPaths",
     "LauncherService",
     "LauncherStatus",
+    "launch_repair_handoff",
     "launcher_paths",
+    "repair_handoff_command",
 ]
