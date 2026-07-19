@@ -1001,7 +1001,7 @@ class ImageOcrExcelApp:
         )
         self.ocr_setup_secondary_button = ctk.CTkButton(
             panel,
-            text="範囲編集だけ先に始める",
+            text="今は準備せず、範囲編集へ",
             command=self.defer_ocr_setup,
             height=THEME.layout.primary_button_height,
             corner_radius=THEME.layout.control_radius,
@@ -3854,9 +3854,9 @@ class ImageOcrExcelApp:
         if self.ocr_setup_secondary_button is not None:
             self.ocr_setup_secondary_button.configure(
                 text=(
-                    "今回は認識しない"
+                    "今回は認識せず戻る"
                     if self._pending_ocr_action is not None
-                    else "範囲編集だけ先に始める"
+                    else "今は準備せず、範囲編集へ"
                 )
             )
             if secondary_visible:

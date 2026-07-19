@@ -502,7 +502,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             )
             self.assertFalse(any("初回のみ" in text for text in labels))
             self.assertIn("ダウンロードして準備", buttons)
-            self.assertIn("範囲編集だけ先に始める", buttons)
+            self.assertIn("今は準備せず、範囲編集へ", buttons)
             self.assertIn("モデル保存先を変更", buttons)
 
             command = MagicMock()
@@ -645,7 +645,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             self.assertTrue(app.ocr_setup_modal.visible)
             self.assertEqual(
                 app.ocr_setup_secondary_button.cget("text"),
-                "今回は認識しない",
+                "今回は認識せず戻る",
             )
             manager.quick_status.return_value = ready
 
