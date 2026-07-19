@@ -190,6 +190,7 @@ class WorkflowChoiceTests(unittest.TestCase):
         app._show_workflow_choice = MagicMock()
         app._hide_workflow_choice = MagicMock()
         app._render_side_body = MagicMock()
+        app.status_var = MagicMock()
         return app
 
     def test_auto_detection_choice_creates_internal_conversation_fields(self) -> None:
@@ -216,6 +217,21 @@ class WorkflowChoiceTests(unittest.TestCase):
         self.assertEqual(app.fields, [])
         app._hide_workflow_choice.assert_called_once()
         app.open_image_folder.assert_called_once()
+
+    def test_closing_workflow_choice_keeps_images_and_choices_unselected(self) -> None:
+        app = self._logic_only_app()
+
+        app.continue_without_workflow_choice()
+
+        self.assertTrue(app.workflow_started)
+        self.assertFalse(app.auto_detection_enabled)
+        self.assertEqual(app.fields, [])
+        app._hide_workflow_choice.assert_called_once_with()
+        app.open_image_folder.assert_not_called()
+        app.status_var.set.assert_called_once_with(
+            "画像フォルダは選択されていません。"
+            "上部の「画像フォルダを選択」から開始できます。"
+        )
 
     def test_workflow_choice_uses_a_translucent_modal_layer(self) -> None:
         root = ctk.CTk()
@@ -245,7 +261,7 @@ class WorkflowChoiceTests(unittest.TestCase):
             self.assertIn("開始方法を選択", labels)
             self.assertCountEqual(
                 buttons,
-                ["会話を自動検出", "新規テンプレートを作成", "終了"],
+                ["会話を自動検出", "新規テンプレートを作成", ""],
             )
             self.assertIs(
                 modal._default_action,
@@ -264,10 +280,12 @@ class WorkflowChoiceTests(unittest.TestCase):
                 app.workflow_choice_modal.destroy()
             root.destroy()
 
-    def test_workflow_choice_escape_requests_app_close(self) -> None:
+    def test_workflow_choice_escape_and_close_continue_without_selection(self) -> None:
         root = ctk.CTk()
         root.geometry("900x700+10000+10000")
-        with patch.object(ImageOcrExcelApp, "request_close") as request_close:
+        with patch.object(
+            ImageOcrExcelApp, "continue_without_workflow_choice"
+        ) as continue_without_selection:
             app = ImageOcrExcelApp(root)
         try:
             if app.ocr_setup_modal is not None and app.ocr_setup_modal.visible:
@@ -279,7 +297,17 @@ class WorkflowChoiceTests(unittest.TestCase):
             )
             root.update()
 
-            request_close.assert_called_once_with()
+            continue_without_selection.assert_called_once_with()
+
+            close_button = next(
+                widget
+                for widget in descendants_of(app.workflow_choice_modal.panel)
+                if isinstance(widget, ctk.CTkButton)
+                and widget.cget("text") == ""
+            )
+            close_button.invoke()
+
+            self.assertEqual(continue_without_selection.call_count, 2)
         finally:
             if app.ocr_setup_modal is not None:
                 app.ocr_setup_modal.destroy()
@@ -475,7 +503,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             self.assertFalse(any("初回のみ" in text for text in labels))
             self.assertIn("ダウンロードして準備", buttons)
             self.assertIn("範囲編集だけ先に始める", buttons)
-            self.assertIn("保存先を変更", buttons)
+            self.assertIn("モデル保存先を変更", buttons)
 
             command = MagicMock()
             self.assertEqual(app._dispatch_shortcut(command, object()), "break")

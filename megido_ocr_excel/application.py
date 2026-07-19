@@ -837,6 +837,22 @@ class ImageOcrExcelApp:
             font=UI_FONT_TITLE,
             text_color=COLOR_TEXT,
         ).grid(row=0, column=0, sticky="ew", padx=28, pady=(26, 8))
+        close_button = ctk.CTkButton(
+            overlay,
+            text="",
+            image=ICONS.get("x", 16, COLOR_MUTED),
+            command=self.continue_without_workflow_choice,
+            width=28,
+            height=28,
+            corner_radius=THEME.layout.control_radius,
+            fg_color="transparent",
+            hover_color=THEME.palette.modal_button_hover,
+            border_width=0,
+        )
+        close_button.grid(
+            row=0, column=0, sticky="ne", padx=(0, 12), pady=(12, 0)
+        )
+        add_tooltip(close_button, "開始方法を選ばずに進む")
         ctk.CTkLabel(
             overlay,
             text=THEME.copy.workflow_choice_note,
@@ -873,28 +889,15 @@ class ImageOcrExcelApp:
             border_color=COLOR_BORDER,
         )
         secondary_button.grid(
-            row=3, column=0, sticky="ew", padx=28, pady=(0, 8)
+            row=3, column=0, sticky="ew", padx=28, pady=(0, 26)
         )
-        exit_button = ctk.CTkButton(
-            overlay,
-            text="終了",
-            command=self.request_close,
-            height=30,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color="transparent",
-            hover_color=COLOR_UTILITY_HOVER,
-            border_width=0,
-            text_color=COLOR_MUTED,
-        )
-        exit_button.grid(row=4, column=0, pady=(0, 20))
 
         modal.set_focus_order(
-            [primary_button, secondary_button, exit_button],
+            [primary_button, secondary_button, close_button],
             default=primary_button,
         )
         modal.set_default_action(primary_button)
-        modal.set_escape_handler(self.request_close)
+        modal.set_escape_handler(self.continue_without_workflow_choice)
         self.workflow_choice_modal = modal
         self.workflow_choice_overlay = overlay
         self.workflow_choice_primary_button = primary_button
@@ -1014,7 +1017,7 @@ class ImageOcrExcelApp:
         )
         self.ocr_setup_settings_button = ctk.CTkButton(
             panel,
-            text="保存先を変更",
+            text="モデル保存先を変更",
             command=self.open_ocr_environment_settings,
             height=30,
             corner_radius=THEME.layout.control_radius,
@@ -3671,6 +3674,16 @@ class ImageOcrExcelApp:
             self._show_workflow_choice()
             return
         self._mark_clean()
+
+    def continue_without_workflow_choice(self) -> None:
+        """Dismiss onboarding without selecting a workflow or image folder."""
+        self.workflow_started = True
+        self.auto_detection_enabled = False
+        self._hide_workflow_choice()
+        self.status_var.set(
+            "画像フォルダは選択されていません。"
+            "上部の「画像フォルダを選択」から開始できます。"
+        )
 
     def _show_workflow_choice(self) -> None:
         ocr_setup_modal = getattr(self, "ocr_setup_modal", None)
