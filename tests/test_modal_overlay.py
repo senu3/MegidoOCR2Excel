@@ -10,6 +10,13 @@ from megido_ocr_excel.ui.modal import ModalOverlay
 
 
 class ModalOverlayTests(unittest.TestCase):
+    def test_escape_invokes_the_configured_safe_action(self) -> None:
+        modal = ModalOverlay.__new__(ModalOverlay)
+        modal._escape_handler = MagicMock()
+
+        self.assertEqual(modal._on_escape(None), "break")
+        modal._escape_handler.assert_called_once_with()
+
     def test_geometry_supports_negative_monitor_coordinates(self) -> None:
         self.assertEqual(
             ModalOverlay._geometry(470, 260, -1920, 40),

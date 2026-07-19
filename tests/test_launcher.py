@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -26,7 +28,11 @@ from megido_ocr_excel.launcher.core import (
     project_signature,
     save_state,
 )
-from megido_ocr_excel.launcher.ui import LauncherWindow, launcher_operation_name
+from megido_ocr_excel.launcher.ui import (
+    LauncherWindow,
+    launcher_operation_name,
+    main as launcher_main,
+)
 
 
 class FakeRunner:
@@ -321,7 +327,11 @@ class LauncherCoreTests(unittest.TestCase):
 
         text = command_path.read_bytes().decode("ascii")
 
-        self.assertIn("python launcher.py %*", text)
+        self.assertIn("where uv", text)
+        self.assertIn(
+            "uv run --no-project --python 3.12 -- python launcher.py %*",
+            text,
+        )
         self.assertNotIn("chcp", text.casefold())
 
     def test_powershell_bootstrap_forwards_repair_arguments(self) -> None:
@@ -330,7 +340,35 @@ class LauncherCoreTests(unittest.TestCase):
         text = script_path.read_text(encoding="utf-8")
 
         self.assertIn("$LauncherArgs = $args", text)
-        self.assertIn("launcher.py @LauncherArgs", text)
+        self.assertIn(
+            "uv run --no-project --python 3.12 -- python launcher.py @LauncherArgs",
+            text,
+        )
+
+    def test_check_mode_reports_status_without_opening_the_gui(self) -> None:
+        status = LauncherStatus(False, "初回セットアップが必要です。", True, "uv")
+        output = io.StringIO()
+
+        with (
+            patch(
+                "megido_ocr_excel.launcher.ui.launcher_paths",
+                return_value=self.paths,
+            ),
+            patch("megido_ocr_excel.launcher.ui.LauncherService") as service_type,
+            redirect_stdout(output),
+        ):
+            service_type.return_value.status.return_value = status
+            exit_code = launcher_main(["--check"], project_root=self.root)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(exit_code, 2)
+        self.assertFalse(payload["ready"])
+        self.assertTrue(payload["first_setup"])
+        self.assertTrue(payload["uv_available"])
+        service_type.return_value.status.assert_called_once_with(
+            force_repair=False
+        )
+        service_type.return_value.launch_application.assert_not_called()
 
     def test_launcher_operation_names_cover_setup_update_and_repair(self) -> None:
         setup = LauncherStatus(False, "初回", True, "uv")

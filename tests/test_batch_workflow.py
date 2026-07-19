@@ -10,14 +10,52 @@ from unittest.mock import MagicMock
 from openpyxl import Workbook, load_workbook
 from PIL import Image
 
-from megido_ocr_excel.export.queue import STATUS_EXCLUDED, STATUS_FAILED, STATUS_SUCCESS, ImageQueue
-from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs, include_supplement_candidates
+from megido_ocr_excel.export.queue import (
+    STATUS_EXCLUDED,
+    STATUS_FAILED,
+    STATUS_SUCCESS,
+    ImageQueue,
+)
+from megido_ocr_excel.ocr.dialogue_detector import (
+    DialoguePairDetectionResult,
+    detect_complete_dialogue_pairs,
+    include_supplement_candidates,
+)
 from megido_ocr_excel.export.excel import ExcelExporter, ExportSettings
 from megido_ocr_excel.operations import OperationCancelled
 from megido_ocr_excel.config import natural_image_sort_key
-from megido_ocr_excel.ocr.engine import apply_postprocess, detect_content_rect, format_detected_text, scaled_field
-from megido_ocr_excel.models import COORDINATE_SPACE_CONTENT, COORDINATE_SPACE_IMAGE, DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_SET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, LINE_JOIN_NONE, SET_PRESET_HEADING_TEXT, SET_PRESET_SINGLE_LINE, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, CoordinateSettings, TemplateField, TextFormattingSettings, dialogue_pair_validation_error, set_definition_for_preset
-from scripts.ocr_accuracy_common import build_accuracy_row, expected_values_for_field, measurement_fields, read_expected_sets, recognize_with_engine
+from megido_ocr_excel.ocr.engine import (
+    apply_postprocess,
+    detect_content_rect,
+    format_detected_text,
+    scaled_field,
+)
+from megido_ocr_excel.models import (
+    COORDINATE_SPACE_CONTENT,
+    COORDINATE_SPACE_IMAGE,
+    EXPORT_LAYOUT_SET,
+    LINE_JOIN_FULLWIDTH_SPACE,
+    LINE_JOIN_NEWLINE,
+    LINE_JOIN_NONE,
+    SET_PRESET_HEADING_TEXT,
+    SET_PRESET_SINGLE_LINE,
+    SET_SLOT_HEADING,
+    SET_SLOT_SPEAKER,
+    SET_SLOT_SUPPLEMENT,
+    SET_SLOT_TEXT,
+    CoordinateSettings,
+    TemplateField,
+    TextFormattingSettings,
+    set_definition_for_preset,
+    set_validation_error,
+)
+from scripts.ocr_accuracy_common import (
+    build_accuracy_row,
+    expected_values_for_field,
+    measurement_fields,
+    read_expected_sets,
+    recognize_with_engine,
+)
 from megido_ocr_excel.templates import coordinate_settings_from_template
 from megido_ocr_excel.profiles.megido_novel import PROFILE
 
@@ -27,6 +65,15 @@ def auto_detection_context() -> tuple[list[TemplateField], CoordinateSettings]:
 
 
 class BatchWorkflowTests(unittest.TestCase):
+    def test_detection_results_own_their_candidate_field_lists(self) -> None:
+        first = DialoguePairDetectionResult([])
+        second = DialoguePairDetectionResult([])
+
+        first.candidate_fields.append(TemplateField("候補", 0, 0, 1, 1))
+
+        self.assertEqual(len(first.candidate_fields), 1)
+        self.assertEqual(second.candidate_fields, [])
+
     def test_cancelled_export_does_not_replace_existing_workbook(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -138,7 +185,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 output,
                 [Path(".samples/b1.png"), Path(".samples/b2.png")],
                 fields,
-                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, field: (field.name, None),
                 dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
                     image,
@@ -157,7 +204,7 @@ class BatchWorkflowTests(unittest.TestCase):
     def test_mixed_normal_speakerless_narration_and_log_images_export_together(self) -> None:
         fields = [
             TemplateField(
-                "話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
+                "話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER
             ),
             TemplateField(
                 "セリフ本文",
@@ -166,8 +213,8 @@ class BatchWorkflowTests(unittest.TestCase):
                 1,
                 1,
                 ocr_line_split="detected",
-                pair_id=1,
-                dialogue_role=DIALOGUE_ROLE_TEXT,
+                set_id=1,
+                slot_key=SET_SLOT_TEXT,
             ),
         ]
         coordinate_settings = PROFILE.coordinate_settings()
@@ -183,14 +230,14 @@ class BatchWorkflowTests(unittest.TestCase):
                     Path(".samples/b1.png"),
                 ],
                 fields,
-                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, field: (
                     (
                         ""
-                        if field.dialogue_role == DIALOGUE_ROLE_SPEAKER
+                        if field.slot_key == SET_SLOT_SPEAKER
                         and field.x2 - field.x1 <= 1
                         else "話者"
-                        if field.dialogue_role == DIALOGUE_ROLE_SPEAKER
+                        if field.slot_key == SET_SLOT_SPEAKER
                         else "本文"
                     ),
                     None,
@@ -248,15 +295,15 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(len(supplement.candidate_fields), 1)
         self.assertEqual(supplement.candidate_fields[0].name, "補足セリフ候補")
         self.assertEqual(
-            supplement.candidate_fields[0].dialogue_role,
-            DIALOGUE_ROLE_SUPPLEMENT,
+            supplement.candidate_fields[0].slot_key,
+            SET_SLOT_SUPPLEMENT,
         )
         self.assertIn("補足セリフ", supplement.review_reason)
 
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
         fields = [
-            TemplateField("話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-            TemplateField("セリフ本文", 0, 0, 1, 1, ocr_line_split="detected", pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+            TemplateField("話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER),
+            TemplateField("セリフ本文", 0, 0, 1, 1, ocr_line_split="detected", set_id=1, slot_key=SET_SLOT_TEXT),
         ]
         settings = PROFILE.coordinate_settings()
         settings = replace(settings, source_content_rect=(0, 219, 1080, 2087))
@@ -272,8 +319,8 @@ class BatchWorkflowTests(unittest.TestCase):
 
     def test_supplement_is_automatically_written_as_the_same_speakers_next_dialogue(self) -> None:
         fields = [
-            TemplateField("話者", 0, 0, 1, 1, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-            TemplateField("セリフ本文", 0, 0, 1, 1, ocr_line_split="detected", pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+            TemplateField("話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER),
+            TemplateField("セリフ本文", 0, 0, 1, 1, ocr_line_split="detected", set_id=1, slot_key=SET_SLOT_TEXT),
         ]
         settings = PROFILE.coordinate_settings()
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -282,7 +329,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 output,
                 [Path(".samples/e.png")],
                 fields,
-                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, field: (field.name, None),
                 dialogue_pair_resolver=lambda image, detection_fields: include_supplement_candidates(
                     detect_complete_dialogue_pairs(
@@ -435,7 +482,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 output,
                 [Path(".samples/c.png")],
                 fields,
-                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, _field: ("", None),
                 dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
                     image,
@@ -525,15 +572,15 @@ class BatchWorkflowTests(unittest.TestCase):
             output_path = root / "output.xlsx"
             Image.new("RGB", (20, 20), "white").save(image_path)
             fields = [
-                TemplateField("話者", 0, 0, 20, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-                TemplateField("セリフ", 0, 10, 20, 20, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+                TemplateField("話者", 0, 0, 20, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
+                TemplateField("セリフ", 0, 10, 20, 20, set_id=1, slot_key=SET_SLOT_TEXT),
             ]
 
             result = ExcelExporter().export(
                 output_path,
                 [image_path],
                 fields,
-                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, _field: ("", None),
             )
 
@@ -628,12 +675,12 @@ class BatchWorkflowTests(unittest.TestCase):
             output = root / "output.xlsx"
             Image.new("RGB", (20, 20), "white").save(image_path)
             fields = [
-                TemplateField("話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-                TemplateField("セリフ1", 10, 0, 20, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
-                TemplateField("話者2", 0, 10, 10, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-                TemplateField("セリフ2", 10, 10, 20, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_TEXT),
+                TemplateField("話者1", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
+                TemplateField("セリフ1", 10, 0, 20, 10, set_id=1, slot_key=SET_SLOT_TEXT),
+                TemplateField("話者2", 0, 10, 10, 20, set_id=2, slot_key=SET_SLOT_SPEAKER),
+                TemplateField("セリフ2", 10, 10, 20, 20, set_id=2, slot_key=SET_SLOT_TEXT),
             ]
-            settings = ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR)
+            settings = ExportSettings(output_layout=EXPORT_LAYOUT_SET)
             exporter = ExcelExporter()
             first_result = exporter.export(
                 output,
@@ -659,10 +706,10 @@ class BatchWorkflowTests(unittest.TestCase):
             output = root / "output.xlsx"
             Image.new("RGB", (20, 20), "white").save(image_path)
             fields = [
-                TemplateField("セリフ2", 10, 10, 20, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_TEXT),
-                TemplateField("話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-                TemplateField("セリフ1", 10, 0, 20, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
-                TemplateField("話者2", 0, 10, 10, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_SPEAKER),
+                TemplateField("セリフ2", 10, 10, 20, 20, set_id=2, slot_key=SET_SLOT_TEXT),
+                TemplateField("話者1", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
+                TemplateField("セリフ1", 10, 0, 20, 10, set_id=1, slot_key=SET_SLOT_TEXT),
+                TemplateField("話者2", 0, 10, 10, 20, set_id=2, slot_key=SET_SLOT_SPEAKER),
             ]
             recognized = {field.name: field.name for field in fields}
 
@@ -670,7 +717,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 output,
                 [image_path],
                 fields,
-                ExportSettings(output_layout=EXPORT_LAYOUT_DIALOGUE_PAIR),
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, field: (recognized[field.name], None),
             )
             sheet = load_workbook(output)["OCR"]
@@ -678,16 +725,17 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual([sheet.cell(2, column).value for column in range(2, 5)], ["1", "話者1", "セリフ1"])
             self.assertEqual([sheet.cell(3, column).value for column in range(2, 5)], ["2", "話者2", "セリフ2"])
 
-    def test_dialogue_pair_validation_reports_missing_and_duplicate_roles(self) -> None:
-        missing = [TemplateField("話者", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER)]
+    def test_conversation_set_validation_reports_missing_and_duplicate_slots(self) -> None:
+        missing = [TemplateField("話者", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER)]
         duplicate = [
-            TemplateField("話者A", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-            TemplateField("話者B", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER),
-            TemplateField("本文", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT),
+            TemplateField("話者A", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
+            TemplateField("話者B", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
+            TemplateField("本文", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_TEXT),
         ]
 
-        self.assertIn("セリフ", dialogue_pair_validation_error(missing) or "")
-        self.assertIn("複数", dialogue_pair_validation_error(duplicate) or "")
+        definition = set_definition_for_preset("conversation")
+        self.assertIn("セリフ", set_validation_error(missing, definition) or "")
+        self.assertIn("複数", set_validation_error(duplicate, definition) or "")
 
     def test_single_line_set_exports_speaker_and_text_per_set(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

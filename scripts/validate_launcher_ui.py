@@ -16,7 +16,7 @@ from megido_ocr_excel.launcher.core import LauncherPaths, LauncherStatus
 from megido_ocr_excel.launcher.ui import LauncherWindow
 
 
-STATES = ("first", "update", "repair", "running", "error")
+VALIDATION_STATES = ("first", "update", "repair", "running", "error")
 
 
 class ValidationService:
@@ -31,8 +31,10 @@ class ValidationService:
             log_path=root / "logs" / "launcher.log",
             lock_path=root / "launcher.lock",
         )
+        self.force_reinstall_requested = False
 
-    def prepare(self, on_output=None) -> None:
+    def prepare(self, on_output=None, *, force_reinstall: bool = False) -> None:
+        self.force_reinstall_requested = force_reinstall
         if on_output is not None:
             on_output("Resolved application dependencies")
         time.sleep(10)
@@ -44,15 +46,23 @@ class ValidationService:
         return
 
 
-def run(state: str, screenshot: Path) -> None:
-    service = ValidationService()
+def status_for_state(state: str) -> LauncherStatus:
     first_setup = state in {"first", "running", "error"}
-    status = LauncherStatus(
+    return LauncherStatus(
         ready=False,
-        reason="初回セットアップが必要です。" if first_setup else "アプリの更新を適用します。",
+        reason=(
+            "初回セットアップが必要です。"
+            if first_setup
+            else "アプリの更新を適用します。"
+        ),
         first_setup=first_setup,
         uv_path="C:/tools/uv.exe",
     )
+
+
+def run(state: str, screenshot: Path) -> None:
+    service = ValidationService()
+    status = status_for_state(state)
     root = tk.Tk()
     window = LauncherWindow(
         root,
@@ -90,7 +100,9 @@ def run(state: str, screenshot: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ランチャーUI検証")
-    parser.add_argument("--state", choices=STATES, default="first")
+    parser.add_argument(
+        "--state", choices=VALIDATION_STATES, default="first"
+    )
     parser.add_argument("--screenshot", type=Path, required=True)
     args = parser.parse_args()
     run(args.state, args.screenshot)

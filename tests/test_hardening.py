@@ -13,7 +13,15 @@ from PIL import Image
 
 from megido_ocr_excel.persistence import atomic_save_workbook, atomic_write_text
 from megido_ocr_excel.config import APP_PROFILE
-from megido_ocr_excel.application import APP_TITLE, MODE_EXPORT, MODE_REVIEW, MODE_TEMPLATE, OCR_MODE_OPTIONS, AutoHideScrollableFrame, ImageOcrExcelApp
+from megido_ocr_excel.application import (
+    APP_TITLE,
+    MODE_EXPORT,
+    MODE_REVIEW,
+    MODE_TEMPLATE,
+    OCR_MODE_OPTIONS,
+    AutoHideScrollableFrame,
+    ImageOcrExcelApp,
+)
 from megido_ocr_excel.application import COLOR_PRIMARY, COLOR_SECONDARY
 from megido_ocr_excel.ui.theme import THEME
 from megido_ocr_excel.ocr.environment import (
@@ -25,7 +33,19 @@ from megido_ocr_excel.ocr.environment import (
     OcrEnvironmentStatus,
 )
 from megido_ocr_excel.operations import OperationCancelled
-from megido_ocr_excel.models import DIALOGUE_ROLE_SPEAKER, DIALOGUE_ROLE_SUPPLEMENT, DIALOGUE_ROLE_TEXT, EXPORT_LAYOUT_DIALOGUE_PAIR, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, LINE_JOIN_NEWLINE, SET_PRESET_HEADING_TEXT, SET_SLOT_HEADING, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, set_definition_for_preset
+from megido_ocr_excel.models import (
+    EXPORT_LAYOUT_IMAGE_ROW,
+    EXPORT_LAYOUT_OPTIONS,
+    EXPORT_LAYOUT_SET,
+    LINE_JOIN_NEWLINE,
+    SET_PRESET_HEADING_TEXT,
+    SET_SLOT_HEADING,
+    SET_SLOT_SPEAKER,
+    SET_SLOT_SUPPLEMENT,
+    SET_SLOT_TEXT,
+    TemplateField,
+    set_definition_for_preset,
+)
 
 
 def descendants_of(widget):
@@ -201,8 +221,8 @@ class WorkflowChoiceTests(unittest.TestCase):
         self.assertTrue(app.workflow_started)
         self.assertTrue(app.auto_detection_enabled)
         self.assertEqual(len(app.fields), 2)
-        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_SPEAKER)
-        self.assertEqual(app.fields[1].dialogue_role, DIALOGUE_ROLE_TEXT)
+        self.assertEqual(app.fields[0].slot_key, SET_SLOT_SPEAKER)
+        self.assertEqual(app.fields[1].slot_key, SET_SLOT_TEXT)
         self.assertEqual(app.fields[1].ocr_line_split, "detected")
         app._hide_workflow_choice.assert_called_once()
         app.open_image_folder.assert_called_once()
@@ -376,8 +396,8 @@ class WorkflowChoiceTests(unittest.TestCase):
                     1260,
                     760,
                     1320,
-                    pair_id=1,
-                    dialogue_role=DIALOGUE_ROLE_SPEAKER,
+                    set_id=1,
+                    slot_key=SET_SLOT_SPEAKER,
                 ),
                 TemplateField(
                     "補足セリフ候補",
@@ -385,8 +405,8 @@ class WorkflowChoiceTests(unittest.TestCase):
                     1084,
                     870,
                     1208,
-                    pair_id=1,
-                    dialogue_role=DIALOGUE_ROLE_SUPPLEMENT,
+                    set_id=1,
+                    slot_key=SET_SLOT_SUPPLEMENT,
                     ocr_line_split="detected",
                 )
             ]
@@ -681,7 +701,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         finally:
             self._destroy(app, root)
 
-    def test_defer_discards_a_gated_action(self) -> None:
+    def test_escape_from_gated_ocr_setup_discards_action(self) -> None:
         root = ctk.CTk()
         root.withdraw()
         setup = self._status(OCR_ENV_SETUP, ready=False)
@@ -691,11 +711,12 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         try:
             self.assertFalse(app._require_ocr_ready(action))
 
-            app.defer_ocr_setup()
+            self.assertEqual(app.ocr_setup_modal._on_escape(None), "break")
             root.update()
 
             action.assert_not_called()
             self.assertIsNone(app._pending_ocr_action)
+            self.assertFalse(app.ocr_setup_modal.visible)
             self.assertIn("範囲編集", app.status_var.get())
         finally:
             self._destroy(app, root)
@@ -1400,7 +1421,7 @@ class FieldNameInteractionTests(unittest.TestCase):
                 0,
                 10,
                 10,
-                dialogue_role=DIALOGUE_ROLE_SUPPLEMENT,
+                slot_key=SET_SLOT_SUPPLEMENT,
             )
         ]
         app.selected_index = 0
@@ -1506,6 +1527,17 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertIsNone(app.drag_rect)
         app.canvas.delete.assert_called_once_with(42)
 
+    def test_template_mouse_release_without_image_clears_stale_edit_state(self) -> None:
+        app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
+        app.mode_var = MagicMock()
+        app.mode_var.get.return_value = MODE_TEMPLATE
+        app.original_image = None
+        app._clear_canvas_pointer_interaction = MagicMock()
+
+        app.on_mouse_up(MagicMock())
+
+        app._clear_canvas_pointer_interaction.assert_called_once_with()
+
     def test_export_settings_exclude_layout_and_preflight_links_to_editor(self) -> None:
         root = ctk.CTk()
         root.withdraw()
@@ -1565,10 +1597,10 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.status_var.set.assert_called_once_with("列構成を変更できます。")
         app._on_mode_change.assert_called_once_with()
 
-    def test_duplicate_is_undoable_and_clears_dialogue_assignment(self) -> None:
+    def test_duplicate_is_undoable_and_clears_set_assignment(self) -> None:
         app = self._logic_only_app()
-        app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR
-        app.fields = [TemplateField("話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER)]
+        app.export_layout_var.get.return_value = EXPORT_LAYOUT_SET
+        app.fields = [TemplateField("話者1", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER)]
         app.current_results = ["recognized"]
         app.current_raw_results = ["raw"]
 
@@ -1576,8 +1608,8 @@ class FieldNameInteractionTests(unittest.TestCase):
 
         self.assertEqual(len(app.fields), 2)
         self.assertEqual(app.fields[1].name, "話者1 のコピー")
-        self.assertEqual(app.fields[1].pair_id, 0)
-        self.assertEqual(app.fields[1].dialogue_role, "")
+        self.assertEqual(app.fields[1].set_id, 0)
+        self.assertEqual(app.fields[1].slot_key, "")
         self.assertEqual(app.current_results[1], "")
         self.assertEqual(app.undo_action["type"], "add")
 
@@ -1600,7 +1632,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         self.assertEqual(row.configure.call_args.kwargs["fg_color"], "#241936")
         self.assertEqual(handle.configure.call_args.kwargs["fg_color"], "transparent")
 
-    def test_dialogue_role_text_enables_line_splitting(self) -> None:
+    def test_text_slot_enables_line_splitting(self) -> None:
         app = self._logic_only_app()
         app.fields = [TemplateField("本文", 0, 0, 10, 10, ocr_line_split="none")]
         app.current_results = ["recognized"]
@@ -1608,13 +1640,13 @@ class FieldNameInteractionTests(unittest.TestCase):
 
         app.set_field_dialogue_role(0, "セリフ")
 
-        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_TEXT)
+        self.assertEqual(app.fields[0].slot_key, SET_SLOT_TEXT)
         self.assertEqual(app.fields[0].ocr_line_split, "detected")
         self.assertEqual(app.current_results[0], "")
         self.assertEqual(app.current_raw_results[0], "")
         app._mark_dirty.assert_called_once()
 
-    def test_supplement_role_enables_line_splitting(self) -> None:
+    def test_supplement_slot_enables_line_splitting(self) -> None:
         app = self._logic_only_app()
         app.fields = [TemplateField("補足", 0, 0, 10, 10, ocr_line_split="none")]
         app.current_results = ["recognized"]
@@ -1622,7 +1654,7 @@ class FieldNameInteractionTests(unittest.TestCase):
 
         app.set_field_dialogue_role(0, "補足セリフ")
 
-        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_SUPPLEMENT)
+        self.assertEqual(app.fields[0].slot_key, SET_SLOT_SUPPLEMENT)
         self.assertEqual(app.fields[0].ocr_line_split, "detected")
 
     def test_field_rows_show_only_the_setting_used_by_the_output_layout(self) -> None:
@@ -1636,8 +1668,8 @@ class FieldNameInteractionTests(unittest.TestCase):
                 0,
                 10,
                 10,
-                pair_id=1,
-                dialogue_role=DIALOGUE_ROLE_SPEAKER,
+                set_id=1,
+                slot_key=SET_SLOT_SPEAKER,
             )
             app.fields = [field]
 
@@ -1656,7 +1688,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             menu_right = image_row_menus[0].winfo_x() + image_row_menus[0].winfo_width()
             self.assertGreaterEqual(drag_handle.winfo_x() - menu_right, 8)
 
-            app.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            app.export_layout_var.set(EXPORT_LAYOUT_SET)
             app._render_side_body()
             dialogue_row_menus = [
                 widget
@@ -1669,7 +1701,7 @@ class FieldNameInteractionTests(unittest.TestCase):
                 dialogue_row_menus[0].cget("values"),
                 ["未割当", "話者", "セリフ", "補足セリフ"],
             )
-            self.assertEqual(field.dialogue_role, DIALOGUE_ROLE_SPEAKER)
+            self.assertEqual(field.slot_key, SET_SLOT_SPEAKER)
 
             app.set_definition = set_definition_for_preset(SET_PRESET_HEADING_TEXT)
             app._render_side_body()
@@ -1697,8 +1729,8 @@ class FieldNameInteractionTests(unittest.TestCase):
             app.current_results = ["old", "old"]
             app.current_raw_results = ["raw", "raw"]
 
-            app.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
-            app._set_export_layout(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            app.export_layout_var.set(EXPORT_LAYOUT_SET)
+            app._set_export_layout(EXPORT_LAYOUT_SET)
 
             self.assertEqual([field.set_id for field in app.fields], [1, 1])
             self.assertEqual(
@@ -1715,7 +1747,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_switching_auto_detection_to_image_rows_fixes_the_current_coordinate_source(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
         app.export_layout_var = MagicMock()
-        app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR
+        app.export_layout_var.get.return_value = EXPORT_LAYOUT_SET
         app.original_image = Image.open(".samples/1.png").convert("RGB")
         app.coordinate_settings = APP_PROFILE.coordinate_settings()
         app.current_content_rect = None
@@ -1756,7 +1788,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_cancelling_fixed_range_switch_keeps_auto_detection_and_menu_value(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
         app.export_layout_var = MagicMock()
-        app.export_layout_var.get.return_value = EXPORT_LAYOUT_DIALOGUE_PAIR
+        app.export_layout_var.get.return_value = EXPORT_LAYOUT_SET
         app.auto_detection_enabled = True
         app.status_var = MagicMock()
         app._schedule_side_body_render = MagicMock()
@@ -1770,7 +1802,7 @@ class FieldNameInteractionTests(unittest.TestCase):
 
         app.export_layout_var.set.assert_not_called()
         self.assertTrue(app.auto_detection_enabled)
-        menu.set.assert_called_once_with(EXPORT_LAYOUT_DIALOGUE_PAIR)
+        menu.set.assert_called_once_with(EXPORT_LAYOUT_SET)
         app._schedule_side_body_render.assert_not_called()
         app.redraw.assert_not_called()
         self.assertEqual(
@@ -1782,8 +1814,8 @@ class FieldNameInteractionTests(unittest.TestCase):
         root.withdraw()
         app = ImageOcrExcelApp(root)
         try:
-            app.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
-            app._set_export_layout(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            app.export_layout_var.set(EXPORT_LAYOUT_SET)
+            app._set_export_layout(EXPORT_LAYOUT_SET)
             self.assertEqual(app._dialogue_pair_ids(), [1])
             self.assertEqual(app.pending_dialogue_pair_id, 1)
             self.assertEqual(app.pending_dialogue_role, SET_SLOT_SPEAKER)
@@ -1828,17 +1860,17 @@ class FieldNameInteractionTests(unittest.TestCase):
         app = self._logic_only_app()
         app.fields = [
             TemplateField(
-                "話者1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_SPEAKER
+                "話者1", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER
             ),
             TemplateField(
-                "話者2", 0, 10, 10, 20, pair_id=2, dialogue_role=DIALOGUE_ROLE_SPEAKER
+                "話者2", 0, 10, 10, 20, set_id=2, slot_key=SET_SLOT_SPEAKER
             ),
         ]
 
         app.move_field_to_dialogue_pair(0, 2)
 
-        self.assertEqual(app.fields[0].pair_id, 2)
-        self.assertEqual(app.fields[1].pair_id, 1)
+        self.assertEqual(app.fields[0].set_id, 2)
+        self.assertEqual(app.fields[1].set_id, 1)
         app._mark_dirty.assert_called_once()
         self.assertIn("入れ替え", app.status_var.set.call_args.args[0])
 
@@ -1846,14 +1878,14 @@ class FieldNameInteractionTests(unittest.TestCase):
         app = self._logic_only_app()
         app.fields = [
             TemplateField(
-                "セリフ1", 0, 0, 10, 10, pair_id=1, dialogue_role=DIALOGUE_ROLE_TEXT
+                "セリフ1", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_TEXT
             )
         ]
 
         app.move_field_to_dialogue_pair(0, 0)
 
-        self.assertEqual(app.fields[0].pair_id, 0)
-        self.assertEqual(app.fields[0].dialogue_role, DIALOGUE_ROLE_TEXT)
+        self.assertEqual(app.fields[0].set_id, 0)
+        self.assertEqual(app.fields[0].slot_key, SET_SLOT_TEXT)
 
 
 if __name__ == "__main__":
