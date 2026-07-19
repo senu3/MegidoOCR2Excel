@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from PIL import Image
 
@@ -26,11 +26,7 @@ class DialoguePairDetectionResult:
     allow_empty_speaker: bool = False
     allow_empty_dialogue: bool = False
     review_reason: str = ""
-    candidate_fields: list[TemplateField] | None = None
-
-    def __post_init__(self) -> None:
-        if self.candidate_fields is None:
-            object.__setattr__(self, "candidate_fields", [])
+    candidate_fields: list[TemplateField] = field(default_factory=list)
 
     @property
     def notices(self) -> list[str]:

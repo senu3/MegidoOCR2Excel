@@ -50,11 +50,12 @@ from megido_ocr_excel.export.excel import (
     ExcelExporter,
     ExportResult,
     ExportSettings,
+    SetResolver,
     validate_export_settings,
 )
 from megido_ocr_excel.config import (
     APP_PROFILE,
-    APP_TITLE,
+    APP_TITLE as _APP_TITLE,
     IMAGE_EXTENSIONS,
     natural_image_sort_key,
 )
@@ -89,9 +90,7 @@ from megido_ocr_excel.models import (
     COORDINATE_SPACE_CONTENT,
     COORDINATE_SPACE_IMAGE,
     CORRECTION_ALL_TARGET,
-    DIALOGUE_ROLE_SPEAKER,
     DIALOGUE_ROLE_SUPPLEMENT,
-    DIALOGUE_ROLE_TEXT,
     EXPORT_LAYOUT_DIALOGUE_PAIR,
     EXPORT_LAYOUT_IMAGE_ROW,
     EXPORT_LAYOUT_OPTIONS,
@@ -101,11 +100,10 @@ from megido_ocr_excel.models import (
     SET_PRESET_CONVERSATION,
     SET_PRESET_DISPLAY,
     SET_PRESET_OPTIONS,
-    SET_SLOT_SPEAKER,
     SET_SLOT_SUPPLEMENT,
-    SET_SLOT_TEXT,
     CoordinateSettings,
     CorrectionRule,
+    DialogueLogDetectionConfig,
     TemplateField,
     TextFormattingSettings,
     set_definition_for_preset,
@@ -124,6 +122,28 @@ from megido_ocr_excel.templates import (
     text_formatting_from_template,
 )
 from megido_ocr_excel.ui.tooltip import add_tooltip
+
+
+APP_TITLE = _APP_TITLE
+
+
+def _dialogue_set_resolver(
+    coordinate_settings: CoordinateSettings,
+    config: DialogueLogDetectionConfig,
+) -> SetResolver:
+    def resolve(
+        image: Image.Image, detection_fields: list[TemplateField]
+    ):
+        return include_supplement_candidates(
+            detect_complete_dialogue_pairs(
+                image,
+                detection_fields,
+                coordinate_settings,
+                config,
+            )
+        )
+
+    return resolve
 
 
 logger = logging.getLogger(__name__)
@@ -3878,9 +3898,12 @@ class ImageOcrExcelApp:
             focus_order = [
                 self.ocr_setup_primary_button,
             ]
-            if secondary_visible:
+            if (
+                secondary_visible
+                and self.ocr_setup_secondary_button is not None
+            ):
                 focus_order.append(self.ocr_setup_secondary_button)
-            if settings_visible:
+            if settings_visible and self.ocr_setup_settings_button is not None:
                 focus_order.append(self.ocr_setup_settings_button)
             self.ocr_setup_modal.set_focus_order(
                 [widget for widget in focus_order if widget is not None],
@@ -5388,13 +5411,20 @@ class ImageOcrExcelApp:
     def _set_dialogue_drop_target(self, pair_id: int | None) -> None:
         if self.dialogue_drag_target_pair == pair_id:
             return
-        previous = self.dialogue_drop_section_by_pair.get(
-            self.dialogue_drag_target_pair
+        previous_pair_id = self.dialogue_drag_target_pair
+        previous = (
+            self.dialogue_drop_section_by_pair.get(previous_pair_id)
+            if previous_pair_id is not None
+            else None
         )
         if previous is not None:
             previous.configure(fg_color="transparent", border_color=COLOR_SURFACE_ALT)
         self.dialogue_drag_target_pair = pair_id
-        target = self.dialogue_drop_section_by_pair.get(pair_id)
+        target = (
+            self.dialogue_drop_section_by_pair.get(pair_id)
+            if pair_id is not None
+            else None
+        )
         if target is not None:
             target.configure(
                 fg_color=THEME.palette.selected_row, border_color=COLOR_PRIMARY
@@ -6295,6 +6325,8 @@ class ImageOcrExcelApp:
         for pair_position in reversed(list(self.canvas_pair_handles.keys())):
             state = self.canvas_pair_handles[pair_position]
             item = state.get("handle") or state.get("outline")
+            if item is None:
+                continue
             bbox = self.canvas.bbox(item)
             if not bbox:
                 continue
@@ -6619,7 +6651,12 @@ class ImageOcrExcelApp:
         if pair_hit is not None:
             self._adopt_current_image_as_coordinate_source()
             handle_state = self.canvas_pair_handles.get(pair_hit) or {}
-            indexes = tuple(handle_state.get("fields") or ())
+            raw_indexes = handle_state.get("fields")
+            indexes = (
+                tuple(raw_indexes)
+                if isinstance(raw_indexes, (list, tuple))
+                else ()
+            )
             if len(indexes) == 2:
                 if not handle_state.get("selected"):
                     self._select_field_index(indexes[0], update_review_detail=True)
@@ -6713,6 +6750,10 @@ class ImageOcrExcelApp:
         if self.mode_var.get() != MODE_TEMPLATE:
             self._clear_canvas_pointer_interaction()
             return
+        image = self.original_image
+        if image is None:
+            self._clear_canvas_pointer_interaction()
+            return
         if self.canvas_edit_state is not None:
             if self.canvas_edit_state.get("mode") == "pair_move":
                 x, y = self._event_image_point(event)
@@ -6753,7 +6794,7 @@ class ImageOcrExcelApp:
                         continue
                     field = self.fields[idx]
                     field.x1, field.y1, field.x2, field.y2 = rect
-                    field.source_width, field.source_height = self.original_image.size
+                    field.source_width, field.source_height = image.size
                     if idx < len(self.current_results):
                         self.current_results[idx] = ""
                     if idx < len(self.current_raw_results):
@@ -6793,7 +6834,7 @@ class ImageOcrExcelApp:
                 else ""
             )
             field.x1, field.y1, field.x2, field.y2 = x1, y1, x2, y2
-            field.source_width, field.source_height = self.original_image.size
+            field.source_width, field.source_height = image.size
             if idx < len(self.current_results):
                 self.current_results[idx] = ""
             if idx < len(self.current_raw_results):
@@ -7192,12 +7233,17 @@ class ImageOcrExcelApp:
         dialogue_detection = self.profile.dialogue_log_detection
         text_formatting = self.text_formatting
         export_definition = self.set_definition
-        use_dialogue_detection = (
+        set_resolver = None
+        if (
             dialogue_detection is not None
             and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
             and self.auto_detection_enabled
             and export_definition.preset == SET_PRESET_CONVERSATION
-        )
+        ):
+            set_resolver = _dialogue_set_resolver(
+                coordinate_settings,
+                dialogue_detection,
+            )
         export_signature = self._export_structure_signature(export_fields, settings)
         self._clear_retry_context()
         self.image_queue.prepare(image_files)
@@ -7234,20 +7280,7 @@ class ImageOcrExcelApp:
                 ),
                 update_progress,
                 set_definition=export_definition,
-                set_resolver=(
-                    (
-                        lambda image, detection_fields: include_supplement_candidates(
-                            detect_complete_dialogue_pairs(
-                                image,
-                                detection_fields,
-                                coordinate_settings,
-                                dialogue_detection,
-                            )
-                        )
-                    )
-                    if use_dialogue_detection
-                    else None
-                ),
+                set_resolver=set_resolver,
                 cancel_check=self._is_operation_cancelled,
             )
 
@@ -7362,12 +7395,17 @@ class ImageOcrExcelApp:
         dialogue_detection = self.profile.dialogue_log_detection
         text_formatting = self.text_formatting
         export_definition = self.set_definition
-        use_dialogue_detection = (
+        set_resolver = None
+        if (
             dialogue_detection is not None
             and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
             and self.auto_detection_enabled
             and export_definition.preset == SET_PRESET_CONVERSATION
-        )
+        ):
+            set_resolver = _dialogue_set_resolver(
+                coordinate_settings,
+                dialogue_detection,
+            )
         total = len(retry_files)
         self.progress_var.set(f"0 / {total}")
         self.status_var.set(f"失敗した {total} 画像を再実行します。")
@@ -7404,20 +7442,7 @@ class ImageOcrExcelApp:
                 retry_files=retry_files,
                 progress_callback=update_progress,
                 set_definition=export_definition,
-                set_resolver=(
-                    (
-                        lambda image, detection_fields: include_supplement_candidates(
-                            detect_complete_dialogue_pairs(
-                                image,
-                                detection_fields,
-                                coordinate_settings,
-                                dialogue_detection,
-                            )
-                        )
-                    )
-                    if use_dialogue_detection
-                    else None
-                ),
+                set_resolver=set_resolver,
                 cancel_check=self._is_operation_cancelled,
             )
 
