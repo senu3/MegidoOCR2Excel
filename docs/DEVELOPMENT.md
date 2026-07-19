@@ -18,6 +18,12 @@ Windowsでは `MegidoOCR2Excel.cmd` または `run_app.ps1` から専用ラン�
 
 `--repair` は通常の同期と異なり `uv sync --reinstall` を実行し、依存パッケージを入れ直してから非モデル取得型のプローブを実行します。アプリ内の「ランチャーで修復」は、現在の実行環境に依存しないuvブートストラップでこの処理へ引き渡します。
 
+### ランチャーの実行環境
+
+ユーザーにはuvの事前導入を求めます。ランチャー自体は `uv run --no-project --python 3.12` で起動し、アプリ用環境はアプリデータ配下の `runtime/v1` で管理します。プロジェクト直下の仮想環境は使用しません。
+
+`pyproject.toml`、`uv.lock`、`.python-version` の内容が変わると更新を必要と判定します。`uv sync --locked --no-dev` とプローブの両方が成功した後だけ状態ファイルを更新し、次回起動から準備を省略します。ランチャーは多重起動をロックし、ログをアプリデータ配下に保存します。
+
 ## UI検証モード（一時）
 
 OCRモデルや端末設定を変更せず、OCR準備画面の状態を固定して確認できます。
@@ -47,6 +53,20 @@ OCR環境マネージャーは、依存パッケージ、モデル保存先、�
 
 「ダウンロードして準備」または「確認して更新」は専用の子プロセスで通常認識と行分割認識を実際に初期化し、不足モデルを取得します。子プロセスの成功後だけ、保存先・パッケージバージョンの確認署名とモデル一覧を保存します。保存先やパッケージが変わると次回起動時に明示確認を求め、自動初期化は行いません。
 
+モデルは既定で `%USERPROFILE%\.paddlex` に保存します。保存先は端末設定であり、テンプレートには含めません。準備中のキャンセルは子プロセスを終了し、フルプローブに成功していない環境を準備済みとして記録しません。
+
+保存先の変更後はランチャー経由でアプリを再起動します。OCR実行環境が不足している場合は修復へ引き渡し、依存パッケージだけを再構築します。認識モデル、テンプレート、端末設定は修復対象外です。
+
+## 出力と保存の保護
+
+- 空の認識結果や処理失敗は `Errors` シートへ記録する
+- 不完全な会話の除外理由は `Notices` シートへ記録する
+- 失敗分の再実行は、対象画像の前回行だけを置き換える
+- テンプレートとExcelは一時ファイルへ書き切った後に置き換える
+- 新規テンプレートの座標はゲーム画面領域を基準に正規化し、黒余白の差を補正する
+
+診断ログは一定サイズでローテーションし、OCRの認識結果は記録しません。
+
 ## プロファイル
 
 ゲーム固有設定は共通の `OcrProfile` から分離しています。現在の設定は `megido_ocr_excel/profiles/megido_novel.py` にあります。
@@ -74,7 +94,9 @@ OCR環境マネージャーは、依存パッケージ、モデル保存先、�
 
 ## 主な構成
 
-- `main.py`: 起動と配布ビルドのスモークテスト入口
+- `main.py`: アプリの起動エントリーポイント
+- `launcher.py`: 専用ランチャーの起動エントリーポイント
+- `megido_ocr_excel/launcher/`: 実行環境の準備、修復、起動UI
 - `megido_ocr_excel/application.py`: CustomTkinter UIと画面遷移
 - `megido_ocr_excel/diagnostics.py`: 診断ログ、ローテーション、未処理例外の捕捉
 - `megido_ocr_excel/ui/`: テーマ、アイコン、ダイアログ、ツールチップ
@@ -102,3 +124,12 @@ uv run python scripts/measure_dialogue_ocr.py --preprocess threshold --scale 3 -
 uv run python scripts/measure_dialogue_ocr.py --line-split detected --preprocess threshold --scale 3 --threshold 140 --psm 6 --lang jpn
 uv run python scripts/measure_dialogue_ocr.py --line-split none
 ```
+
+## リリース前の確認
+
+```powershell
+uv run python -m py_compile main.py launcher.py
+uv run python -m unittest discover -s tests
+```
+
+ランチャーは `scripts/validate_launcher_ui.py`、OCR準備画面は `scripts/validate_ocr_setup_ui.py` で主要状態を確認します。初回準備は、新しいユーザー環境で `MegidoOCR2Excel.cmd` から起動し、ランチャーの環境構築からOCRモデルの明示取得、アプリ再起動までを通して検証します。
