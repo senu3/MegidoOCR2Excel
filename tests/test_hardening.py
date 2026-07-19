@@ -46,6 +46,7 @@ from megido_ocr_excel.models import (
     TemplateField,
     set_definition_for_preset,
 )
+from tests.tk_test_utils import destroy_tk_root
 
 
 def descendants_of(widget):
@@ -298,7 +299,7 @@ class WorkflowChoiceTests(unittest.TestCase):
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_workflow_choice_escape_and_close_continue_without_selection(self) -> None:
         root = ctk.CTk()
@@ -333,7 +334,7 @@ class WorkflowChoiceTests(unittest.TestCase):
                 app.ocr_setup_modal.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_empty_field_state_points_to_the_template_overflow_menu(self) -> None:
         root = ctk.CTk()
@@ -359,7 +360,7 @@ class WorkflowChoiceTests(unittest.TestCase):
                 app.ocr_setup_modal.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_shortcuts_are_blocked_until_workflow_is_selected(self) -> None:
         app = self._logic_only_app()
@@ -439,7 +440,7 @@ class WorkflowChoiceTests(unittest.TestCase):
                 app.request_close()
             destroy.assert_called_once()
         finally:
-            root.destroy()
+            destroy_tk_root(root)
 
 
 class OcrSetupOnboardingTests(unittest.TestCase):
@@ -495,7 +496,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             app.ocr_setup_modal.destroy()
         if app.workflow_choice_modal is not None:
             app.workflow_choice_modal.destroy()
-        root.destroy()
+        destroy_tk_root(root)
 
     def test_unprepared_startup_precedes_workflow_and_can_be_deferred(self) -> None:
         root = ctk.CTk()
@@ -944,7 +945,7 @@ class DirtyStateTests(unittest.TestCase):
                 self.assertTrue(app.dirty)
                 showerror.assert_called_once()
         finally:
-            root.destroy()
+            destroy_tk_root(root)
 
 
 class BackgroundOperationStateTests(unittest.TestCase):
@@ -1123,7 +1124,7 @@ class PaddleBackendPolicyTests(unittest.TestCase):
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
 
 class OcrEnvironmentUiPolicyTests(unittest.TestCase):
@@ -1155,7 +1156,7 @@ class OcrEnvironmentUiPolicyTests(unittest.TestCase):
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
 
 class TemplateToolbarTests(unittest.TestCase):
@@ -1188,7 +1189,7 @@ class TemplateToolbarTests(unittest.TestCase):
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
 
 class ModalConsistencyTests(unittest.TestCase):
@@ -1214,7 +1215,7 @@ class ModalConsistencyTests(unittest.TestCase):
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_settings_uses_the_shared_borderless_modal(self) -> None:
         root = ctk.CTk()
@@ -1308,7 +1309,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 app.settings_modal.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_processing_modal_blocks_background_input_until_hidden(self) -> None:
         root = ctk.CTk()
@@ -1352,7 +1353,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 app.loading_modal.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
 
 class FieldNameInteractionTests(unittest.TestCase):
@@ -1583,7 +1584,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             host.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_export_layout_navigation_switches_to_template_mode(self) -> None:
         app = self._logic_only_app()
@@ -1715,7 +1716,7 @@ class FieldNameInteractionTests(unittest.TestCase):
                 ["未割当", "見出し", "本文"],
             )
         finally:
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_switching_to_set_layout_creates_set_one_and_assigns_existing_fields(self) -> None:
         root = ctk.CTk()
@@ -1742,7 +1743,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             self.assertEqual(app.current_results, ["", ""])
             root.update_idletasks()
         finally:
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_switching_auto_detection_to_image_rows_fixes_the_current_coordinate_source(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
@@ -1838,7 +1839,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             )
             root.update_idletasks()
         finally:
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_unselected_dialogue_pair_draws_only_the_outer_outline(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)

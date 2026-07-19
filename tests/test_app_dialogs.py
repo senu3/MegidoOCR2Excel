@@ -7,6 +7,7 @@ import customtkinter as ctk
 
 from megido_ocr_excel.ui.dialogs import AppDialogs
 from megido_ocr_excel.ui.theme import THEME
+from tests.tk_test_utils import destroy_tk_root
 
 
 class AppDialogsTests(unittest.TestCase):
@@ -19,7 +20,7 @@ class AppDialogsTests(unittest.TestCase):
     def tearDown(self) -> None:
         if self.dialogs.active_modal is not None:
             self.dialogs.active_modal.destroy()
-        self.root.destroy()
+        destroy_tk_root(self.root)
 
     def _send(self, sequence: str) -> None:
         modal = self.dialogs.active_modal

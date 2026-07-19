@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import customtkinter as ctk
 
 from megido_ocr_excel.ui.modal import ModalOverlay
+from tests.tk_test_utils import destroy_tk_root
 
 
 class ModalOverlayTests(unittest.TestCase):
@@ -40,7 +41,7 @@ class ModalOverlayTests(unittest.TestCase):
             self.assertAlmostEqual(float(modal.backdrop.attributes("-alpha")), 1.0)
         finally:
             modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_show_covers_the_root_without_blocking_windows_title_bar(self) -> None:
         root = ctk.CTk()
@@ -70,7 +71,7 @@ class ModalOverlayTests(unittest.TestCase):
             self.assertEqual(modal.window.state(), "withdrawn")
         finally:
             modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
     def test_enter_invokes_the_focused_action_or_default(self) -> None:
         root = ctk.CTk()
@@ -101,7 +102,7 @@ class ModalOverlayTests(unittest.TestCase):
             primary_command.assert_called_once_with()
         finally:
             modal.destroy()
-            root.destroy()
+            destroy_tk_root(root)
 
 
 if __name__ == "__main__":
