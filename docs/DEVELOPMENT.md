@@ -11,25 +11,6 @@ uv run python main.py
 
 Windowsでは `run_app.ps1` からも起動できます。
 
-## 開発用onedirビルド
-
-Pythonや `uv` を導入していないWindows環境で検証するため、PyInstallerの
-onedir形式を使用します。モデルは同梱せず、通常起動時と同じくOCR準備画面から
-取得します。
-
-```powershell
-.\scripts\build_onedir.ps1
-```
-
-生成物は `dist\MegidoOCR2Excel\` です。フォルダー内のファイルを分離せず、
-`MegidoOCR2Excel.exe` を起動してください。`build\` と `dist\` はGit管理外です。
-ビルド後は生成したEXE自身でPaddlePaddle、PaddleOCR、PaddleXの同梱状態を確認し、
-結果を `build\packaging-smoke.json` に保存します。
-
-この段階の実行ファイルは開発検証用で、アプリアイコン、バージョン情報、
-コード署名、インストーラーは未設定です。正式配布前にクリーンなWindows環境で
-初回モデル取得、OCR、Excel出力を確認します。
-
 ## UI検証モード（一時）
 
 OCRモデルや端末設定を変更せず、OCR準備画面の状態を固定して確認できます。

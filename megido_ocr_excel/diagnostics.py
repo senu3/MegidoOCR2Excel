@@ -101,11 +101,10 @@ def configure_logging(
     logger.addHandler(file_handler)
     _active_log_path = log_path
     logger.info(
-        "Application started | version=%s | python=%s | platform=%s | frozen=%s",
+        "Application started | version=%s | python=%s | platform=%s",
         __version__,
         platform.python_version(),
         platform.platform(),
-        bool(getattr(sys, "frozen", False)),
     )
     return log_path
 

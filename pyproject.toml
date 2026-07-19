@@ -22,8 +22,3 @@ megido-ocr-to-excel = "megido_ocr_excel.application:main"
 
 [tool.uv]
 package = false
-
-[dependency-groups]
-dev = [
-    "pyinstaller>=6.21,<7",
-]
