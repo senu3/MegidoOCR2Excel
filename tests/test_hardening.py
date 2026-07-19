@@ -17,6 +17,7 @@ from megido_ocr_excel.application import APP_TITLE, MODE_EXPORT, MODE_REVIEW, MO
 from megido_ocr_excel.application import COLOR_PRIMARY, COLOR_SECONDARY
 from megido_ocr_excel.ui.theme import THEME
 from megido_ocr_excel.ocr.environment import (
+    OCR_ENV_LOCATION_ERROR,
     OCR_ENV_READY,
     OCR_ENV_SETUP,
     OCR_ENV_UNAVAILABLE,
@@ -379,6 +380,10 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                 "確認が必要",
                 "既存の認識モデルはまだこのアプリで確認されていません。",
             ),
+            OCR_ENV_LOCATION_ERROR: (
+                "保存先を確認",
+                "指定した保存先にアクセスできません。",
+            ),
             OCR_ENV_UNAVAILABLE: (
                 "ランチャーで修復が必要",
                 "PaddleOCRの実行環境が不足しています。",
@@ -491,6 +496,48 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
             self.assertFalse(app.ocr_readiness_banner.winfo_manager())
+        finally:
+            self._destroy(app, root)
+
+    def test_ready_setup_overlay_only_offers_continue(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        ready = self._status(OCR_ENV_READY, ready=True)
+        app, _manager = self._app_with_status(root, ready)
+        try:
+            app.show_ocr_setup()
+
+            self.assertEqual(app.ocr_setup_primary_button.cget("text"), "続ける")
+            self.assertEqual(app.ocr_setup_secondary_button.winfo_manager(), "")
+            self.assertEqual(app.ocr_setup_settings_button.winfo_manager(), "")
+            self.assertEqual(
+                app.ocr_setup_modal._focus_order,
+                (app.ocr_setup_primary_button,),
+            )
+
+            app.ocr_setup_modal._on_escape(None)
+
+            self.assertFalse(app.ocr_setup_modal.visible)
+            self.assertTrue(app.workflow_choice_modal.visible)
+            self.assertNotIn("未準備", app.status_var.get())
+        finally:
+            self._destroy(app, root)
+
+    def test_location_error_does_not_repeat_settings_action(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        location_error = self._status(OCR_ENV_LOCATION_ERROR, ready=False)
+        app, _manager = self._app_with_status(root, location_error)
+        try:
+            self.assertEqual(
+                app.ocr_setup_primary_button.cget("text"),
+                "保存先を確認",
+            )
+            self.assertEqual(app.ocr_setup_settings_button.winfo_manager(), "")
+            self.assertNotIn(
+                app.ocr_setup_settings_button,
+                app.ocr_setup_modal._focus_order,
+            )
         finally:
             self._destroy(app, root)
 
@@ -613,6 +660,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                 app.ocr_setup_subtitle_label.cget("text"),
             )
             self.assertEqual(app.ocr_readiness_button.cget("text"), "修復")
+            self.assertEqual(app.ocr_setup_settings_button.winfo_manager(), "")
             with (
                 patch.object(app.dialogs, "askyesno", return_value=True),
                 patch.object(app, "_confirm_unsaved_changes", return_value=True),

@@ -3761,7 +3761,9 @@ class ImageOcrExcelApp:
         primary_text = "状態を確認する"
         primary_command = self.prepare_ocr_environment
         primary_state = "normal"
-        settings_state = "normal"
+        secondary_visible = True
+        settings_visible = True
+        escape_command = self.defer_ocr_setup
         if self.ocr_environment_restart_required:
             title = "OCRモデルの保存先を確認"
             subtitle = "変更した保存先を使用するには、アプリの再起動が必要です。"
@@ -3784,6 +3786,7 @@ class ImageOcrExcelApp:
             color = THEME.palette.danger
             primary_text = "保存先を確認"
             primary_command = self.open_ocr_environment_settings
+            settings_visible = False
         elif status.state == OCR_ENV_UNAVAILABLE:
             title = "OCR実行環境を修復してください"
             subtitle = (
@@ -3793,6 +3796,7 @@ class ImageOcrExcelApp:
             color = THEME.palette.danger
             primary_text = "ランチャーで修復"
             primary_command = self.repair_ocr_runtime
+            settings_visible = False
         elif status.state == OCR_ENV_READY:
             title = "OCRの準備が完了しました"
             subtitle = "認識テストとExcel出力を利用できます。"
@@ -3800,6 +3804,9 @@ class ImageOcrExcelApp:
             color = THEME.palette.success
             primary_text = "続ける"
             primary_command = self._finish_ocr_setup_success
+            secondary_visible = False
+            settings_visible = False
+            escape_command = self._finish_ocr_setup_success
         if self.ocr_environment_last_error:
             title = "OCR認識モデルを準備できませんでした"
             subtitle = "エラー内容を確認し、もう一度お試しください。"
@@ -3830,8 +3837,15 @@ class ImageOcrExcelApp:
                     else "範囲編集だけ先に始める"
                 )
             )
+            if secondary_visible:
+                self.ocr_setup_secondary_button.grid()
+            else:
+                self.ocr_setup_secondary_button.grid_remove()
         if self.ocr_setup_settings_button is not None:
-            self.ocr_setup_settings_button.configure(state=settings_state)
+            if settings_visible:
+                self.ocr_setup_settings_button.grid()
+            else:
+                self.ocr_setup_settings_button.grid_remove()
         if self.ocr_setup_progress is not None:
             self.ocr_setup_progress.stop()
             self.ocr_setup_progress.grid_remove()
@@ -3841,13 +3855,16 @@ class ImageOcrExcelApp:
             self.ocr_setup_modal.panel.configure(border_color=color)
             focus_order = [
                 self.ocr_setup_primary_button,
-                self.ocr_setup_secondary_button,
-                self.ocr_setup_settings_button,
             ]
+            if secondary_visible:
+                focus_order.append(self.ocr_setup_secondary_button)
+            if settings_visible:
+                focus_order.append(self.ocr_setup_settings_button)
             self.ocr_setup_modal.set_focus_order(
                 [widget for widget in focus_order if widget is not None],
                 default=self.ocr_setup_primary_button,
             )
+            self.ocr_setup_modal.set_escape_handler(escape_command)
             self.ocr_setup_modal.refresh_geometry()
         self._refresh_ocr_readiness_banner(status)
 
