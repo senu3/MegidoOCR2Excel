@@ -6,6 +6,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import megido_ocr_excel.launcher.probe as launcher_probe
 
 from megido_ocr_excel.launcher.core import (
     DEFAULT_PYTHON_VERSION,
@@ -226,6 +229,40 @@ class LauncherCoreTests(unittest.TestCase):
 
         self.assertIn("python launcher.py %*", text)
         self.assertNotIn("chcp", text.casefold())
+
+
+class LauncherProbeTests(unittest.TestCase):
+    def test_probe_does_not_import_paddleocr_or_acquire_models(self) -> None:
+        modules = {
+            name: MagicMock(__version__="1.0")
+            for name in ("customtkinter", "openpyxl", "PIL", "paddle")
+        }
+
+        with (
+            patch.object(
+                launcher_probe.importlib,
+                "import_module",
+                side_effect=lambda name: modules[name],
+            ) as import_module,
+            patch.object(
+                launcher_probe.importlib.util,
+                "find_spec",
+                return_value=object(),
+            ),
+            patch.object(
+                launcher_probe,
+                "version",
+                side_effect=lambda name: {
+                    "paddleocr": "3.7.0",
+                    "paddlepaddle": "3.3.1",
+                }[name],
+            ),
+        ):
+            result = launcher_probe.probe()
+
+        imported_names = [call.args[0] for call in import_module.call_args_list]
+        self.assertNotIn("paddleocr", imported_names)
+        self.assertEqual(result["packages"]["paddleocr"], "3.7.0")
 
 
 if __name__ == "__main__":
