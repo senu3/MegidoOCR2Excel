@@ -31,6 +31,16 @@ PALETTE = THEME.palette
 FONT_FAMILY = THEME.fonts.family
 
 
+def launcher_operation_name(
+    status: LauncherStatus, *, force_repair: bool
+) -> str:
+    if force_repair:
+        return "修復"
+    if status.first_setup:
+        return "セットアップ"
+    return "更新"
+
+
 class LauncherWindow:
     def __init__(
         self,
@@ -312,25 +322,27 @@ class LauncherWindow:
         self._output_lines = []
         self._clear_actions()
         self._set_detail("", visible=False)
+        operation = launcher_operation_name(
+            self.status, force_repair=self.force_repair
+        )
         self.status_title.configure(
-            text=(
-                "実行環境を修復しています"
-                if self.force_repair
-                else "実行環境を準備しています"
-            ),
+            text=f"実行環境を{operation}しています",
             foreground=PALETTE.info,
         )
         self.status_note.configure(
             text=(
                 "必要なパッケージを再インストールしています。"
                 if self.force_repair
-                else "必要なパッケージを確認しています。"
+                else (
+                    "必要なパッケージを確認しています。"
+                    if self.status.first_setup
+                    else "更新されたパッケージを適用しています。"
+                )
             )
             + "この画面を閉じずにお待ちください。"
         )
         self.progress.grid()
         self.progress.start(12)
-        operation = "修復" if self.force_repair else "セットアップ"
         cancel = self._button(f"{operation}を中止", self.cancel_prepare)
         cancel.pack(side="right")
         cancel.focus_set()
@@ -358,7 +370,9 @@ class LauncherWindow:
     def cancel_prepare(self) -> None:
         if not self.running:
             return
-        operation = "修復" if self.force_repair else "セットアップ"
+        operation = launcher_operation_name(
+            self.status, force_repair=self.force_repair
+        )
         if not messagebox.askyesno(
             f"{operation}を中止",
             f"実行環境の{operation}を中止しますか？\n次回起動時にもう一度実行できます。",
@@ -376,7 +390,9 @@ class LauncherWindow:
         self.progress.stop()
         self.progress.grid_remove()
         self._clear_actions()
-        operation = "修復" if self.force_repair else "セットアップ"
+        operation = launcher_operation_name(
+            self.status, force_repair=self.force_repair
+        )
         self.status_title.configure(
             text=f"{operation}を中止しました",
             foreground=PALETTE.warning,
@@ -401,9 +417,11 @@ class LauncherWindow:
 
     def show_error(self, detail: str, *, allow_retry: bool) -> None:
         self._clear_actions()
-        operation = "修復" if self.force_repair else "準備"
+        operation = launcher_operation_name(
+            self.status, force_repair=self.force_repair
+        )
         self.status_title.configure(
-            text=f"実行環境を{operation}できませんでした",
+            text=f"実行環境の{operation}に失敗しました",
             foreground=PALETTE.danger,
         )
         self.status_note.configure(
@@ -426,7 +444,9 @@ class LauncherWindow:
         self.progress.grid_remove()
         self._clear_actions()
         self._set_detail("", visible=False)
-        operation = "修復" if self.force_repair else "準備"
+        operation = launcher_operation_name(
+            self.status, force_repair=self.force_repair
+        )
         self.status_title.configure(
             text=f"{operation}が完了しました",
             foreground=PALETTE.success,

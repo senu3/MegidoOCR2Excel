@@ -80,7 +80,11 @@ from megido_ocr_excel.ocr.environment import (
     OcrEnvironmentStatus,
 )
 from megido_ocr_excel.ocr.setup import OcrSetupPhase, OcrSetupProcessRunner
-from megido_ocr_excel.launcher.core import LauncherError, launch_repair_handoff
+from megido_ocr_excel.launcher.core import (
+    LauncherError,
+    launch_application_handoff,
+    launch_repair_handoff,
+)
 from megido_ocr_excel.models import (
     COORDINATE_SPACE_CONTENT,
     COORDINATE_SPACE_IMAGE,
@@ -352,6 +356,7 @@ class ImageOcrExcelApp:
         self.ocr_setup_settings_button: ctk.CTkButton | None = None
         self.ocr_readiness_banner: ctk.CTkFrame | None = None
         self.ocr_readiness_label: ctk.CTkLabel | None = None
+        self.ocr_readiness_button: ctk.CTkButton | None = None
         self._ocr_environment_ui_refresher = None
         self._pending_ocr_action = None
         self.ocr_setup_runner = OcrSetupProcessRunner()
@@ -653,7 +658,7 @@ class ImageOcrExcelApp:
         self.ocr_readiness_label.grid(
             row=0, column=0, sticky="ew", padx=(10, 6), pady=8
         )
-        ctk.CTkButton(
+        self.ocr_readiness_button = ctk.CTkButton(
             readiness_banner,
             text="準備",
             command=self.show_ocr_setup,
@@ -666,7 +671,10 @@ class ImageOcrExcelApp:
             border_width=1,
             border_color=COLOR_BORDER,
             text_color=COLOR_TEXT,
-        ).grid(row=0, column=1, padx=(0, 8), pady=6)
+        )
+        self.ocr_readiness_button.grid(
+            row=0, column=1, padx=(0, 8), pady=6
+        )
         self.ocr_readiness_banner = readiness_banner
 
         self.side_body = ctk.CTkFrame(side, corner_radius=0, fg_color=COLOR_SURFACE)
@@ -3679,26 +3687,50 @@ class ImageOcrExcelApp:
     def _refresh_ocr_readiness_banner(
         self, status: OcrEnvironmentStatus | None = None
     ) -> None:
-        if self.ocr_readiness_banner is None or self.ocr_readiness_label is None:
+        if (
+            self.ocr_readiness_banner is None
+            or self.ocr_readiness_label is None
+            or self.ocr_readiness_button is None
+        ):
             return
         status = status or self.ocr_environment.quick_status()
         if status.ready and not self.ocr_environment_restart_required:
             self.ocr_readiness_banner.pack_forget()
             return
-        if status.state == OCR_ENV_UNAVAILABLE:
+        if self.ocr_environment_restart_required:
+            text = "OCR再起動待ち — 範囲編集のみ利用できます"
+            color = THEME.palette.warning
+            action_text = "再起動"
+            action_command = self.restart_for_ocr_cache_change
+        elif status.state == OCR_ENV_UNAVAILABLE:
             text = "OCR実行環境が不足 — 範囲編集のみ利用できます"
             color = THEME.palette.danger
+            action_text = "修復"
+            action_command = self.repair_ocr_runtime
         elif status.state == OCR_ENV_LOCATION_ERROR:
             text = "OCR保存先に問題 — 範囲編集のみ利用できます"
             color = THEME.palette.danger
+            action_text = "保存先"
+            action_command = self.open_ocr_environment_settings
+        elif status.state == OCR_ENV_VERIFY:
+            text = "OCRの確認が必要 — 範囲編集のみ利用できます"
+            color = THEME.palette.warning
+            action_text = "確認"
+            action_command = self.show_ocr_setup
         else:
             text = "OCR未準備 — 範囲編集のみ利用できます"
             color = THEME.palette.warning
+            action_text = "準備"
+            action_command = self.show_ocr_setup
         self.ocr_readiness_banner.configure(border_color=color)
         self.ocr_readiness_label.configure(
             text=text,
             image=ICONS.get("alert_circle", 15, color),
             text_color=color,
+        )
+        self.ocr_readiness_button.configure(
+            text=action_text,
+            command=action_command,
         )
         if not self.ocr_readiness_banner.winfo_manager():
             self.ocr_readiness_banner.pack(
@@ -3735,11 +3767,16 @@ class ImageOcrExcelApp:
             subtitle = "変更した保存先を使用するには、アプリの再起動が必要です。"
             label = "再起動が必要"
             note = "変更したモデル保存先は、アプリの再起動後に使用できます。"
-            primary_text = "保存先を確認"
-            primary_command = self.open_ocr_environment_settings
+            primary_text = "アプリを再起動"
+            primary_command = self.restart_for_ocr_cache_change
         elif status.state == OCR_ENV_SETUP:
             primary_text = "ダウンロードして準備"
         elif status.state == OCR_ENV_VERIFY:
+            title = "OCR認識モデルを確認"
+            subtitle = (
+                "既存の認識モデルを動作確認します。環境の更新により、"
+                "追加取得が必要な場合があります。"
+            )
             primary_text = "確認して更新"
         elif status.state == OCR_ENV_LOCATION_ERROR:
             title = "OCRモデルの保存先を確認"
@@ -3750,8 +3787,8 @@ class ImageOcrExcelApp:
         elif status.state == OCR_ENV_UNAVAILABLE:
             title = "OCR実行環境を修復してください"
             subtitle = (
-                "アプリを閉じ、MegidoOCR2Excel.cmdから再起動してください。\n"
-                "この画面からモデル取得は開始しません。"
+                "「ランチャーで修復」を選ぶとアプリを終了し、\n"
+                "PaddleOCRの実行環境を再インストールします。"
             )
             color = THEME.palette.danger
             primary_text = "ランチャーで修復"
@@ -3763,6 +3800,13 @@ class ImageOcrExcelApp:
             color = THEME.palette.success
             primary_text = "続ける"
             primary_command = self._finish_ocr_setup_success
+        if self.ocr_environment_last_error:
+            title = "OCR認識モデルを準備できませんでした"
+            subtitle = "エラー内容を確認し、もう一度お試しください。"
+            if status.state == OCR_ENV_VERIFY:
+                primary_text = "もう一度確認"
+            elif status.state == OCR_ENV_SETUP:
+                primary_text = "もう一度ダウンロード"
         if self.ocr_setup_title_label is not None:
             self.ocr_setup_title_label.configure(text=title)
         if self.ocr_setup_subtitle_label is not None:
@@ -3927,6 +3971,24 @@ class ImageOcrExcelApp:
             )
             return
         logger.info("OCR runtime repair handed off to launcher")
+        self.root.destroy()
+
+    def restart_for_ocr_cache_change(self) -> None:
+        if self.busy:
+            return
+        if not self._confirm_unsaved_changes("再起動する"):
+            return
+        project_root = Path(__file__).resolve().parents[1]
+        try:
+            launch_application_handoff(project_root)
+        except (LauncherError, OSError) as error:
+            logger.exception("Failed to restart app through launcher")
+            self.dialogs.showerror(
+                "アプリを再起動できません",
+                f"ランチャーからアプリを再起動できませんでした。\n\n{error}",
+            )
+            return
+        logger.info("App restart handed off to launcher")
         self.root.destroy()
 
     def _finish_ocr_setup_success(self) -> None:

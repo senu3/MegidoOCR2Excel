@@ -65,13 +65,13 @@ class LauncherStatus:
     uv_path: str | None
 
 
-def repair_handoff_command(
+def _handoff_command(
     project_root: Path,
     *,
+    arguments: Sequence[str],
     uv_path: str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> list[str]:
-    """Build an independent launcher command for an in-app repair request."""
     environment = dict(os.environ if environ is None else environ)
     executable = uv_path or shutil.which("uv", path=environment.get("PATH"))
     if not executable:
@@ -81,7 +81,7 @@ def repair_handoff_command(
         )
     launcher_script = Path(project_root).resolve() / "launcher.py"
     if not launcher_script.is_file():
-        raise LauncherError("修復用ランチャーが見つかりません。")
+        raise LauncherError("ランチャーが見つかりません。")
     return [
         executable,
         "run",
@@ -91,23 +91,52 @@ def repair_handoff_command(
         "--",
         "python",
         str(launcher_script),
-        "--repair",
-        "--from-app",
+        *arguments,
     ]
 
 
-def launch_repair_handoff(
+def repair_handoff_command(
     project_root: Path,
     *,
+    uv_path: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Build an independent launcher command for an in-app repair request."""
+    return _handoff_command(
+        project_root,
+        arguments=("--repair", "--from-app"),
+        uv_path=uv_path,
+        environ=environ,
+    )
+
+
+def application_handoff_command(
+    project_root: Path,
+    *,
+    uv_path: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> list[str]:
+    """Build an independent launcher command for an in-app restart."""
+    return _handoff_command(
+        project_root,
+        arguments=(),
+        uv_path=uv_path,
+        environ=environ,
+    )
+
+
+def _launch_handoff(
+    project_root: Path,
+    *,
+    command_builder: Callable[..., list[str]],
     environ: Mapping[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
-    """Start the bootstrap launcher without depending on the app runtime."""
     environment = dict(os.environ if environ is None else environ)
     environment.pop("UV_PROJECT_ENVIRONMENT", None)
     environment.pop("VIRTUAL_ENV", None)
     environment["PYTHONUTF8"] = "1"
     environment["PYTHONIOENCODING"] = "utf-8"
-    command = repair_handoff_command(project_root, environ=environment)
+    command = command_builder(project_root, environ=environment)
     creationflags = 0
     if os.name == "nt":
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -119,6 +148,32 @@ def launch_repair_handoff(
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=creationflags,
+    )
+
+
+def launch_repair_handoff(
+    project_root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> subprocess.Popen[bytes]:
+    """Start the repair launcher without depending on the app runtime."""
+    return _launch_handoff(
+        project_root,
+        command_builder=repair_handoff_command,
+        environ=environ,
+    )
+
+
+def launch_application_handoff(
+    project_root: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> subprocess.Popen[bytes]:
+    """Restart the app through the launcher without reusing its runtime."""
+    return _launch_handoff(
+        project_root,
+        command_builder=application_handoff_command,
+        environ=environ,
     )
 
 

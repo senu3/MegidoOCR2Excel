@@ -455,6 +455,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
             self.assertTrue(app.ocr_readiness_banner.winfo_manager())
+            self.assertEqual(app.ocr_readiness_button.cget("text"), "準備")
         finally:
             self._destroy(app, root)
 
@@ -507,6 +508,11 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                 app.ocr_setup_primary_button.cget("state"), "normal"
             )
             self.assertEqual(app.ocr_setup_primary_button.winfo_manager(), "grid")
+            self.assertEqual(
+                app.ocr_setup_title_label.cget("text"),
+                "OCR認識モデルを確認",
+            )
+            self.assertEqual(app.ocr_readiness_button.cget("text"), "確認")
             manager.verify.assert_not_called()
         finally:
             self._destroy(app, root)
@@ -521,7 +527,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
             self.assertTrue(app.ocr_readiness_banner.winfo_manager())
-            self.assertIn("OCR未準備", app.ocr_readiness_label.cget("text"))
+            self.assertIn("確認が必要", app.ocr_readiness_label.cget("text"))
         finally:
             self._destroy(app, root)
 
@@ -602,6 +608,11 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                 app.ocr_setup_primary_button.cget("text"),
                 "ランチャーで修復",
             )
+            self.assertIn(
+                "選ぶとアプリを終了",
+                app.ocr_setup_subtitle_label.cget("text"),
+            )
+            self.assertEqual(app.ocr_readiness_button.cget("text"), "修復")
             with (
                 patch.object(app.dialogs, "askyesno", return_value=True),
                 patch.object(app, "_confirm_unsaved_changes", return_value=True),
@@ -613,6 +624,55 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                 app.repair_ocr_runtime()
 
             launch_repair.assert_called_once()
+            destroy.assert_called_once_with()
+        finally:
+            self._destroy(app, root)
+
+    def test_failed_model_check_uses_retry_copy(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        verify = self._status(OCR_ENV_VERIFY, ready=False)
+        app, _manager = self._app_with_status(root, verify)
+        try:
+            app.ocr_environment_last_error = (
+                "準備に失敗しました: 認識モデルを読み込めませんでした。"
+            )
+            app._refresh_ocr_setup_overlay()
+
+            self.assertEqual(
+                app.ocr_setup_title_label.cget("text"),
+                "OCR認識モデルを準備できませんでした",
+            )
+            self.assertEqual(
+                app.ocr_setup_primary_button.cget("text"),
+                "もう一度確認",
+            )
+        finally:
+            self._destroy(app, root)
+
+    def test_restart_required_hands_off_to_normal_launcher(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        setup = self._status(OCR_ENV_SETUP, ready=False)
+        app, _manager = self._app_with_status(root, setup)
+        app.ocr_environment_restart_required = True
+        app._refresh_ocr_setup_overlay()
+        try:
+            self.assertEqual(
+                app.ocr_setup_primary_button.cget("text"),
+                "アプリを再起動",
+            )
+            self.assertEqual(app.ocr_readiness_button.cget("text"), "再起動")
+            with (
+                patch.object(app, "_confirm_unsaved_changes", return_value=True),
+                patch(
+                    "megido_ocr_excel.application.launch_application_handoff"
+                ) as launch_app,
+                patch.object(root, "destroy") as destroy,
+            ):
+                app.restart_for_ocr_cache_change()
+
+            launch_app.assert_called_once()
             destroy.assert_called_once_with()
         finally:
             self._destroy(app, root)

@@ -15,7 +15,10 @@ from megido_ocr_excel.launcher.core import (
     LauncherBusy,
     LauncherError,
     LauncherService,
+    LauncherStatus,
     SingleInstanceLock,
+    application_handoff_command,
+    launch_application_handoff,
     launch_repair_handoff,
     repair_handoff_command,
     launcher_paths,
@@ -23,6 +26,7 @@ from megido_ocr_excel.launcher.core import (
     project_signature,
     save_state,
 )
+from megido_ocr_excel.launcher.ui import launcher_operation_name
 
 
 class FakeRunner:
@@ -174,6 +178,44 @@ class LauncherCoreTests(unittest.TestCase):
         self.assertIn("--from-app", command)
         self.assertEqual(command[-3], str(self.root / "launcher.py"))
 
+    def test_app_restart_handoff_uses_launcher_without_repair(self) -> None:
+        (self.root / "launcher.py").write_text("# launcher\n")
+
+        command = application_handoff_command(
+            self.root,
+            uv_path="C:/tools/uv.exe",
+            environ={"PATH": ""},
+        )
+
+        self.assertEqual(command[-1], str(self.root / "launcher.py"))
+        self.assertNotIn("--repair", command)
+        self.assertNotIn("--from-app", command)
+
+    def test_app_restart_handoff_starts_independent_launcher(self) -> None:
+        process = MagicMock()
+        with (
+            patch(
+                "megido_ocr_excel.launcher.core.application_handoff_command",
+                return_value=["uv", "run"],
+            ),
+            patch(
+                "megido_ocr_excel.launcher.core.subprocess.Popen",
+                return_value=process,
+            ) as popen,
+        ):
+            result = launch_application_handoff(
+                self.root,
+                environ={
+                    "PATH": "C:/tools",
+                    "UV_PROJECT_ENVIRONMENT": "C:/active-runtime",
+                },
+            )
+
+        self.assertIs(result, process)
+        self.assertNotIn(
+            "UV_PROJECT_ENVIRONMENT", popen.call_args.kwargs["env"]
+        )
+
     def test_repair_handoff_drops_active_project_environments(self) -> None:
         process = MagicMock()
         with (
@@ -289,6 +331,23 @@ class LauncherCoreTests(unittest.TestCase):
 
         self.assertIn("$LauncherArgs = $args", text)
         self.assertIn("launcher.py @LauncherArgs", text)
+
+    def test_launcher_operation_names_cover_setup_update_and_repair(self) -> None:
+        setup = LauncherStatus(False, "初回", True, "uv")
+        update = LauncherStatus(False, "更新", False, "uv")
+
+        self.assertEqual(
+            launcher_operation_name(setup, force_repair=False),
+            "セットアップ",
+        )
+        self.assertEqual(
+            launcher_operation_name(update, force_repair=False),
+            "更新",
+        )
+        self.assertEqual(
+            launcher_operation_name(update, force_repair=True),
+            "修復",
+        )
 
 
 class LauncherProbeTests(unittest.TestCase):
