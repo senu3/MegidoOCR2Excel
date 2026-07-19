@@ -61,6 +61,7 @@ class LauncherWindow:
         self.exit_code = 0
         self._output_lines: list[str] = []
         self._auto_start_job: str | None = None
+        self._default_action_button: tk.Button | None = None
 
         self.root.title("Megido OCR to Excel — ランチャー")
         self.root.geometry("600x420")
@@ -69,6 +70,9 @@ class LauncherWindow:
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
         self.root.protocol("WM_DELETE_WINDOW", self.request_close)
+        self.root.bind("<Escape>", self._on_escape)
+        self.root.bind("<Return>", self._on_activate)
+        self.root.bind("<KP_Enter>", self._on_activate)
         self._configure_styles()
         self._build()
         self._center_window()
@@ -239,7 +243,7 @@ class LauncherWindow:
             background = PALETTE.secondary
             active = PALETTE.secondary_hover
             foreground = PALETTE.text
-        return tk.Button(
+        button = tk.Button(
             self.actions,
             text=text,
             command=command,
@@ -258,10 +262,42 @@ class LauncherWindow:
             padx=16,
             pady=8,
         )
+        if primary:
+            self._default_action_button = button
+        return button
 
     def _clear_actions(self) -> None:
+        self._default_action_button = None
         for child in self.actions.winfo_children():
             child.destroy()
+
+    @staticmethod
+    def _owns_focus(widget: tk.Misc, focused: tk.Misc | None) -> bool:
+        current = focused
+        while current is not None:
+            if current is widget:
+                return True
+            current = getattr(current, "master", None)
+        return False
+
+    def _on_activate(self, _event=None) -> str:
+        focused = self.root.focus_get()
+        target = next(
+            (
+                child
+                for child in self.actions.winfo_children()
+                if isinstance(child, tk.Button)
+                and self._owns_focus(child, focused)
+            ),
+            self._default_action_button,
+        )
+        if target is not None and str(target.cget("state")) != "disabled":
+            target.invoke()
+        return "break"
+
+    def _on_escape(self, _event=None) -> str:
+        self.request_close()
+        return "break"
 
     def _set_detail(self, text: str, *, visible: bool) -> None:
         self.detail.configure(state="normal")
@@ -345,6 +381,7 @@ class LauncherWindow:
         self.progress.start(12)
         cancel = self._button(f"{operation}を中止", self.cancel_prepare)
         cancel.pack(side="right")
+        self._default_action_button = cancel
         cancel.focus_set()
 
         def on_output(line: str) -> None:
@@ -434,6 +471,9 @@ class LauncherWindow:
             retry.focus_set()
         close = self._button("終了", self.request_close)
         close.pack(side="right", padx=(0, 8))
+        if not allow_retry:
+            self._default_action_button = close
+            close.focus_set()
         logs = self._button("ログを開く", self.open_log_folder)
         logs.pack(side="left")
 

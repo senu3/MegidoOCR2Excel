@@ -245,7 +245,11 @@ class WorkflowChoiceTests(unittest.TestCase):
             self.assertIn("開始方法を選択", labels)
             self.assertCountEqual(
                 buttons,
-                ["会話を自動検出", "新規テンプレートを作成"],
+                ["会話を自動検出", "新規テンプレートを作成", "終了"],
+            )
+            self.assertIs(
+                modal._default_action,
+                app.workflow_choice_primary_button,
             )
 
             app._hide_workflow_choice()
@@ -256,6 +260,29 @@ class WorkflowChoiceTests(unittest.TestCase):
             app._show_workflow_choice()
             self.assertTrue(modal.visible)
         finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            root.destroy()
+
+    def test_workflow_choice_escape_requests_app_close(self) -> None:
+        root = ctk.CTk()
+        root.geometry("900x700+10000+10000")
+        with patch.object(ImageOcrExcelApp, "request_close") as request_close:
+            app = ImageOcrExcelApp(root)
+        try:
+            if app.ocr_setup_modal is not None and app.ocr_setup_modal.visible:
+                app.defer_ocr_setup()
+            root.update()
+
+            app.workflow_choice_modal.window.event_generate(
+                "<Escape>", when="tail"
+            )
+            root.update()
+
+            request_close.assert_called_once_with()
+        finally:
+            if app.ocr_setup_modal is not None:
+                app.ocr_setup_modal.destroy()
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()
             root.destroy()

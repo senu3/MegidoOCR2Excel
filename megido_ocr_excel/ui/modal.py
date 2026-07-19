@@ -29,6 +29,7 @@ class ModalOverlay:
         self._visible = False
         self._destroyed = False
         self._default_focus: Misc | None = None
+        self._default_action: Misc | None = None
         self._previous_focus: Misc | None = None
         self._escape_handler: Callable[[], object] | None = None
         self._showing = False
@@ -73,6 +74,8 @@ class ModalOverlay:
         self.panel.pack(fill=BOTH, expand=True)
 
         self.window.bind("<Escape>", self._on_escape)
+        self.window.bind("<Return>", self._on_activate)
+        self.window.bind("<KP_Enter>", self._on_activate)
         self.window.bind("<Tab>", lambda event: self._on_tab(event, reverse=False))
         self.window.bind(
             "<Shift-Tab>", lambda event: self._on_tab(event, reverse=True)
@@ -101,6 +104,10 @@ class ModalOverlay:
 
     def set_escape_handler(self, handler: Callable[[], object] | None) -> None:
         self._escape_handler = handler
+
+    def set_default_action(self, widget: Misc | None) -> None:
+        """Set the action used by Enter when no action button owns focus."""
+        self._default_action = widget
 
     def refresh_geometry(self) -> None:
         """Recenter the modal after its content size changes."""
@@ -315,6 +322,28 @@ class ModalOverlay:
     def _on_escape(self, _event: Event) -> str:
         if self._escape_handler is not None:
             self._escape_handler()
+        return "break"
+
+    def _on_activate(self, _event: Event) -> str | None:
+        if self._default_action is None:
+            return None
+        focused = self.root.focus_get()
+        target = next(
+            (
+                widget
+                for widget in self._focus_order
+                if self._owns_focus(widget, focused)
+                and callable(getattr(widget, "invoke", None))
+            ),
+            self._default_action,
+        )
+        try:
+            if target.cget("state") == "disabled":
+                target = self._default_action
+            if target.cget("state") != "disabled":
+                target.invoke()
+        except (AttributeError, TclError):
+            return "break"
         return "break"
 
     def _on_root_configure(self, event: Event) -> None:

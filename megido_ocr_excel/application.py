@@ -858,10 +858,6 @@ class ImageOcrExcelApp:
             hover_color=COLOR_PRIMARY_HOVER,
         )
         primary_button.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 8))
-        primary_button.bind(
-            "<Return>",
-            lambda _event: self.start_auto_detection_workflow() or "break",
-        )
         secondary_button = ctk.CTkButton(
             overlay,
             text="新規テンプレートを作成",
@@ -877,16 +873,28 @@ class ImageOcrExcelApp:
             border_color=COLOR_BORDER,
         )
         secondary_button.grid(
-            row=3, column=0, sticky="ew", padx=28, pady=(0, 26)
+            row=3, column=0, sticky="ew", padx=28, pady=(0, 8)
         )
-        secondary_button.bind(
-            "<Return>",
-            lambda _event: self.start_new_template_workflow() or "break",
+        exit_button = ctk.CTkButton(
+            overlay,
+            text="終了",
+            command=self.request_close,
+            height=30,
+            corner_radius=THEME.layout.control_radius,
+            font=UI_FONT_SMALL,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+            text_color=COLOR_MUTED,
         )
+        exit_button.grid(row=4, column=0, pady=(0, 20))
 
         modal.set_focus_order(
-            [primary_button, secondary_button], default=primary_button
+            [primary_button, secondary_button, exit_button],
+            default=primary_button,
         )
+        modal.set_default_action(primary_button)
+        modal.set_escape_handler(self.request_close)
         self.workflow_choice_modal = modal
         self.workflow_choice_overlay = overlay
         self.workflow_choice_primary_button = primary_button
@@ -1026,6 +1034,7 @@ class ImageOcrExcelApp:
             default=self.ocr_setup_primary_button,
         )
         modal.set_escape_handler(self.defer_ocr_setup)
+        modal.set_default_action(self.ocr_setup_primary_button)
         self.ocr_setup_modal = modal
 
     def _show_initial_overlay(self) -> None:

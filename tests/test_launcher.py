@@ -26,7 +26,7 @@ from megido_ocr_excel.launcher.core import (
     project_signature,
     save_state,
 )
-from megido_ocr_excel.launcher.ui import launcher_operation_name
+from megido_ocr_excel.launcher.ui import LauncherWindow, launcher_operation_name
 
 
 class FakeRunner:
@@ -348,6 +348,22 @@ class LauncherCoreTests(unittest.TestCase):
             launcher_operation_name(update, force_repair=True),
             "修復",
         )
+
+    def test_launcher_keyboard_handlers_use_safe_and_default_actions(self) -> None:
+        window = LauncherWindow.__new__(LauncherWindow)
+        window.root = MagicMock()
+        window.actions = MagicMock()
+        window.actions.winfo_children.return_value = []
+        window.request_close = MagicMock()
+        default_action = MagicMock()
+        default_action.cget.return_value = "normal"
+        window._default_action_button = default_action
+
+        self.assertEqual(window._on_escape(), "break")
+        window.request_close.assert_called_once_with()
+
+        self.assertEqual(window._on_activate(), "break")
+        default_action.invoke.assert_called_once_with()
 
 
 class LauncherProbeTests(unittest.TestCase):

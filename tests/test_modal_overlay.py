@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from unittest.mock import MagicMock, patch
 
 import customtkinter as ctk
 
@@ -60,6 +61,37 @@ class ModalOverlayTests(unittest.TestCase):
             modal.hide()
             self.assertEqual(modal.backdrop.state(), "withdrawn")
             self.assertEqual(modal.window.state(), "withdrawn")
+        finally:
+            modal.destroy()
+            root.destroy()
+
+    def test_enter_invokes_the_focused_action_or_default(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        modal = ModalOverlay(
+            root,
+            width=320,
+            backdrop_color="#050407",
+            backdrop_alpha=0.66,
+            surface_color="#121019",
+            border_color="#352b43",
+            corner_radius=8,
+        )
+        primary_command = MagicMock()
+        secondary_command = MagicMock()
+        primary = ctk.CTkButton(modal.panel, command=primary_command)
+        secondary = ctk.CTkButton(modal.panel, command=secondary_command)
+        modal.set_focus_order([primary, secondary], default=primary)
+        modal.set_default_action(primary)
+        try:
+            with patch.object(root, "focus_get", return_value=secondary):
+                self.assertEqual(modal._on_activate(None), "break")
+            secondary_command.assert_called_once_with()
+            primary_command.assert_not_called()
+
+            with patch.object(root, "focus_get", return_value=None):
+                self.assertEqual(modal._on_activate(None), "break")
+            primary_command.assert_called_once_with()
         finally:
             modal.destroy()
             root.destroy()
