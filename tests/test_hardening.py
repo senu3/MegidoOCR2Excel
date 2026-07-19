@@ -371,10 +371,13 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         labels = {
             OCR_ENV_READY: ("準備完了", "PaddleOCRを使用できます。"),
             OCR_ENV_SETUP: (
-                "準備が必要",
-                "認識モデルを取得します。初回は時間がかかります。",
+                "認識モデルが必要",
+                "認識モデルをダウンロードします。通信環境により時間がかかります。",
             ),
-            OCR_ENV_VERIFY: ("確認が必要", "認識モデルを一度確認してください。"),
+            OCR_ENV_VERIFY: (
+                "確認が必要",
+                "既存の認識モデルはまだこのアプリで確認されていません。",
+            ),
         }
         label, detail = labels[state]
         status = OcrEnvironmentStatus(
@@ -427,12 +430,15 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                 for widget in descendants_of(app.ocr_setup_modal.panel)
                 if isinstance(widget, ctk.CTkButton)
             ]
-            self.assertIn("OCRを準備", labels)
-            self.assertIn("準備が必要", labels)
-            self.assertIn("このアプリはPaddleOCRを使用します。", labels)
+            self.assertIn("OCR認識モデルをダウンロード", labels)
+            self.assertIn("認識モデルが必要", labels)
+            self.assertTrue(
+                any("PaddleOCRの実行環境は準備済み" in text for text in labels)
+            )
             self.assertFalse(any("初回のみ" in text for text in labels))
-            self.assertIn("OCRを準備する", buttons)
-            self.assertIn("あとで行う", buttons)
+            self.assertIn("ダウンロードして準備", buttons)
+            self.assertIn("範囲編集だけ先に始める", buttons)
+            self.assertIn("保存先を変更", buttons)
 
             command = MagicMock()
             self.assertEqual(app._dispatch_shortcut(command, object()), "break")
@@ -443,6 +449,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
 
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
+            self.assertTrue(app.ocr_readiness_banner.winfo_manager())
         finally:
             self._destroy(app, root)
 
@@ -477,63 +484,39 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         try:
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
+            self.assertFalse(app.ocr_readiness_banner.winfo_manager())
         finally:
             self._destroy(app, root)
 
-    def test_unverified_models_are_checked_automatically(self) -> None:
+    def test_unverified_models_wait_for_explicit_confirmation(self) -> None:
         root = ctk.CTk()
         root.withdraw()
         verify = self._status(OCR_ENV_VERIFY, ready=False)
-        ready = self._status(OCR_ENV_READY, ready=True)
         app, manager = self._app_with_status(root, verify)
         try:
             self.assertTrue(app.ocr_setup_modal.visible)
-            self.assertTrue(app.ocr_startup_check_running)
             self.assertEqual(
-                app.ocr_setup_primary_button.cget("text"), "確認中…"
+                app.ocr_setup_primary_button.cget("text"), "確認して更新"
             )
             self.assertEqual(
-                app.ocr_setup_primary_button.cget("state"), "disabled"
+                app.ocr_setup_primary_button.cget("state"), "normal"
             )
-            self.assertEqual(
-                app.ocr_setup_primary_button.winfo_manager(), ""
-            )
-
-            manager.quick_status.return_value = ready
-            manager.verify.return_value = ready
-            with patch("megido_ocr_excel.application.threading.Thread") as thread_type:
-                app._start_ocr_environment_startup_check()
-                worker = thread_type.call_args.kwargs["target"]
-                worker()
-            root.update()
-
-            manager.verify.assert_called_once()
-            self.assertFalse(app.ocr_startup_check_running)
-            self.assertEqual(app.status_var.get(), "OCRの確認が完了しました。")
-            app._complete_ocr_startup_check_transition()
-            self.assertFalse(app.ocr_setup_modal.visible)
-            self.assertTrue(app.workflow_choice_modal.visible)
+            self.assertEqual(app.ocr_setup_primary_button.winfo_manager(), "grid")
+            manager.verify.assert_not_called()
         finally:
             self._destroy(app, root)
 
-    def test_deferred_automatic_check_does_not_interrupt_workflow(self) -> None:
+    def test_deferred_setup_keeps_persistent_unprepared_indicator(self) -> None:
         root = ctk.CTk()
         root.withdraw()
         verify = self._status(OCR_ENV_VERIFY, ready=False)
-        ready = self._status(OCR_ENV_READY, ready=True)
-        app, manager = self._app_with_status(root, verify)
+        app, _manager = self._app_with_status(root, verify)
         try:
             app.defer_ocr_setup()
             self.assertFalse(app.ocr_setup_modal.visible)
             self.assertTrue(app.workflow_choice_modal.visible)
-
-            manager.quick_status.return_value = ready
-            app._finish_ocr_startup_check_success(ready)
-            app._complete_ocr_startup_check_transition()
-
-            self.assertFalse(app.ocr_setup_modal.visible)
-            self.assertTrue(app.workflow_choice_modal.visible)
-            self.assertTrue(app.ocr_startup_check_deferred)
+            self.assertTrue(app.ocr_readiness_banner.winfo_manager())
+            self.assertIn("OCR未準備", app.ocr_readiness_label.cget("text"))
         finally:
             self._destroy(app, root)
 
@@ -547,6 +530,10 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         try:
             self.assertFalse(app._require_ocr_ready(action))
             self.assertTrue(app.ocr_setup_modal.visible)
+            self.assertEqual(
+                app.ocr_setup_secondary_button.cget("text"),
+                "今回は認識しない",
+            )
             manager.quick_status.return_value = ready
 
             app._finish_ocr_setup_success()
@@ -554,6 +541,30 @@ class OcrSetupOnboardingTests(unittest.TestCase):
 
             action.assert_called_once_with()
             self.assertIsNone(app._pending_ocr_action)
+        finally:
+            self._destroy(app, root)
+
+    def test_explicit_prepare_uses_child_process_before_recording_ready(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        setup = self._status(OCR_ENV_SETUP, ready=False)
+        ready = self._status(OCR_ENV_READY, ready=True)
+        app, manager = self._app_with_status(root, setup)
+        manager.cache_dir = setup.cache_dir
+        manager.record_verified.return_value = ready
+        app.ocr_setup_runner.run = MagicMock()
+        try:
+            with patch("megido_ocr_excel.application.threading.Thread") as thread_type:
+                app.prepare_ocr_environment()
+                worker = thread_type.call_args.kwargs["target"]
+                worker()
+            manager.quick_status.return_value = ready
+            root.after(80, root.quit)
+            root.mainloop()
+
+            app.ocr_setup_runner.run.assert_called_once()
+            manager.record_verified.assert_called_once_with()
+            self.assertEqual(app.status_var.get(), "OCRの準備が完了しました。")
         finally:
             self._destroy(app, root)
 
@@ -1035,7 +1046,7 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertIn("変更", button_texts)
             self.assertTrue(
                 any(
-                    text in {"再確認", "OCRを準備する"}
+                    text in {"確認して更新", "ダウンロードして準備"}
                     for text in button_texts
                 )
             )
@@ -1048,7 +1059,8 @@ class ModalConsistencyTests(unittest.TestCase):
             verify_button = next(
                 button
                 for button in buttons
-                if button.cget("text") in {"再確認", "OCRを準備する"}
+                if button.cget("text")
+                in {"確認して更新", "ダウンロードして準備"}
             )
             self.assertIs(open_button.master, change_button.master)
             self.assertIsNot(open_button.master, verify_button.master)

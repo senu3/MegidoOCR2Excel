@@ -9,7 +9,7 @@ uv sync
 uv run python main.py
 ```
 
-Windowsでは `run_app.ps1` からも起動できます。
+Windowsでは `MegidoOCR2Excel.cmd` または `run_app.ps1` から専用ランチャーを起動できます。
 
 ## UI検証モード（一時）
 
@@ -22,8 +22,8 @@ uv run python scripts/validate_ocr_setup_ui.py --state setup
 `--state` には次を指定できます。
 
 - `setup`: 認識モデルの準備が必要
-- `checking`: 起動時の自動確認中
-- `check-failed`: 自動確認の失敗
+- `verify`: 既存モデルまたは実行環境の明示確認が必要
+- `check-failed`: モデル準備・確認の失敗
 - `location-error`: モデル保存先のエラー
 - `unavailable`: PaddleOCRの依存ファイル不足
 - `ready`: 準備済み
@@ -31,14 +31,14 @@ uv run python scripts/validate_ocr_setup_ui.py --state setup
 `--screenshot` を指定すると、表示状態を画像へ保存して終了します。
 
 ```powershell
-uv run python scripts/validate_ocr_setup_ui.py --state checking --screenshot C:\tmp\ocr-checking.png
+uv run python scripts/validate_ocr_setup_ui.py --state verify --screenshot C:\tmp\ocr-verify.png
 ```
 
 ## OCR準備状態
 
-OCR環境マネージャーは、依存パッケージ、モデル保存先、モデルファイル、PaddleOCR・PaddlePaddleのバージョンを確認します。
+OCR環境マネージャーは、依存パッケージ、モデル保存先、検証済みモデルファイルの一覧とサイズ、PaddleOCR・PaddlePaddleのバージョンを確認します。
 
-「OCRを準備する」は通常認識と行分割認識を実際に初期化し、不足モデルを取得します。成功時は保存先とパッケージバージョンから確認署名を保存します。保存先やパッケージが変わると、次回起動時に再確認します。
+「ダウンロードして準備」または「確認して更新」は専用の子プロセスで通常認識と行分割認識を実際に初期化し、不足モデルを取得します。子プロセスの成功後だけ、保存先・パッケージバージョンの確認署名とモデル一覧を保存します。保存先やパッケージが変わると次回起動時に明示確認を求め、自動初期化は行いません。
 
 ## プロファイル
 

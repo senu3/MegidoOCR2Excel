@@ -9,7 +9,7 @@ import threading
 import warnings
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
@@ -535,11 +535,19 @@ class OcrEngine:
         self._content_rect_settings: CoordinateSettings | None = None
         self._content_rect_value: tuple[int, int, int, int] | None = None
 
-    def verify_paddle_environment(self, lang: str = FALLBACK_LANG) -> None:
+    def verify_paddle_environment(
+        self,
+        lang: str = FALLBACK_LANG,
+        on_phase: Callable[[str], None] | None = None,
+    ) -> None:
         """Initialize both PaddleOCR paths used by normal and line-split fields."""
         backend = PaddleBackend()
         sample = Image.new("RGB", (320, 96), "white")
+        if on_phase is not None:
+            on_phase("recognize")
         backend.recognize(sample, lang)
+        if on_phase is not None:
+            on_phase("recognize_lines")
         backend.recognize_lines([sample], lang)
         self.paddle_backend = backend
 

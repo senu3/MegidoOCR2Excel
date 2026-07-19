@@ -15,6 +15,8 @@ from megido_ocr_excel.ocr.environment import (
     OCR_ENV_VERIFY,
     OcrEnvironmentManager,
 )
+from megido_ocr_excel.ocr.setup import EVENT_PREFIX, OcrSetupProcessRunner
+from megido_ocr_excel.operations import OperationCancelled
 
 
 class OcrEnvironmentManagerTests(unittest.TestCase):
@@ -59,7 +61,14 @@ class OcrEnvironmentManagerTests(unittest.TestCase):
             self.assertEqual(called, [True])
             self.assertEqual(status.state, OCR_ENV_READY)
             saved = json.loads((root / "settings.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["version"], 2)
             self.assertTrue(saved["ocr_verified_signature"])
+            self.assertEqual(len(saved["ocr_verified_models"]), 1)
+            reloaded = self._manager(root)
+            self.assertEqual(reloaded.quick_status().state, OCR_ENV_READY)
+
+            (manager.cache_dir / saved["ocr_verified_models"][0]["path"]).unlink()
+            self.assertEqual(reloaded.quick_status().state, OCR_ENV_SETUP)
 
     def test_failed_full_verification_does_not_mark_environment_ready(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -110,6 +119,45 @@ class OcrEnvironmentManagerTests(unittest.TestCase):
             self.assertEqual(manager.cache_dir, root / "home" / ".paddlex")
             self.assertEqual(manager.settings.cache_mode, "auto")
 
+    def test_legacy_verification_never_triggers_automatic_readiness(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = self._manager(root)
+            self._add_model(manager.cache_dir)
+            (root / "settings.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "ocr_cache_mode": "auto",
+                        "ocr_cache_dir": "",
+                        "ocr_verified_signature": "legacy",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            reloaded = self._manager(root)
+
+            self.assertEqual(reloaded.quick_status().state, OCR_ENV_VERIFY)
+            self.assertFalse(reloaded.settings.verified_signature)
+            self.assertFalse(reloaded.settings.verified_models)
+
+    def test_runtime_update_requires_explicit_reverification(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            manager = self._manager(root)
+            self._add_model(manager.cache_dir)
+            manager.verify(lambda: None)
+            updated = OcrEnvironmentManager(
+                settings_path=root / "settings.json",
+                home=root / "home",
+                environ={},
+                dependency_checker=lambda _name: True,
+                version_provider=lambda _name: "new-version",
+            )
+
+            self.assertEqual(updated.quick_status().state, OCR_ENV_VERIFY)
+
 
 class OcrEnvironmentProbeTests(unittest.TestCase):
     def test_full_probe_initializes_normal_and_line_recognition_paths(self) -> None:
@@ -122,6 +170,49 @@ class OcrEnvironmentProbeTests(unittest.TestCase):
         backend.recognize.assert_called_once()
         backend.recognize_lines.assert_called_once()
         self.assertIs(engine.paddle_backend, backend)
+
+    def test_full_probe_reports_real_phases(self) -> None:
+        backend = MagicMock()
+        phases = []
+        with patch("megido_ocr_excel.ocr.engine.PaddleBackend", return_value=backend):
+            OcrEngine().verify_paddle_environment("jpn+eng", on_phase=phases.append)
+
+        self.assertEqual(phases, ["recognize", "recognize_lines"])
+
+
+class OcrSetupProcessRunnerTests(unittest.TestCase):
+    def test_phase_events_are_forwarded(self) -> None:
+        phase_line = EVENT_PREFIX + json.dumps(
+            {"type": "phase", "name": "recognize", "message": "準備中"}
+        )
+        process = MagicMock()
+        process.stdout = iter([phase_line + "\n"])
+        process.poll.return_value = 0
+        process.wait.return_value = 0
+        phases = []
+        with patch("megido_ocr_excel.ocr.setup.subprocess.Popen", return_value=process):
+            OcrSetupProcessRunner("python").run(
+                language="jpn+eng",
+                cache_dir=Path("C:/models"),
+                on_phase=phases.append,
+            )
+
+        self.assertEqual([phase.name for phase in phases], ["recognize"])
+
+    def test_cancel_terminates_the_worker_process(self) -> None:
+        process = MagicMock()
+        process.stdout = iter(())
+        process.poll.return_value = None
+        process.wait.return_value = 1
+        with patch("megido_ocr_excel.ocr.setup.subprocess.Popen", return_value=process):
+            with self.assertRaises(OperationCancelled):
+                OcrSetupProcessRunner("python").run(
+                    language="jpn+eng",
+                    cache_dir=Path("C:/models"),
+                    cancel_check=lambda: True,
+                )
+
+        process.terminate.assert_called()
 
 
 if __name__ == "__main__":

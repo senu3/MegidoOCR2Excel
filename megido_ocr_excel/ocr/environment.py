@@ -17,7 +17,7 @@ OCR_ENV_SETUP = "setup"
 OCR_ENV_LOCATION_ERROR = "location_error"
 OCR_ENV_UNAVAILABLE = "unavailable"
 
-_SETTINGS_VERSION = 1
+_SETTINGS_VERSION = 2
 _MODEL_MARKER_NAMES = {
     "inference.json",
     "inference.pdiparams",
@@ -45,6 +45,7 @@ class OcrEnvironmentSettings:
     cache_mode: str = "auto"
     custom_cache_dir: str = ""
     verified_signature: str = ""
+    verified_models: tuple[tuple[str, int], ...] = ()
 
 
 class OcrEnvironmentManager:
@@ -92,14 +93,37 @@ class OcrEnvironmentManager:
             data = json.loads(self.settings_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
             return OcrEnvironmentSettings()
-        if not isinstance(data, dict) or data.get("version") != _SETTINGS_VERSION:
+        if not isinstance(data, dict) or data.get("version") not in {1, 2}:
             return OcrEnvironmentSettings()
         mode = "custom" if data.get("ocr_cache_mode") == "custom" else "auto"
         custom = str(data.get("ocr_cache_dir") or "").strip()
-        verified = str(data.get("ocr_verified_signature") or "").strip()
         if mode == "custom" and not custom:
             mode = "auto"
-        return OcrEnvironmentSettings(mode, custom, verified)
+        if data.get("version") == 1:
+            # Version 1 only remembered that *some* model file existed. Preserve
+            # the cache choice, but require one explicit verification before the
+            # environment can be considered ready again.
+            return OcrEnvironmentSettings(mode, custom)
+        verified = str(data.get("ocr_verified_signature") or "").strip()
+        models: list[tuple[str, int]] = []
+        raw_models = data.get("ocr_verified_models")
+        if isinstance(raw_models, list):
+            for raw_model in raw_models:
+                if not isinstance(raw_model, dict):
+                    continue
+                relative_path = str(raw_model.get("path") or "").strip()
+                size = raw_model.get("size")
+                candidate = Path(relative_path)
+                if (
+                    not relative_path
+                    or candidate.is_absolute()
+                    or ".." in candidate.parts
+                    or not isinstance(size, int)
+                    or size < 0
+                ):
+                    continue
+                models.append((candidate.as_posix(), size))
+        return OcrEnvironmentSettings(mode, custom, verified, tuple(models))
 
     def _save(self) -> None:
         data = {
@@ -107,6 +131,10 @@ class OcrEnvironmentManager:
             "ocr_cache_mode": self.settings.cache_mode,
             "ocr_cache_dir": self.settings.custom_cache_dir,
             "ocr_verified_signature": self.settings.verified_signature,
+            "ocr_verified_models": [
+                {"path": relative_path, "size": size}
+                for relative_path, size in self.settings.verified_models
+            ],
         }
         atomic_write_text(
             self.settings_path,
@@ -142,7 +170,10 @@ class OcrEnvironmentManager:
         self._save()
 
     def invalidate_verification(self) -> None:
-        if not self.settings.verified_signature:
+        if (
+            not self.settings.verified_signature
+            and not self.settings.verified_models
+        ):
             return
         self.settings = OcrEnvironmentSettings(
             self.settings.cache_mode, self.settings.custom_cache_dir, ""
@@ -154,8 +185,11 @@ class OcrEnvironmentManager:
         if not self._dependencies_available():
             return OcrEnvironmentStatus(
                 OCR_ENV_UNAVAILABLE,
-                "再インストールが必要",
-                "PaddleOCRの実行ファイルが不足しています。",
+                "ランチャーで修復が必要",
+                (
+                    "PaddleOCRの実行環境が不足しています。アプリを閉じて"
+                    "ランチャーから再起動してください。"
+                ),
                 cache_dir,
                 self.settings.cache_mode,
             )
@@ -169,11 +203,27 @@ class OcrEnvironmentManager:
                 self.settings.cache_mode,
             )
         has_models = self._has_model_files(cache_dir)
-        if not has_models:
+        if not self.settings.verified_models:
+            if has_models:
+                return OcrEnvironmentStatus(
+                    OCR_ENV_VERIFY,
+                    "確認が必要",
+                    "既存の認識モデルはまだこのアプリで確認されていません。",
+                    cache_dir,
+                    self.settings.cache_mode,
+                )
             return OcrEnvironmentStatus(
                 OCR_ENV_SETUP,
-                "準備が必要",
-                "認識モデルを取得します。初回は時間がかかります。",
+                "認識モデルが必要",
+                "認識モデルをダウンロードします。通信環境により時間がかかります。",
+                cache_dir,
+                self.settings.cache_mode,
+            )
+        if not self._verified_models_available(cache_dir):
+            return OcrEnvironmentStatus(
+                OCR_ENV_SETUP,
+                "再準備が必要",
+                "確認済みの認識モデルが不足または変更されています。",
                 cache_dir,
                 self.settings.cache_mode,
             )
@@ -181,7 +231,7 @@ class OcrEnvironmentManager:
             return OcrEnvironmentStatus(
                 OCR_ENV_VERIFY,
                 "確認が必要",
-                "認識モデルを一度確認してください。",
+                "OCR実行環境が更新されています。認識モデルを再確認してください。",
                 cache_dir,
                 self.settings.cache_mode,
             )
@@ -194,17 +244,29 @@ class OcrEnvironmentManager:
         )
 
     def verify(self, verifier: Callable[[], None]) -> OcrEnvironmentStatus:
-        """Run the full PaddleOCR probe used by settings and future onboarding."""
+        """Run a full probe and record the exact model files it verified."""
         self.apply_to_process()
         self.invalidate_verification()
         verifier()
+        return self.record_verified()
+
+    def record_verified(self) -> OcrEnvironmentStatus:
+        """Record models after a successful probe performed in another process."""
+        models = self._model_inventory(self.cache_dir)
+        if not models:
+            raise RuntimeError("認識モデルの保存を確認できませんでした。")
         self.settings = OcrEnvironmentSettings(
             self.settings.cache_mode,
             self.settings.custom_cache_dir,
             self._signature(self.cache_dir),
+            models,
         )
         self._save()
-        return self.quick_status()
+        status = self.quick_status()
+        if not status.ready:
+            self.invalidate_verification()
+            raise RuntimeError("認識モデルの準備完了を確認できませんでした。")
+        return status
 
     def _dependencies_available(self) -> bool:
         return all(
@@ -236,6 +298,36 @@ class OcrEnvironmentManager:
             )
         except OSError:
             return False
+
+    @staticmethod
+    def _model_inventory(cache_dir: Path) -> tuple[tuple[str, int], ...]:
+        model_root = cache_dir / "official_models"
+        if not model_root.is_dir():
+            return ()
+        models: list[tuple[str, int]] = []
+        try:
+            for path in model_root.rglob("*"):
+                if not path.is_file() or not (
+                    path.name in _MODEL_MARKER_NAMES
+                    or path.suffix == ".pdiparams"
+                ):
+                    continue
+                models.append(
+                    (path.relative_to(cache_dir).as_posix(), path.stat().st_size)
+                )
+        except OSError:
+            return ()
+        return tuple(sorted(models))
+
+    def _verified_models_available(self, cache_dir: Path) -> bool:
+        try:
+            for relative_path, expected_size in self.settings.verified_models:
+                path = cache_dir / Path(relative_path)
+                if not path.is_file() or path.stat().st_size != expected_size:
+                    return False
+        except OSError:
+            return False
+        return True
 
     def _signature(self, cache_dir: Path) -> str:
         return "|".join(

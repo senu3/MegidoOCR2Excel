@@ -25,7 +25,7 @@ from megido_ocr_excel.ocr.environment import (
 
 VALIDATION_STATES = (
     "setup",
-    "checking",
+    "verify",
     "check-failed",
     "location-error",
     "unavailable",
@@ -38,13 +38,13 @@ def status_for_state(state: str) -> OcrEnvironmentStatus:
     states = {
         "setup": (
             OCR_ENV_SETUP,
-            "準備が必要",
-            "認識モデルを取得します。初回は時間がかかります。",
+            "認識モデルが必要",
+            "認識モデルをダウンロードします。通信環境により時間がかかります。",
         ),
-        "checking": (
+        "verify": (
             OCR_ENV_VERIFY,
             "確認が必要",
-            "認識モデルを確認してください。",
+            "既存の認識モデルはまだこのアプリで確認されていません。",
         ),
         "check-failed": (
             OCR_ENV_VERIFY,
@@ -113,9 +113,6 @@ class ValidationOcrEnvironmentManager:
 
 
 class ValidationImageOcrExcelApp(app_module.ImageOcrExcelApp):
-    def _start_ocr_environment_startup_check(self) -> None:
-        """Freeze the checking state so its progress UI can be inspected."""
-
     def prepare_ocr_environment(self) -> None:
         self.status_var.set(
             "UI検証モードではOCRの取得・確認処理を実行しません。"
@@ -130,11 +127,16 @@ def run_validation(state: str, screenshot: Path | None = None) -> None:
     root = ctk.CTk()
     app = ValidationImageOcrExcelApp(root)
     root.title(f"{root.title()} [UI検証: {state}]")
+    if state != "ready":
+        # The app is constructed before Tk maps its first window. Show once more
+        # after mapping so manual runs and screenshots always expose the modal.
+        root.after(100, app.show_ocr_setup)
 
     if state == "check-failed":
-        app._finish_ocr_startup_check_error(
-            RuntimeError("認識モデルを読み込めませんでした。")
+        app.ocr_environment_last_error = (
+            "準備に失敗しました: 認識モデルを読み込めませんでした。"
         )
+        app._refresh_ocr_setup_overlay()
 
     if screenshot is not None:
         def capture() -> None:
