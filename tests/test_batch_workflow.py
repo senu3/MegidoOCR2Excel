@@ -301,6 +301,48 @@ class BatchWorkflowTests(unittest.TestCase):
         )
         self.assertIn("補足セリフ", supplement.review_reason)
 
+    def test_supplement_fallback_ignores_the_surrounding_scene_color(self) -> None:
+        fields, settings = auto_detection_context()
+        assert PROFILE.dialogue_log_detection is not None
+        image = Image.open(".samples/e-2.png").convert("RGB")
+
+        result = detect_complete_dialogue_pairs(
+            image,
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(result.layout, "supplement_candidate")
+        self.assertEqual(len(result.candidate_fields), 1)
+        candidate = result.candidate_fields[0]
+        self.assertLess(candidate.x1, 270)
+        self.assertGreater(candidate.x2, 750)
+        self.assertLess(candidate.y1, 1105)
+        self.assertGreater(candidate.y2, 1186)
+        self.assertLess(candidate.x2 - candidate.x1, image.width * 0.65)
+
+        scene_mask = Image.new("L", image.size)
+        scene_mask.putdata(
+            [
+                255 if green > 240 and red < 30 and blue < 80 else 0
+                for red, green, blue in image.get_flattened_data()
+            ]
+        )
+        bright_scene = Image.composite(
+            Image.new("RGB", image.size, (235, 235, 235)),
+            image,
+            scene_mask,
+        )
+        bright_result = detect_complete_dialogue_pairs(
+            bright_scene,
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+        self.assertEqual(bright_result.layout, "supplement_candidate")
+        self.assertEqual(len(bright_result.candidate_fields), 1)
+
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
         fields = [
             TemplateField("話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER),

@@ -496,11 +496,118 @@ def _supplement_candidate_region(
         if cluster[-1] - cluster[0] + 1 >= max(18, round(height * 0.03))
         and len(cluster) / (cluster[-1] - cluster[0] + 1) >= 0.45
     ]
-    if not valid:
+    if valid:
+        cluster = max(valid, key=lambda item: item[-1] - item[0])
+        padding = max(8, round(height * 0.012))
+        return (
+            x1,
+            max(top, cluster[0] - padding),
+            x2,
+            min(anchor_top, cluster[-1] + 1 + padding),
+        )
+    return _localized_supplement_text_region(
+        rgb,
+        content_rect,
+        anchor_top,
+        search_rect=(x1, y1, x2, y2),
+    )
+
+
+def _localized_supplement_text_region(
+    rgb: Image.Image,
+    content_rect: tuple[int, int, int, int],
+    anchor_top: int,
+    *,
+    search_rect: tuple[int, int, int, int],
+) -> tuple[int, int, int, int] | None:
+    """Find a local navy text plaque without depending on the scene color."""
+    left, top, right, bottom = content_rect
+    width = right - left
+    height = bottom - top
+    search_x1, search_y1, search_x2, search_y2 = search_rect
+    step = max(1, (search_x2 - search_x1) // 140)
+    sample_xs = range(search_x1, search_x2, step)
+    sample_count = max(1, len(sample_xs))
+    outline_offsets = [
+        (delta_x, delta_y)
+        for distance in (2, 4, 6)
+        for delta_x, delta_y in (
+            (distance, 0),
+            (-distance, 0),
+            (0, distance),
+            (0, -distance),
+            (distance, distance),
+            (distance, -distance),
+            (-distance, distance),
+            (-distance, -distance),
+        )
+    ]
+    text_rows: list[tuple[int, int, int, int]] = []
+    for y in range(search_y1, search_y2):
+        white_xs = []
+        for x in sample_xs:
+            pixel = rgb.getpixel((x, y))
+            if min(pixel) <= 175 or max(pixel) - min(pixel) >= 70:
+                continue
+            outlined = any(
+                left <= x + delta_x < right
+                and top <= y + delta_y < bottom
+                and max(rgb.getpixel((x + delta_x, y + delta_y))) < 105
+                for delta_x, delta_y in outline_offsets
+            )
+            if outlined:
+                white_xs.append(x)
+        if len(white_xs) / sample_count > 0.012:
+            text_rows.append((y, min(white_xs), max(white_xs), len(white_xs)))
+
+    clusters: list[list[tuple[int, int, int, int]]] = []
+    for row in text_rows:
+        if not clusters or row[0] - clusters[-1][-1][0] > 10:
+            clusters.append([row])
+        else:
+            clusters[-1].append(row)
+
+    min_height = max(18, round(height * 0.018))
+    max_height = max(min_height, round(height * 0.10))
+    min_width = max(40, round(width * 0.20))
+    padding_x = max(10, round(width * 0.025))
+    padding_y = max(8, round(height * 0.012))
+    candidates: list[tuple[int, float, tuple[int, int, int, int]]] = []
+    for cluster in clusters:
+        cluster_y1 = cluster[0][0]
+        cluster_y2 = cluster[-1][0]
+        cluster_height = cluster_y2 - cluster_y1 + 1
+        cluster_x1 = min(row[1] for row in cluster)
+        cluster_x2 = max(row[2] for row in cluster) + step
+        cluster_width = cluster_x2 - cluster_x1
+        density = len(cluster) / cluster_height
+        if not (
+            min_height <= cluster_height <= max_height
+            and cluster_width >= min_width
+            and density >= 0.40
+        ):
+            continue
+        candidate = (
+            max(search_x1, cluster_x1 - padding_x),
+            max(search_y1, cluster_y1 - padding_y),
+            min(search_x2, cluster_x2 + padding_x),
+            min(anchor_top, cluster_y2 + 1 + padding_y),
+        )
+        pixels = list(rgb.crop(candidate).get_flattened_data())
+        navy_ratio = sum(
+            blue > red * 1.18
+            and blue > green * 1.03
+            and 40 < blue < 190
+            for red, green, blue in pixels
+        ) / max(1, len(pixels))
+        if navy_ratio < 0.35:
+            continue
+        white_samples = sum(row[3] for row in cluster)
+        candidates.append((white_samples, navy_ratio, candidate))
+
+    if not candidates:
         return None
-    cluster = max(valid, key=lambda item: item[-1] - item[0])
-    padding = max(8, round(height * 0.012))
-    return (x1, max(top, cluster[0] - padding), x2, min(anchor_top, cluster[-1] + 1 + padding))
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 def _narrator_region(
