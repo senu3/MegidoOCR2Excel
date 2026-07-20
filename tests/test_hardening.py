@@ -15,6 +15,7 @@ from megido_ocr_excel.persistence import atomic_save_workbook, atomic_write_text
 from megido_ocr_excel.config import APP_PROFILE
 from megido_ocr_excel.application import (
     APP_TITLE,
+    EXPORT_LAYOUT_DISPLAY,
     MODE_EXPORT,
     MODE_REVIEW,
     MODE_TEMPLATE,
@@ -1803,8 +1804,11 @@ class FieldNameInteractionTests(unittest.TestCase):
                 if isinstance(widget, ctk.CTkButton)
             ]
             self.assertNotIn(EXPORT_LAYOUT_OPTIONS, option_values)
-            self.assertIn(app.export_layout_var.get(), labels)
-            self.assertIn("列構成", labels)
+            self.assertIn(
+                EXPORT_LAYOUT_DISPLAY[app.export_layout_var.get()], labels
+            )
+            self.assertIn("Excelの行単位", labels)
+            self.assertNotIn("列構成", labels)
             self.assertNotIn("出力形式", labels)
             navigation = next(
                 button
@@ -1813,6 +1817,38 @@ class FieldNameInteractionTests(unittest.TestCase):
             )
             self.assertEqual(navigation.cget("fg_color"), COLOR_SECONDARY)
             self.assertEqual(navigation.cget("border_width"), 1)
+            self.assertEqual(int(navigation.grid_info()["row"]), 2)
+        finally:
+            host.destroy()
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            destroy_tk_root(root)
+
+    def test_set_preflight_repeats_item_combination(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        host = ctk.CTkFrame(root)
+        try:
+            app.export_layout_var.set(EXPORT_LAYOUT_SET)
+            app._render_export_structure_summary(host, 3, 2)
+            labels = [
+                widget.cget("text")
+                for widget in descendants_of(host)
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            navigation = next(
+                widget
+                for widget in descendants_of(host)
+                if isinstance(widget, ctk.CTkButton)
+                and widget.cget("text") == "範囲・列で編集"
+            )
+
+            self.assertIn("Excelの行単位", labels)
+            self.assertIn(EXPORT_LAYOUT_DISPLAY[EXPORT_LAYOUT_SET], labels)
+            self.assertIn("項目の組み合わせ", labels)
+            self.assertIn("会話（話者＋セリフ）", labels)
+            self.assertEqual(int(navigation.grid_info()["row"]), 3)
         finally:
             host.destroy()
             if app.workflow_choice_modal is not None:
@@ -1828,8 +1864,53 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.open_template_mode_from_export()
 
         app.mode_var.set.assert_called_once_with(MODE_TEMPLATE)
-        app.status_var.set.assert_called_once_with("列構成を変更できます。")
+        app.status_var.set.assert_called_once_with(
+            "Excelの行単位を変更できます。"
+        )
         app._on_mode_change.assert_called_once_with()
+
+    def test_range_panel_uses_excel_row_unit_labels_and_explanations(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app._hide_workflow_choice()
+            app.mode_var.set(MODE_TEMPLATE)
+            app._render_side_body()
+            image_labels = [
+                widget.cget("text")
+                for widget in descendants_of(app.side_body)
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            image_menu_values = [
+                widget.cget("values")
+                for widget in descendants_of(app.side_body)
+                if isinstance(widget, ctk.CTkOptionMenu)
+            ]
+
+            self.assertIn("Excelの行単位", image_labels)
+            self.assertIn(THEME.copy.image_layout_note, image_labels)
+            self.assertIn(
+                list(EXPORT_LAYOUT_DISPLAY.values()), image_menu_values
+            )
+            self.assertNotIn("出力形式", image_labels)
+
+            app.export_layout_var.set(EXPORT_LAYOUT_SET)
+            app._render_side_body()
+            set_labels = [
+                widget.cget("text")
+                for widget in descendants_of(app.side_body)
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+
+            self.assertIn("Excelの行単位", set_labels)
+            self.assertIn("項目の組み合わせ", set_labels)
+            self.assertIn(THEME.copy.set_layout_note, set_labels)
+            self.assertNotIn("セット種類", set_labels)
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            destroy_tk_root(root)
 
     def test_duplicate_is_undoable_and_clears_set_assignment(self) -> None:
         app = self._logic_only_app()
@@ -2036,7 +2117,9 @@ class FieldNameInteractionTests(unittest.TestCase):
 
         app.export_layout_var.set.assert_not_called()
         self.assertTrue(app.auto_detection_enabled)
-        menu.set.assert_called_once_with(EXPORT_LAYOUT_SET)
+        menu.set.assert_called_once_with(
+            EXPORT_LAYOUT_DISPLAY[EXPORT_LAYOUT_SET]
+        )
         app._schedule_side_body_render.assert_not_called()
         app.redraw.assert_not_called()
         self.assertEqual(

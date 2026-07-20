@@ -229,6 +229,13 @@ LINE_JOIN_DISPLAY = {
     LINE_JOIN_FULLWIDTH_SPACE: "全角スペース",
     LINE_JOIN_NEWLINE: "改行",
 }
+EXPORT_LAYOUT_DISPLAY = {
+    EXPORT_LAYOUT_IMAGE_ROW: "画像単位（1画像につき1行）",
+    EXPORT_LAYOUT_DIALOGUE_PAIR: "セット単位（1セットにつき1行）",
+}
+EXPORT_LAYOUT_BY_DISPLAY = {
+    display: value for value, display in EXPORT_LAYOUT_DISPLAY.items()
+}
 MODE_TEMPLATE = "1. 範囲・列"
 MODE_REVIEW = "2. 認識テスト"
 MODE_EXPORT = "3. Excel出力"
@@ -1482,15 +1489,17 @@ class ImageOcrExcelApp:
         layout_row.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(
             layout_row,
-            text="出力形式",
+            text="Excelの行単位",
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
         ).grid(row=0, column=0, sticky="w", padx=(0, 8))
         layout_menu = ctk.CTkOptionMenu(
             layout_row,
-            values=EXPORT_LAYOUT_OPTIONS,
-            command=lambda value: self._set_export_layout(value, layout_menu),
+            values=list(EXPORT_LAYOUT_DISPLAY.values()),
+            command=lambda display: self._set_export_layout(
+                EXPORT_LAYOUT_BY_DISPLAY[display], layout_menu
+            ),
             height=THEME.layout.entry_height,
             font=UI_FONT_SMALL,
             fg_color=COLOR_SECONDARY,
@@ -1500,7 +1509,7 @@ class ImageOcrExcelApp:
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
         )
-        layout_menu.set(self.export_layout_var.get())
+        layout_menu.set(EXPORT_LAYOUT_DISPLAY[self.export_layout_var.get()])
         layout_menu.grid(row=0, column=1, sticky="ew")
         if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
             preset_row = ctk.CTkFrame(body, fg_color="transparent")
@@ -1508,7 +1517,7 @@ class ImageOcrExcelApp:
             preset_row.grid_columnconfigure(1, weight=1)
             ctk.CTkLabel(
                 preset_row,
-                text="セット種類",
+                text="項目の組み合わせ",
                 anchor="w",
                 font=UI_FONT_SMALL,
                 text_color=COLOR_MUTED,
@@ -1587,6 +1596,16 @@ class ImageOcrExcelApp:
                     border_width=1,
                     border_color=COLOR_BORDER,
                 ).grid(row=0, column=1, padx=(6, 0))
+        else:
+            ctk.CTkLabel(
+                body,
+                text=THEME.copy.image_layout_note,
+                anchor="w",
+                justify="left",
+                font=UI_FONT_SMALL,
+                text_color=COLOR_MUTED,
+                wraplength=350,
+            ).pack(fill="x", padx=16, pady=(0, 6))
 
         scroller = AutoHideScrollableFrame(
             body,
@@ -1622,7 +1641,7 @@ class ImageOcrExcelApp:
             and not self._confirm_fixed_range_switch()
         ):
             if menu is not None:
-                menu.set(current_layout)
+                menu.set(EXPORT_LAYOUT_DISPLAY[current_layout])
             self.status_var.set("自動検出を継続します。")
             return
         if current_layout != value:
@@ -1647,7 +1666,7 @@ class ImageOcrExcelApp:
             self.auto_detection_base_fields = []
             if fixed_auto_detection_ranges:
                 self.status_var.set(
-                    "現在画像の検出範囲を、画像ごとに1行の固定範囲として引き継ぎました。"
+                    "現在画像の検出範囲を、画像単位の固定範囲として引き継ぎました。"
                 )
         self._schedule_side_body_render()
         self.redraw()
@@ -1759,8 +1778,8 @@ class ImageOcrExcelApp:
             return
         assigned = any(field.set_id > 0 or field.slot_key for field in self.fields)
         if assigned and not self.dialogs.askyesno(
-            "セット種類を変更",
-            "セット種類を変更すると、既存項目を新しい構成へ再割り当てします。変更しますか？",
+            "項目の組み合わせを変更",
+            "項目の組み合わせを変更すると、既存項目を新しい構成へ再割り当てします。変更しますか？",
             yes_text="変更する",
             no_text="戻る",
         ):
@@ -1781,7 +1800,9 @@ class ImageOcrExcelApp:
             self._assign_fields_to_current_set_definition(reassign_all=True)
         self._prepare_initial_set_creation()
         self._mark_dirty()
-        self.status_var.set(f"セット種類を「{self.set_definition.name}」に変更しました。")
+        self.status_var.set(
+            f"項目の組み合わせを「{self.set_definition.name}」に変更しました。"
+        )
         self._schedule_side_body_render()
         self.redraw()
 
@@ -3179,18 +3200,23 @@ class ImageOcrExcelApp:
         ).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 6))
         ctk.CTkLabel(
             summary,
-            text="列構成",
+            text="Excelの行単位",
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
         ).grid(row=1, column=0, sticky="w", padx=(0, 8))
         ctk.CTkLabel(
             summary,
-            text=self.export_layout_var.get(),
+            text=EXPORT_LAYOUT_DISPLAY[self.export_layout_var.get()],
             anchor="w",
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
-        ).grid(row=1, column=1, sticky="ew")
+        ).grid(row=1, column=1, columnspan=2, sticky="ew")
+        edit_button_row = (
+            3
+            if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
+            else 2
+        )
         ctk.CTkButton(
             summary,
             text="範囲・列で編集",
@@ -3206,11 +3232,38 @@ class ImageOcrExcelApp:
             border_width=1,
             border_color=COLOR_BORDER,
             text_color=COLOR_TEXT,
-        ).grid(row=1, column=2, sticky="e")
+        ).grid(
+            row=edit_button_row,
+            column=0,
+            columnspan=3,
+            sticky="e",
+            pady=(8, 0),
+        )
+        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+            ctk.CTkLabel(
+                summary,
+                text="項目の組み合わせ",
+                anchor="w",
+                font=UI_FONT_SMALL,
+                text_color=COLOR_MUTED,
+            ).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
+            ctk.CTkLabel(
+                summary,
+                text=SET_PRESET_DISPLAY[self.set_definition.preset],
+                anchor="w",
+                font=UI_FONT_SMALL,
+                text_color=COLOR_TEXT,
+            ).grid(
+                row=2,
+                column=1,
+                columnspan=2,
+                sticky="ew",
+                pady=(6, 0),
+            )
 
     def open_template_mode_from_export(self) -> None:
         self.mode_var.set(MODE_TEMPLATE)
-        self.status_var.set("列構成を変更できます。")
+        self.status_var.set("Excelの行単位を変更できます。")
         self._on_mode_change()
 
     def _export_column_summary(self) -> str:
@@ -7743,7 +7796,9 @@ class ImageOcrExcelApp:
         ):
             self.dialogs.showerror(
                 "再実行できません",
-                "出力先、シート、開始セル、列構成のいずれかが前回の出力から変更されています。\n全画像をExcel出力し直してください。",
+                "出力先、シート、開始セル、Excelの行単位・出力列のいずれかが"
+                "前回の出力から変更されています。\n"
+                "全画像をExcel出力し直してください。",
             )
             return
         if not self._require_ocr_ready(self.retry_failed_images):
