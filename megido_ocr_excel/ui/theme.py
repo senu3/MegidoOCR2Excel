@@ -100,7 +100,7 @@ class Copy:
         "1枚の画像から読み取った項目を、Excelの1行にまとめます。"
     )
     recognition_test_note: str = (
-        "代表画像で認識結果を確認します。Excel出力時は全画像を再認識します。"
+        "現在の画像でOCR結果を確認します。Excel出力時は全画像を改めて認識します。"
     )
     saved_template_hint: str = (
         "保存済みテンプレートは右上のメニューから読み込めます。"

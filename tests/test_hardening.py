@@ -484,6 +484,38 @@ class WorkflowChoiceTests(unittest.TestCase):
         finally:
             destroy_tk_root(root)
 
+    def test_recognition_test_uses_concise_copy_and_actions(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app._hide_workflow_choice()
+            app.original_image = Image.open(".samples/1.png").convert("RGB")
+            app.fields = [TemplateField("話者", 40, 1500, 800, 1600)]
+            app.current_results = [""]
+            app.current_raw_results = [""]
+            app.selected_index = 0
+            app.mode_var.set(MODE_REVIEW)
+            app._render_side_body()
+
+            descendants = descendants_of(app.side_body)
+            labels = [
+                widget.cget("text")
+                for widget in descendants
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            buttons = [
+                widget.cget("text")
+                for widget in descendants
+                if isinstance(widget, ctk.CTkButton)
+            ]
+
+            self.assertIn(THEME.copy.recognition_test_note, labels)
+            self.assertIn("全項目をテスト", buttons)
+            self.assertIn("選択項目をテスト", buttons)
+        finally:
+            destroy_tk_root(root)
+
 
 class OcrSetupOnboardingTests(unittest.TestCase):
     @staticmethod

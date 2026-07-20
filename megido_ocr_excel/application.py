@@ -2034,7 +2034,7 @@ class ImageOcrExcelApp:
 
         ctk.CTkButton(
             body,
-            text="現在の画像を全項目テスト",
+            text="全項目をテスト",
             image=ICONS.get("scan", 18, THEME.palette.on_color),
             compound="left",
             command=self.ocr_current_image,
@@ -2186,8 +2186,8 @@ class ImageOcrExcelApp:
         ).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=2)
         ctk.CTkButton(
             panel,
-            text="選択項目を再テスト",
-            image=ICONS.get("refresh", 16, COLOR_TEXT),
+            text="選択項目をテスト",
+            image=ICONS.get("scan", 16, COLOR_TEXT),
             compound="left",
             command=self.ocr_selected_field,
             height=THEME.layout.entry_height,
@@ -7432,7 +7432,7 @@ class ImageOcrExcelApp:
 
         def on_success(result: tuple[list[str], list[str]]) -> None:
             self.current_raw_results, self.current_results = result
-            self.status_var.set("現在の画像を全項目テストしました。")
+            self.status_var.set("全項目をテストしました。")
             self._render_side_body()
 
         def on_error(error: Exception) -> None:
