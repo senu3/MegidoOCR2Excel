@@ -347,6 +347,8 @@ def recognize_image(
 
     crop = image.crop((region.x1, region.y1, region.x2, region.y2))
     if args.backend == "paddle":
+        if args.save_crops:
+            crop.save(args.save_crops / f"{output_stem}_{field.name}.png")
         return recognize_with_engine(image, field, args, engine)
 
     if args.line_split != "none":

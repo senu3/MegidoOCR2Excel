@@ -54,6 +54,7 @@ from scripts.ocr_accuracy_common import (
     expected_values_for_field,
     measurement_fields,
     read_expected_sets,
+    recognize_image,
     recognize_with_engine,
 )
 from megido_ocr_excel.templates import coordinate_settings_from_template
@@ -472,6 +473,43 @@ class BatchWorkflowTests(unittest.TestCase):
         failed = build_accuracy_row("missing.png", "", "", "検出失敗")
         self.assertFalse(failed.exact)
         self.assertFalse(failed.normalized_match)
+
+    def test_paddle_accuracy_measurement_saves_the_source_crop(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_crops = Path(temp_dir)
+            args = Namespace(
+                backend="paddle",
+                preprocess="default",
+                scale="auto",
+                threshold=180,
+                psm=6,
+                lang="jpn",
+                line_split="none",
+                line_padding=12,
+                line_detect_threshold=90,
+                line_detect_min_ratio=0.015,
+                line_detect_gap=10,
+                tesseract="",
+                correction_rules=[],
+                coordinate_settings=CoordinateSettings(),
+                text_formatting=TextFormattingSettings(),
+                save_crops=save_crops,
+            )
+            engine = MagicMock()
+            engine.recognize_field_detail.return_value = ("test", "test", None)
+
+            value, error = recognize_image(
+                Image.new("RGB", (20, 20), "white"),
+                TemplateField("dialogue", 2, 3, 12, 13),
+                args,
+                engine,
+                output_stem="sample",
+            )
+
+            self.assertEqual(value, "test")
+            self.assertEqual(error, "")
+            with Image.open(save_crops / "sample_dialogue.png") as crop:
+                self.assertEqual(crop.size, (10, 10))
 
     def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
         fields, coordinate_settings = auto_detection_context()

@@ -58,8 +58,16 @@ class AppDialogsTests(unittest.TestCase):
         self.assertFalse(accepted)
 
     def test_enter_invokes_the_focused_action_instead_of_the_default(self) -> None:
-        self.root.after(100, lambda: self._send("<Tab>"))
-        self.root.after(160, lambda: self._send("<Return>"))
+        def choose_focused_action() -> None:
+            modal = self.dialogs.active_modal
+            self.assertIsNotNone(modal)
+            focused_action = modal._focus_order[1]
+            with patch.object(
+                self.root, "focus_get", return_value=focused_action
+            ):
+                modal.window.event_generate("<Return>", when="now")
+
+        self.root.after(100, choose_focused_action)
 
         accepted = self.dialogs.askyesno(
             "削除確認",

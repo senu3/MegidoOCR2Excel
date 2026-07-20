@@ -127,6 +127,8 @@ uv run python scripts/measure_dialogue_ocr.py --line-split none
 
 ## リリース前の確認
 
+Windowsでの初回準備、OCRモデル取得、実Excel出力、修復保持を含む手順と実施結果は [Phase 6 リリーステスト](PHASE6_TEST_CHECKLIST.md) を参照してください。
+
 ```powershell
 uv run python -m py_compile main.py launcher.py
 uv run python -m unittest discover -s tests

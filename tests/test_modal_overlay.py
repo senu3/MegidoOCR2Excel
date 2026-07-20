@@ -104,6 +104,20 @@ class ModalOverlayTests(unittest.TestCase):
             modal.destroy()
             destroy_tk_root(root)
 
+    def test_tab_moves_from_the_current_action_to_the_next_one(self) -> None:
+        modal = ModalOverlay.__new__(ModalOverlay)
+        first = MagicMock()
+        second = MagicMock()
+        modal._visible = True
+        modal._focus_order = (first, second)
+        modal._default_focus = first
+        modal.root = MagicMock()
+        modal.root.focus_get.return_value = first
+        modal._move_focus = MagicMock(return_value="break")
+
+        self.assertEqual(modal._on_tab(None, reverse=False), "break")
+        modal._move_focus.assert_called_once_with(second)
+
 
 if __name__ == "__main__":
     unittest.main()
