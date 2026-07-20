@@ -463,7 +463,7 @@ class ImageOcrExcelApp:
             "transparent",
             COLOR_UTILITY_HOVER,
             34,
-            tooltip="テンプレート設定",
+            tooltip="基本設定",
         ).pack(side=RIGHT, padx=(4, 12), pady=10)
         ctk.CTkFrame(
             toolbar, width=1, height=22, fg_color=THEME.palette.toolbar_divider
@@ -4671,7 +4671,7 @@ class ImageOcrExcelApp:
         ).grid(row=0, column=0, sticky="nw", padx=(26, 10), pady=(25, 0))
         ctk.CTkLabel(
             panel,
-            text="テンプレート設定",
+            text="基本設定",
             anchor="w",
             justify="left",
             font=UI_FONT_TITLE,
@@ -4824,21 +4824,8 @@ class ImageOcrExcelApp:
             )
             note_row = 8
 
-        ctk.CTkLabel(
-            content,
-            text=(
-                "これらの設定はテンプレートに含まれます。"
-                "［テンプレートに反映］後、右パネルの［保存］で保存してください。"
-            ),
-            anchor="w",
-            justify="left",
-            wraplength=420,
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=note_row, column=0, sticky="ew", pady=(18, 0))
-
         buttons = ctk.CTkFrame(content, fg_color="transparent")
-        buttons.grid(row=note_row + 1, column=0, sticky="e", pady=(24, 0))
+        buttons.grid(row=note_row, column=0, sticky="e", pady=(24, 0))
         cancel_button = ctk.CTkButton(
             buttons,
             text="キャンセル",
@@ -4856,7 +4843,7 @@ class ImageOcrExcelApp:
         cancel_button.pack(side=LEFT)
         apply_button = ctk.CTkButton(
             buttons,
-            text="テンプレートに反映",
+            text="適用",
             command=lambda: self._apply_settings(
                 modal,
                 dialog_lang_display.get(),
@@ -4865,7 +4852,7 @@ class ImageOcrExcelApp:
                 dialog_image_text_correction.get(),
                 after_close,
             ),
-            width=148,
+            width=112,
             height=THEME.layout.primary_button_height,
             corner_radius=THEME.layout.control_radius,
             font=UI_FONT_SMALL,
@@ -5229,37 +5216,23 @@ class ImageOcrExcelApp:
         )
         cancel_button = ctk.CTkButton(
             buttons,
-            text="閉じる",
+            text="完了",
             command=close_modal,
             width=112,
             height=THEME.layout.primary_button_height,
             corner_radius=THEME.layout.control_radius,
             font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
+            fg_color=COLOR_PRIMARY,
+            hover_color=COLOR_PRIMARY_HOVER,
+            border_width=0,
+            text_color=THEME.palette.on_color,
         )
         cancel_button.pack(side=LEFT)
 
-        environment_scope_note = ctk.CTkLabel(
-            content,
-            text=(
-                "この端末に保存され、テンプレートには含まれません。"
-                "変更はすぐに反映されます。"
-            ),
-            anchor="w",
-            justify="left",
-            wraplength=420,
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        )
-        environment_scope_note.grid(row=0, column=0, sticky="ew", pady=(0, 16))
         ocr_language_label.grid_remove()
         lang_combo.grid_remove()
-        environment_row.grid_configure(row=1, pady=(0, 0))
-        environment_details.grid_configure(row=2, pady=(10, 0))
+        environment_row.grid_configure(row=0, pady=(0, 0))
+        environment_details.grid_configure(row=1, pady=(10, 0))
 
         def environment_style(
             status: OcrEnvironmentStatus,
@@ -5497,24 +5470,24 @@ class ImageOcrExcelApp:
         if changed:
             if self.template_path is None:
                 return (
-                    "テンプレート設定を更新しました。この設定は未保存です。"
-                    "認識テスト後、テンプレートを保存してください。"
+                    "設定を適用しました。この設定は未保存です。"
+                    "次回も使う場合は、右パネルの［保存］を使用してください。"
                 )
             return (
-                "テンプレート設定を更新しました。変更は未保存です。"
-                "認識テスト後、テンプレートを上書き保存してください。"
+                "設定を適用しました。変更は未保存です。"
+                "右パネルの［保存］で上書きしてください。"
             )
         if self.template_path is None:
             return (
-                "テンプレート設定は変更されていません。"
-                "この設定はまだテンプレートに保存されていません。"
+                "設定は変更されていません（未保存）。"
+                "次回も使う場合は、右パネルの［保存］を使用してください。"
             )
         if self.dirty:
             return (
-                "テンプレート設定は変更されていません。"
-                "テンプレートには未保存の変更があります。"
+                "設定は変更されていません。"
+                "ほかに未保存の変更があります。"
             )
-        return "テンプレート設定は変更されていません（テンプレートに保存済み）。"
+        return "設定は変更されていません（保存済み）。"
 
     def _apply_settings(
         self,

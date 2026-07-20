@@ -885,7 +885,7 @@ class DirtyStateTests(unittest.TestCase):
             self.assertTrue(app.text_formatting.fullwidth_ascii)
             self.assertTrue(app.image_text_correction_enabled)
             self.assertIn("この設定は未保存です", app.status_var.get())
-            self.assertIn("テンプレートを保存", app.status_var.get())
+            self.assertIn("右パネルの［保存］", app.status_var.get())
             self.assertEqual(app.current_results, [""])
             self.assertEqual(app.current_raw_results, [""])
             self.assertTrue(app.dirty)
@@ -1044,11 +1044,11 @@ class DirtyStateTests(unittest.TestCase):
             app._mark_clean()
             app._apply_settings(MagicMock(), *settings_args, False)
             self.assertIn("変更は未保存です", app.status_var.get())
-            self.assertIn("上書き保存", app.status_var.get())
+            self.assertIn("上書き", app.status_var.get())
 
             app._mark_clean()
             app._apply_settings(MagicMock(), *settings_args, False)
-            self.assertIn("テンプレートに保存済み", app.status_var.get())
+            self.assertIn("保存済み", app.status_var.get())
 
             app._mark_dirty()
             app._apply_settings(MagicMock(), *settings_args, False)
@@ -1057,10 +1057,8 @@ class DirtyStateTests(unittest.TestCase):
             app.template_path = None
             app._mark_clean()
             app._apply_settings(MagicMock(), *settings_args, False)
-            self.assertIn(
-                "まだテンプレートに保存されていません",
-                app.status_var.get(),
-            )
+            self.assertIn("設定は変更されていません（未保存）", app.status_var.get())
+            self.assertIn("右パネルの［保存］", app.status_var.get())
         finally:
             destroy_tk_root(root)
 
@@ -1354,7 +1352,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 for widget in descendants_of(modal.panel)
                 if "text" in widget.keys()
             ]
-            self.assertIn("テンプレートに反映", texts)
+            self.assertIn("適用", texts)
             self.assertNotIn("診断ログ", texts)
             self.assertNotIn("フォルダーを開く", texts)
             if sys.platform.startswith("win"):
@@ -1367,7 +1365,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 for widget in descendants_of(modal.panel)
                 if isinstance(widget, ctk.CTkLabel)
             ]
-            self.assertIn("テンプレート設定", labels)
+            self.assertIn("基本設定", labels)
             self.assertIn("OCR言語", labels)
             self.assertIn("OCR環境", labels)
             self.assertNotIn("PaddleOCR（固定）", labels)
@@ -1419,7 +1417,7 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertIn("OCR環境設定", environment_label_texts)
             self.assertIn("PaddleOCR（固定）", environment_label_texts)
             self.assertIn("診断ログ", environment_label_texts)
-            self.assertTrue(
+            self.assertFalse(
                 any(
                     "テンプレートには含まれません" in text
                     for text in environment_label_texts
@@ -1434,7 +1432,7 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertIn("開く", button_texts)
             self.assertIn("変更", button_texts)
             self.assertIn("フォルダーを開く", button_texts)
-            self.assertIn("閉じる", button_texts)
+            self.assertIn("完了", button_texts)
             self.assertNotIn("保存", button_texts)
             self.assertTrue(
                 any(
