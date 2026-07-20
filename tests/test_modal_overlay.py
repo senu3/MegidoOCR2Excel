@@ -62,6 +62,7 @@ class ModalOverlayTests(unittest.TestCase):
             self.assertEqual(modal.window.state(), "normal")
             if sys.platform.startswith("win"):
                 self.assertIsNone(root.grab_current())
+                self.assertTrue(bool(modal.window.attributes("-topmost")))
             else:
                 self.assertEqual(modal.window.grab_current(), modal.window)
             self.assertTrue(modal.backdrop.geometry().startswith("800x600"))
@@ -69,6 +70,8 @@ class ModalOverlayTests(unittest.TestCase):
             modal.hide()
             self.assertEqual(modal.backdrop.state(), "withdrawn")
             self.assertEqual(modal.window.state(), "withdrawn")
+            if sys.platform.startswith("win"):
+                self.assertFalse(bool(modal.window.attributes("-topmost")))
         finally:
             modal.destroy()
             destroy_tk_root(root)

@@ -35,6 +35,8 @@ class ModalOverlay:
         self._showing = False
         self._show_job: str | None = None
         self._sync_job: str | None = None
+        self._raise_job: str | None = None
+        self._topmost_job: str | None = None
         self._focus_job: str | None = None
         self._focus_order: tuple[Misc, ...] = ()
         self._root_bindings: list[tuple[str, str]] = []
@@ -76,6 +78,8 @@ class ModalOverlay:
         self.window.bind("<Escape>", self._on_escape)
         self.window.bind("<Return>", self._on_activate)
         self.window.bind("<KP_Enter>", self._on_activate)
+        self.window.bind("<FocusIn>", self._on_modal_focus_in, add="+")
+        self.window.bind("<FocusOut>", self._on_modal_focus_out, add="+")
         self.window.bind("<Tab>", lambda event: self._on_tab(event, reverse=False))
         self.window.bind(
             "<Shift-Tab>", lambda event: self._on_tab(event, reverse=True)
@@ -92,6 +96,8 @@ class ModalOverlay:
         self._bind_root("<Configure>", self._on_root_configure)
         self._bind_root("<Map>", self._on_root_map)
         self._bind_root("<Unmap>", self._on_root_unmap)
+        self._bind_root("<FocusIn>", self._on_root_focus_in)
+        self._bind_root("<FocusOut>", self._on_root_focus_out)
         self._bind_root("<Destroy>", self._on_root_destroy)
 
     @property
@@ -138,6 +144,7 @@ class ModalOverlay:
         self._visible = False
         self._cancel_jobs()
         self._release_grab()
+        self._set_topmost(False)
         self.window.withdraw()
         self.backdrop.withdraw()
         self._restore_focus()
@@ -209,8 +216,8 @@ class ModalOverlay:
             self._sync_geometry()
             self.backdrop.deiconify()
             self.window.deiconify()
-            self.backdrop.lift()
-            self.window.lift()
+            self._raise_windows()
+            self._schedule_raise()
             # On Windows, a Tk input grab also blocks the owner's native title-bar
             # controls.  The backdrop already covers the root's client area, so
             # keeping the grab there only prevents users from closing the app via
@@ -237,6 +244,52 @@ class ModalOverlay:
         if not self._visible or self._destroyed or self._sync_job is not None:
             return
         self._sync_job = self.root.after_idle(self._sync_geometry)
+
+    def _schedule_raise(self) -> None:
+        if (
+            not self._visible
+            or self._destroyed
+            or self._raise_job is not None
+        ):
+            return
+        self._raise_job = self.root.after_idle(self._raise_windows)
+
+    def _raise_windows(self) -> None:
+        self._raise_job = None
+        if not self._visible or self._destroyed:
+            return
+        try:
+            self._set_topmost(True)
+            self.backdrop.lift(self.root)
+            self.window.lift(self.backdrop)
+        except TclError:
+            return
+
+    def _set_topmost(self, enabled: bool) -> None:
+        if not sys.platform.startswith("win"):
+            return
+        try:
+            self.backdrop.attributes("-topmost", enabled)
+            self.window.attributes("-topmost", enabled)
+        except TclError:
+            return
+
+    def _schedule_topmost_check(self) -> None:
+        if not sys.platform.startswith("win") or self._topmost_job is not None:
+            return
+        self._topmost_job = self.root.after(100, self._sync_topmost_to_focus)
+
+    def _sync_topmost_to_focus(self) -> None:
+        self._topmost_job = None
+        if not self._visible or self._destroyed:
+            return
+        try:
+            focused = self.root.focus_get()
+        except TclError:
+            focused = None
+        self._set_topmost(focused is not None)
+        if focused is not None:
+            self._raise_windows()
 
     def _sync_geometry(self) -> None:
         self._sync_job = None
@@ -286,6 +339,7 @@ class ModalOverlay:
             and target.winfo_exists()
         ):
             try:
+                self._raise_windows()
                 self.window.focus_set()
                 target.focus_set()
             except (AttributeError, TclError):
@@ -310,7 +364,13 @@ class ModalOverlay:
             pass
 
     def _cancel_jobs(self) -> None:
-        for attribute in ("_show_job", "_sync_job", "_focus_job"):
+        for attribute in (
+            "_show_job",
+            "_sync_job",
+            "_raise_job",
+            "_topmost_job",
+            "_focus_job",
+        ):
             job = getattr(self, attribute)
             if job is not None:
                 try:
@@ -354,11 +414,30 @@ class ModalOverlay:
         if event.widget is self.root and self._visible:
             self._schedule_show()
 
+    def _on_root_focus_in(self, event: Event) -> None:
+        if event.widget is self.root and self._visible:
+            self._set_topmost(True)
+            self._schedule_raise()
+
+    def _on_root_focus_out(self, event: Event) -> None:
+        if event.widget is self.root and self._visible:
+            self._schedule_topmost_check()
+
+    def _on_modal_focus_in(self, _event: Event) -> None:
+        if self._visible:
+            self._set_topmost(True)
+            self._schedule_raise()
+
+    def _on_modal_focus_out(self, _event: Event) -> None:
+        if self._visible:
+            self._schedule_topmost_check()
+
     def _on_root_unmap(self, event: Event) -> None:
         if event.widget is not self.root or not self._visible:
             return
         self._cancel_jobs()
         self._release_grab()
+        self._set_topmost(False)
         self.window.withdraw()
         self.backdrop.withdraw()
 

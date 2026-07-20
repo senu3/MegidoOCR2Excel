@@ -705,6 +705,13 @@ class OcrSetupOnboardingTests(unittest.TestCase):
                     "準備をキャンセル",
                 )
                 self.assertEqual(
+                    app.ocr_setup_secondary_button.cget("fg_color"),
+                    "transparent",
+                )
+                self.assertEqual(
+                    app.ocr_setup_secondary_button.cget("border_width"), 0
+                )
+                self.assertEqual(
                     app.ocr_setup_primary_button.winfo_manager(), ""
                 )
                 self.assertEqual(
@@ -1379,6 +1386,45 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertFalse(modal.visible)
             self.assertEqual(modal.window.state(), "withdrawn")
             self.assertIsNone(root.grab_current())
+        finally:
+            if app.loading_modal is not None:
+                app.loading_modal.destroy()
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            destroy_tk_root(root)
+
+    def test_excel_progress_modal_shows_count_file_and_determinate_progress(self) -> None:
+        root = ctk.CTk()
+        root.geometry("900x700+10000+10000")
+        app = ImageOcrExcelApp(root)
+        try:
+            app._hide_workflow_choice()
+            root.update()
+            app.busy = True
+            app._operation_cancel_event = threading.Event()
+
+            app._show_loading(
+                "Excelへ出力しています",
+                note="2 / 5 画像\nb2.png",
+                progress=0.4,
+            )
+            root.update()
+
+            self.assertTrue(app.loading_modal.visible)
+            self.assertEqual(app.loading_var.get(), "Excelへ出力しています")
+            self.assertEqual(app.loading_note_var.get(), "2 / 5 画像\nb2.png")
+            self.assertEqual(app.loading_progress.cget("mode"), "determinate")
+            self.assertAlmostEqual(app.loading_progress.get(), 0.4)
+
+            app._update_loading(
+                "Excelへ出力しています",
+                note="3 / 5 画像\nb3.png",
+                progress=0.6,
+            )
+            root.update()
+
+            self.assertEqual(app.loading_note_var.get(), "3 / 5 画像\nb3.png")
+            self.assertAlmostEqual(app.loading_progress.get(), 0.6)
         finally:
             if app.loading_modal is not None:
                 app.loading_modal.destroy()

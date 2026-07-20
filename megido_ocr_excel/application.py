@@ -1068,19 +1068,47 @@ class ImageOcrExcelApp:
         else:
             self.show_ocr_setup()
 
-    def _show_loading(self, message: str) -> None:
+    def _show_loading(
+        self,
+        message: str,
+        *,
+        note: str | None = None,
+        progress: float | None = None,
+    ) -> None:
         self.loading_var.set(message)
-        self.loading_note_var.set("処理中の項目が完了するまでお待ちください。")
+        self.loading_note_var.set(
+            note or "処理中の項目が完了するまでお待ちください。"
+        )
         if self.loading_close_button is not None:
             self.loading_close_button.configure(state="normal")
         if self.loading_modal is not None:
             self.loading_modal.show(focus=self.loading_close_button)
         if self.loading_progress is not None:
-            self.loading_progress.start()
+            if progress is None:
+                self.loading_progress.configure(mode="indeterminate")
+                self.loading_progress.start()
+            else:
+                self.loading_progress.stop()
+                self.loading_progress.configure(mode="determinate")
+                self.loading_progress.set(max(0.0, min(1.0, progress)))
         self.root.update_idletasks()
 
-    def _update_loading(self, message: str) -> None:
+    def _update_loading(
+        self,
+        message: str,
+        *,
+        note: str | None = None,
+        progress: float | None = None,
+    ) -> None:
         self.loading_var.set(message)
+        if note is not None:
+            self.loading_note_var.set(note)
+        if progress is not None and self.loading_progress is not None:
+            self.loading_progress.set(max(0.0, min(1.0, progress)))
+        if self.loading_modal is not None and self.loading_modal.visible:
+            # Keep the progress surface above the application while frequent
+            # queue/status redraws are performed during an export.
+            self.loading_modal.show(focus=self.loading_close_button)
         self.root.update_idletasks()
 
     def _hide_loading(self) -> None:
@@ -1100,6 +1128,8 @@ class ImageOcrExcelApp:
         on_cancel=None,
         *,
         show_loading_overlay: bool = True,
+        loading_note: str | None = None,
+        loading_progress: float | None = None,
     ) -> None:
         if self.busy:
             self.status_var.set("処理中です。完了までお待ちください。")
@@ -1107,7 +1137,11 @@ class ImageOcrExcelApp:
         self.busy = True
         self._operation_cancel_event = threading.Event()
         if show_loading_overlay:
-            self._show_loading(loading_message)
+            self._show_loading(
+                loading_message,
+                note=loading_note,
+                progress=loading_progress,
+            )
         logger.info("Background operation started | operation=%s", loading_message)
 
         def finish_common() -> bool:
@@ -7329,7 +7363,9 @@ class ImageOcrExcelApp:
                 self.progress_var.set(f"{row_index} / {total_count}")
                 self.status_var.set(f"OCR中: {image_path.name}")
                 self._update_loading(
-                    f"Excel出力中です。{row_index} / {total_count}\n{image_path.name}"
+                    "Excelへ出力しています",
+                    note=f"{row_index} / {total_count} 画像\n{image_path.name}",
+                    progress=row_index / max(1, total_count),
                 )
 
             self.root.after(0, apply_update)
@@ -7416,12 +7452,14 @@ class ImageOcrExcelApp:
             self.status_var.set("Excel出力をキャンセルしました。ファイルは変更されていません。")
 
         self._run_background(
-            f"Excel出力中です。0 / {total}",
+            "Excelへ出力しています",
             work,
             on_success,
             on_error,
             on_finally,
             on_cancel,
+            loading_note=f"0 / {total} 画像\n出力の準備をしています。",
+            loading_progress=0.0,
         )
 
     def retry_failed_images(self) -> None:
@@ -7490,7 +7528,9 @@ class ImageOcrExcelApp:
                 self.progress_var.set(f"{row_index} / {total_count}")
                 self.status_var.set(f"再OCR中: {image_path.name}")
                 self._update_loading(
-                    f"失敗分を再実行中です。{row_index} / {total_count}\n{image_path.name}"
+                    "失敗した画像を再実行しています",
+                    note=f"{row_index} / {total_count} 画像\n{image_path.name}",
+                    progress=row_index / max(1, total_count),
                 )
 
             self.root.after(0, apply_update)
@@ -7559,12 +7599,14 @@ class ImageOcrExcelApp:
             self.status_var.set("失敗分の再実行をキャンセルしました。Excelは変更されていません。")
 
         self._run_background(
-            f"失敗分を再実行中です。0 / {total}",
+            "失敗した画像を再実行しています",
             work,
             on_success,
             on_error,
             on_finally,
             on_cancel,
+            loading_note=f"0 / {total} 画像\n再実行の準備をしています。",
+            loading_progress=0.0,
         )
 
     def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
