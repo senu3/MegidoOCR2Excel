@@ -447,10 +447,10 @@ class OcrSetupOnboardingTests(unittest.TestCase):
     @staticmethod
     def _status(state: str, *, ready: bool) -> OcrEnvironmentStatus:
         labels = {
-            OCR_ENV_READY: ("準備完了", "PaddleOCRを使用できます。"),
+            OCR_ENV_READY: ("準備完了", "必要な認識モデルを確認しました。"),
             OCR_ENV_SETUP: (
                 "認識モデルが必要",
-                "認識モデルをダウンロードします。通信環境により時間がかかります。",
+                "通信環境により時間がかかる場合があります。",
             ),
             OCR_ENV_VERIFY: (
                 "確認が必要",
@@ -519,7 +519,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             self.assertIn("OCR認識モデルをダウンロード", labels)
             self.assertIn("認識モデルが必要", labels)
             self.assertTrue(
-                any("PaddleOCRの実行環境は準備済み" in text for text in labels)
+                any("実行環境と認識モデルが必要" in text for text in labels)
             )
             self.assertFalse(any("初回のみ" in text for text in labels))
             self.assertIn("ダウンロードして準備", buttons)

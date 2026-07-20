@@ -44,14 +44,24 @@ class OcrEnvironmentManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = self._manager(Path(temp_dir), dependencies=False)
 
-            self.assertEqual(manager.quick_status().state, OCR_ENV_UNAVAILABLE)
+            status = manager.quick_status()
+            self.assertEqual(status.state, OCR_ENV_UNAVAILABLE)
+            self.assertEqual(
+                status.detail,
+                "PaddleOCRの実行環境が不足しています。ランチャーで修復してください。",
+            )
 
     def test_models_progress_from_setup_to_verify_to_ready(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             manager = self._manager(root)
 
-            self.assertEqual(manager.quick_status().state, OCR_ENV_SETUP)
+            setup = manager.quick_status()
+            self.assertEqual(setup.state, OCR_ENV_SETUP)
+            self.assertEqual(
+                setup.detail,
+                "通信環境により時間がかかる場合があります。",
+            )
             self._add_model(manager.cache_dir)
             self.assertEqual(manager.quick_status().state, OCR_ENV_VERIFY)
 
@@ -60,6 +70,7 @@ class OcrEnvironmentManagerTests(unittest.TestCase):
 
             self.assertEqual(called, [True])
             self.assertEqual(status.state, OCR_ENV_READY)
+            self.assertEqual(status.detail, "必要な認識モデルを確認しました。")
             saved = json.loads((root / "settings.json").read_text(encoding="utf-8"))
             self.assertEqual(saved["version"], 2)
             self.assertTrue(saved["ocr_verified_signature"])

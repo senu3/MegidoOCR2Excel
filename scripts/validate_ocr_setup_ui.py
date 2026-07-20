@@ -40,12 +40,12 @@ def status_for_state(state: str) -> OcrEnvironmentStatus:
         "setup": (
             OCR_ENV_SETUP,
             "認識モデルが必要",
-            "認識モデルをダウンロードします。通信環境により時間がかかります。",
+            "通信環境により時間がかかる場合があります。",
         ),
         "progress": (
             OCR_ENV_SETUP,
             "認識モデルが必要",
-            "認識モデルをダウンロードします。通信環境により時間がかかります。",
+            "通信環境により時間がかかる場合があります。",
         ),
         "verify": (
             OCR_ENV_VERIFY,
@@ -70,7 +70,7 @@ def status_for_state(state: str) -> OcrEnvironmentStatus:
         "ready": (
             OCR_ENV_READY,
             "準備完了",
-            "PaddleOCRを使用できます。",
+            "必要な認識モデルを確認しました。",
         ),
     }
     status, label, detail = states[state]

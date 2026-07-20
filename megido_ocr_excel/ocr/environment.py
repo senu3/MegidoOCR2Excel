@@ -186,10 +186,7 @@ class OcrEnvironmentManager:
             return OcrEnvironmentStatus(
                 OCR_ENV_UNAVAILABLE,
                 "ランチャーで修復が必要",
-                (
-                    "PaddleOCRの実行環境が不足しています。アプリを閉じて"
-                    "ランチャーから再起動してください。"
-                ),
+                "PaddleOCRの実行環境が不足しています。ランチャーで修復してください。",
                 cache_dir,
                 self.settings.cache_mode,
             )
@@ -215,7 +212,7 @@ class OcrEnvironmentManager:
             return OcrEnvironmentStatus(
                 OCR_ENV_SETUP,
                 "認識モデルが必要",
-                "認識モデルをダウンロードします。通信環境により時間がかかります。",
+                "通信環境により時間がかかる場合があります。",
                 cache_dir,
                 self.settings.cache_mode,
             )
@@ -238,7 +235,7 @@ class OcrEnvironmentManager:
         return OcrEnvironmentStatus(
             OCR_ENV_READY,
             "準備完了",
-            "PaddleOCRを使用できます。",
+            "必要な認識モデルを確認しました。",
             cache_dir,
             self.settings.cache_mode,
         )

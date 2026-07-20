@@ -332,7 +332,8 @@ class LauncherWindow:
         elif self.status.first_setup:
             title = "初回セットアップ"
             note = (
-                "PaddleOCRとアプリの実行に必要なパッケージをダウンロードします。\n"
+                "アプリとPaddleOCRの実行環境をダウンロードして準備します。\n"
+                "認識モデルは、アプリ起動後に未準備の場合だけ取得します。\n"
                 "ネットワーク通信と数分程度の時間がかかる場合があります。"
             )
             action_text = "セットアップを開始"

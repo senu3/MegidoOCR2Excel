@@ -948,8 +948,8 @@ class ImageOcrExcelApp:
         self.ocr_setup_subtitle_label = ctk.CTkLabel(
             panel,
             text=(
-                "PaddleOCRの実行環境は準備済みです。認識モデルの取得には\n"
-                "インターネット接続が必要で、初回は時間がかかる場合があります。"
+                "PaddleOCRでの文字認識には、実行環境と認識モデルが必要です。\n"
+                "この端末では、認識モデルがまだ準備されていません。"
             ),
             justify="center",
             font=UI_FONT_SMALL,
@@ -1226,7 +1226,7 @@ class ImageOcrExcelApp:
         if not self.busy or self._is_operation_cancelled():
             return
         detail = (
-            "認識モデルのダウンロード・確認処理を終了します。\n"
+            "認識モデルの準備・確認処理を終了します。\n"
             "完了していないモデルは準備済みとして記録されません。"
             if self._ocr_setup_operation
             else (
@@ -3835,8 +3835,8 @@ class ImageOcrExcelApp:
         status = self.ocr_environment.quick_status()
         title = "OCR認識モデルをダウンロード"
         subtitle = (
-            "PaddleOCRの実行環境は準備済みです。認識モデルの取得には\n"
-            "インターネット接続が必要で、初回は時間がかかる場合があります。"
+            "PaddleOCRでの文字認識には、実行環境と認識モデルが必要です。\n"
+            "この端末では、認識モデルがまだ準備されていません。"
         )
         label = status.label
         note = self.ocr_environment_last_error or status.detail
@@ -3860,8 +3860,8 @@ class ImageOcrExcelApp:
         elif status.state == OCR_ENV_VERIFY:
             title = "OCR認識モデルを確認"
             subtitle = (
-                "既存の認識モデルを動作確認します。環境の更新により、"
-                "追加取得が必要な場合があります。"
+                "保存済みの認識モデルを現在の実行環境で確認します。\n"
+                "不足している場合だけ追加で取得します。"
             )
             primary_text = "確認して更新"
         elif status.state == OCR_ENV_LOCATION_ERROR:
@@ -3979,8 +3979,8 @@ class ImageOcrExcelApp:
         if self.ocr_setup_subtitle_label is not None:
             self.ocr_setup_subtitle_label.configure(
                 text=(
-                    "認識モデルをダウンロードして動作確認しています。\n"
-                    "完了するまでこの画面を開いたままお待ちください。"
+                    "必要な認識モデルを確認して動作確認しています。\n"
+                    "不足している場合だけダウンロードします。"
                 )
             )
         self.ocr_setup_status_label.configure(
@@ -5002,7 +5002,11 @@ class ImageOcrExcelApp:
         def visible_environment_status() -> tuple[OcrEnvironmentStatus, str, str]:
             status = self.ocr_environment.quick_status()
             if self.busy:
-                return status, "準備中", "認識モデルをダウンロード・確認しています。"
+                return (
+                    status,
+                    "準備中",
+                    "認識モデルを確認しています。不足がある場合は取得します。",
+                )
             if self.ocr_environment_restart_required:
                 return status, "再起動が必要", "保存先は次回起動時に反映されます。"
             note = self.ocr_environment_last_error or status.detail
@@ -7148,7 +7152,7 @@ class ImageOcrExcelApp:
             self.dialogs.showerror("OCRエラー", str(error))
 
         self._run_background(
-            "認識テスト中です。初回はPaddleOCRの準備に時間がかかります。",
+            "認識テスト中です。初回は認識モデルの読み込みに時間がかかります。",
             work,
             on_success,
             on_error,
