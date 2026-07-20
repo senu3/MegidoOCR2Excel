@@ -2262,22 +2262,6 @@ class ImageOcrExcelApp:
         )
         self._readonly_textbox(preview, result_text or "未テスト", row=2, height=72)
 
-        raw_text = (
-            self.current_raw_results[self.selected_index]
-            if self.selected_index is not None
-            and self.selected_index < len(self.current_raw_results)
-            else ""
-        )
-        if raw_text and raw_text != result_text:
-            ctk.CTkLabel(
-                preview,
-                text="生OCR",
-                anchor="w",
-                font=UI_FONT_SMALL,
-                text_color=COLOR_MUTED,
-            ).grid(row=3, column=0, sticky="ew", padx=8, pady=(6, 2))
-            self._readonly_textbox(preview, raw_text, row=4, height=56)
-
     def _selected_field_crop_preview(self) -> ctk.CTkImage | None:
         if (
             self.original_image is None

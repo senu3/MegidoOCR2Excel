@@ -443,6 +443,47 @@ class WorkflowChoiceTests(unittest.TestCase):
         finally:
             destroy_tk_root(root)
 
+    def test_recognition_test_hides_raw_ocr(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app._hide_workflow_choice()
+            app.original_image = Image.open(".samples/1.png").convert("RGB")
+            app.fields = [
+                TemplateField(
+                    "セリフ本文",
+                    40,
+                    1600,
+                    1040,
+                    1880,
+                    ocr_line_split="detected",
+                )
+            ]
+            app.current_results = ["一行目　二行目"]
+            app.current_raw_results = ["一行目\n二行目"]
+            app.selected_index = 0
+            app.mode_var.set(MODE_REVIEW)
+            app._render_side_body()
+
+            descendants = descendants_of(app.side_body)
+            labels = [
+                widget.cget("text")
+                for widget in descendants
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            textboxes = [
+                widget for widget in descendants if isinstance(widget, ctk.CTkTextbox)
+            ]
+
+            self.assertNotIn("生OCR", labels)
+            self.assertEqual(len(textboxes), 1)
+            self.assertEqual(
+                textboxes[0].get("1.0", "end-1c"), "一行目　二行目"
+            )
+        finally:
+            destroy_tk_root(root)
+
 
 class OcrSetupOnboardingTests(unittest.TestCase):
     @staticmethod
