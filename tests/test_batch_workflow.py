@@ -38,7 +38,6 @@ from megido_ocr_excel.models import (
     LINE_JOIN_NEWLINE,
     LINE_JOIN_NONE,
     SET_PRESET_HEADING_TEXT,
-    SET_PRESET_SINGLE_LINE,
     SET_SLOT_HEADING,
     SET_SLOT_SPEAKER,
     SET_SLOT_SUPPLEMENT,
@@ -868,39 +867,6 @@ class BatchWorkflowTests(unittest.TestCase):
         definition = set_definition_for_preset("conversation")
         self.assertIn("セリフ", set_validation_error(missing, definition) or "")
         self.assertIn("複数", set_validation_error(duplicate, definition) or "")
-
-    def test_single_line_set_exports_speaker_and_text_per_set(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            image_path = root / "cards.png"
-            output = root / "single-line.xlsx"
-            Image.new("RGB", (20, 20), "white").save(image_path)
-            definition = set_definition_for_preset(SET_PRESET_SINGLE_LINE)
-            fields = [
-                TemplateField("話者1", 0, 0, 20, 5, set_id=1, slot_key=SET_SLOT_SPEAKER),
-                TemplateField("セリフ1", 0, 0, 20, 10, set_id=1, slot_key=SET_SLOT_TEXT),
-                TemplateField("話者2", 0, 10, 20, 15, set_id=2, slot_key=SET_SLOT_SPEAKER),
-                TemplateField("セリフ2", 0, 10, 20, 20, set_id=2, slot_key=SET_SLOT_TEXT),
-            ]
-
-            ExcelExporter().export(
-                output,
-                [image_path],
-                fields,
-                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
-                lambda _image, field: (field.name, None),
-                set_definition=definition,
-            )
-            sheet = load_workbook(output)["OCR"]
-
-            self.assertEqual(
-                [sheet.cell(1, column).value for column in range(1, 5)],
-                ["画像名", "順序", "話者", "セリフ"],
-            )
-            self.assertEqual(
-                [sheet.cell(3, column).value for column in range(1, 5)],
-                ["cards.png", "2", "話者2", "セリフ2"],
-            )
 
     def test_heading_text_set_uses_definition_for_headers_and_slot_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

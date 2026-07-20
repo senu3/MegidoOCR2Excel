@@ -74,14 +74,16 @@ class TemplateV1Tests(unittest.TestCase):
             self.assertEqual(loaded["version"], 1)
             self.assertEqual(loaded["profile_id"], "megido_novel")
 
-    def test_old_template_versions_are_rejected_without_migration(self) -> None:
+    def test_template_with_unsupported_version_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "old.json"
+            path = Path(temp_dir) / "unsupported-version.json"
             data = valid_template()
-            data["version"] = 5
+            data["version"] = TEMPLATE_VERSION + 1
             path.write_text(json.dumps(data), encoding="utf-8")
 
-            with self.assertRaisesRegex(TemplateValidationError, "version 1"):
+            with self.assertRaisesRegex(
+                TemplateValidationError, rf"version {TEMPLATE_VERSION}"
+            ):
                 load_template(path)
 
     def test_template_for_a_different_profile_is_rejected(self) -> None:
@@ -92,16 +94,17 @@ class TemplateV1Tests(unittest.TestCase):
             with self.assertRaisesRegex(TemplateValidationError, "another_game.*megido_novel"):
                 load_template(path, expected_profile_id="megido_novel")
 
-    def test_legacy_field_alias_is_not_accepted(self) -> None:
+    def test_template_missing_required_field_properties_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "legacy-field.json"
-            data = valid_template()
-            data["fields"][0].pop("name")
-            data["fields"][0]["cell"] = "A1"
-            path.write_text(json.dumps(data), encoding="utf-8")
+            for key in ("name", "set_id", "slot_key"):
+                with self.subTest(key=key):
+                    path = Path(temp_dir) / f"missing-{key}.json"
+                    data = valid_template()
+                    data["fields"][0].pop(key)
+                    path.write_text(json.dumps(data), encoding="utf-8")
 
-            with self.assertRaisesRegex(TemplateValidationError, "name"):
-                load_template(path)
+                    with self.assertRaisesRegex(TemplateValidationError, key):
+                        load_template(path)
 
     def test_set_assignment_is_preserved_in_template(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -115,18 +118,6 @@ class TemplateV1Tests(unittest.TestCase):
 
             self.assertEqual(loaded["fields"][0]["set_id"], 3)
             self.assertEqual(loaded["fields"][0]["slot_key"], SET_SLOT_SPEAKER)
-
-    def test_pre_set_schema_is_rejected_without_migration(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "old-pair-schema.json"
-            data = valid_template()
-            field = data["fields"][0]
-            field["pair_id"] = field.pop("set_id")
-            field["dialogue_role"] = field.pop("slot_key")
-            path.write_text(json.dumps(data), encoding="utf-8")
-
-            with self.assertRaisesRegex(TemplateValidationError, "set_id"):
-                load_template(path)
 
     def test_duplicate_set_column_keys_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

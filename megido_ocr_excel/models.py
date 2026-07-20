@@ -21,16 +21,13 @@ COORDINATE_SPACE_IMAGE = "image"
 COORDINATE_SPACE_CONTENT = "content"
 COORDINATE_SPACE_OPTIONS = [COORDINATE_SPACE_IMAGE, COORDINATE_SPACE_CONTENT]
 SET_PRESET_CONVERSATION = "conversation"
-SET_PRESET_SINGLE_LINE = "single_line"
 SET_PRESET_HEADING_TEXT = "heading_text"
 SET_PRESET_OPTIONS = [
     SET_PRESET_CONVERSATION,
-    SET_PRESET_SINGLE_LINE,
     SET_PRESET_HEADING_TEXT,
 ]
 SET_PRESET_DISPLAY = {
-    SET_PRESET_CONVERSATION: "会話（話者＋セリフ）",
-    SET_PRESET_SINGLE_LINE: "話者＋1行セリフ",
+    SET_PRESET_CONVERSATION: "話者＋セリフ",
     SET_PRESET_HEADING_TEXT: "見出し＋本文",
 }
 SET_SLOT_SPEAKER = "speaker"
@@ -121,16 +118,6 @@ class SetDefinition:
 
 
 def set_definition_for_preset(preset: str) -> SetDefinition:
-    if preset == SET_PRESET_SINGLE_LINE:
-        return SetDefinition(
-            preset,
-            "話者＋1行セリフ",
-            "順序",
-            (
-                SetColumn(SET_SLOT_SPEAKER, "話者", "none"),
-                SetColumn(SET_SLOT_TEXT, "セリフ", "none"),
-            ),
-        )
     if preset == SET_PRESET_HEADING_TEXT:
         return SetDefinition(
             preset,
@@ -143,7 +130,7 @@ def set_definition_for_preset(preset: str) -> SetDefinition:
         )
     return SetDefinition(
         SET_PRESET_CONVERSATION,
-        "会話",
+        "話者＋セリフ",
         "順序",
         (
             SetColumn(SET_SLOT_SPEAKER, "話者", "none"),

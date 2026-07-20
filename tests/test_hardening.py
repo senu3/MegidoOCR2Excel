@@ -1847,7 +1847,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             self.assertIn("Excelの行単位", labels)
             self.assertIn(EXPORT_LAYOUT_DISPLAY[EXPORT_LAYOUT_SET], labels)
             self.assertIn("項目の組み合わせ", labels)
-            self.assertIn("会話（話者＋セリフ）", labels)
+            self.assertIn("話者＋セリフ", labels)
             self.assertEqual(int(navigation.grid_info()["row"]), 3)
         finally:
             host.destroy()
