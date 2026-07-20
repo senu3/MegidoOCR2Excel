@@ -366,6 +366,35 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(candidate.y2, 1190)
         self.assertGreater(candidate.y2 - candidate.y1, image.height * 0.12)
 
+    def test_supplement_candidate_requires_text_like_content(self) -> None:
+        fields, settings = auto_detection_context()
+        assert PROFILE.dialogue_log_detection is not None
+
+        result = detect_complete_dialogue_pairs(
+            Image.open(".samples/12.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(result.layout, "normal")
+        self.assertEqual(len(result.groups), 1)
+        self.assertEqual(result.candidate_fields, [])
+
+    def test_log_detection_requires_speaker_text_in_repeated_blue_bands(self) -> None:
+        fields, settings = auto_detection_context()
+        assert PROFILE.dialogue_log_detection is not None
+
+        result = detect_complete_dialogue_pairs(
+            Image.open(".samples/14.png"),
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(result.layout, "normal")
+        self.assertEqual(len(result.groups), 1)
+
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
         fields = [
             TemplateField("話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER),

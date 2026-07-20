@@ -138,6 +138,11 @@ def detect_complete_dialogue_pairs(
         min_height,
         max_height,
     )
+    anchors = [
+        band
+        for band in anchors
+        if _log_anchor_has_speaker_text(image, content_rect, band, config)
+    ]
     pair_height = max(1, round(content_height * config.pair_height_ratio))
     log_anchors = _regular_anchor_sequence(anchors, pair_height)
     if len(log_anchors) < 3:
@@ -212,6 +217,28 @@ def _regular_anchor_sequence(
         if len(sequence) > len(best):
             best = sequence
     return best
+
+
+def _log_anchor_has_speaker_text(
+    image: Image.Image,
+    content_rect: tuple[int, int, int, int],
+    band: tuple[int, int],
+    config: DialogueLogDetectionConfig,
+) -> bool:
+    """Reject scene artwork that only happens to resemble repeated speaker bars."""
+    left, _top, right, _bottom = content_rect
+    width = right - left
+    x1 = round(left + width * config.log_speaker_x1_ratio)
+    x2 = round(left + width * config.log_speaker_x2_ratio)
+    text_right = x1 + max(1, round((x2 - x1) * 0.45))
+    anchor_top, anchor_bottom = band
+    pixels = list(
+        image.crop((x1, anchor_top, text_right, anchor_bottom + 1))
+        .convert("RGB")
+        .get_flattened_data()
+    )
+    bright = sum(min(pixel) > 175 for pixel in pixels)
+    return bright / max(1, len(pixels)) > 0.008
 
 
 def _detect_single_screen(
@@ -496,6 +523,14 @@ def _supplement_candidate_region(
         if cluster[-1] - cluster[0] + 1 >= max(18, round(height * 0.03))
         and len(cluster) / (cluster[-1] - cluster[0] + 1) >= 0.45
     ]
+    localized = _localized_supplement_text_region(
+        rgb,
+        content_rect,
+        anchor_top,
+        search_rect=(x1, y1, x2, y2),
+    )
+    if localized is None:
+        return None
     if valid:
         cluster = max(valid, key=lambda item: item[-1] - item[0])
         padding = max(8, round(height * 0.012))
@@ -505,12 +540,7 @@ def _supplement_candidate_region(
             x2,
             min(anchor_top, cluster[-1] + 1 + padding),
         )
-    return _localized_supplement_text_region(
-        rgb,
-        content_rect,
-        anchor_top,
-        search_rect=(x1, y1, x2, y2),
-    )
+    return localized
 
 
 def _localized_supplement_text_region(
@@ -582,10 +612,14 @@ def _localized_supplement_text_region(
         cluster_x2 = max(row[2] for row in cluster) + step
         cluster_width = cluster_x2 - cluster_x1
         density = len(cluster) / cluster_height
+        outlined_sample_ratio = sum(row[3] for row in cluster) / (
+            len(cluster) * sample_count
+        )
         if not (
             min_height <= cluster_height <= max_height
             and cluster_width >= min_width
             and density >= 0.40
+            and outlined_sample_ratio >= 0.04
         ):
             continue
         candidate = (
