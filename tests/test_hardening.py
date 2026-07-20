@@ -1348,13 +1348,15 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertIsNotNone(modal)
             self.assertTrue(modal.visible)
             self.assertTrue(bool(modal.window.overrideredirect()))
+            self.assertLessEqual(modal.window.winfo_height(), root.winfo_height())
             texts = [
                 str(widget.cget("text"))
                 for widget in descendants_of(modal.panel)
                 if "text" in widget.keys()
             ]
-            self.assertIn("診断ログ", texts)
-            self.assertIn("フォルダーを開く", texts)
+            self.assertIn("テンプレートに反映", texts)
+            self.assertNotIn("診断ログ", texts)
+            self.assertNotIn("フォルダーを開く", texts)
             if sys.platform.startswith("win"):
                 self.assertIsNone(root.grab_current())
             else:
@@ -1365,10 +1367,10 @@ class ModalConsistencyTests(unittest.TestCase):
                 for widget in descendants_of(modal.panel)
                 if isinstance(widget, ctk.CTkLabel)
             ]
-            self.assertIn("基本設定", labels)
+            self.assertIn("テンプレート設定", labels)
             self.assertIn("OCR言語", labels)
             self.assertIn("OCR環境", labels)
-            self.assertIn("PaddleOCR（固定）", labels)
+            self.assertNotIn("PaddleOCR（固定）", labels)
             self.assertNotIn("OCRバックエンド", labels)
             self.assertNotIn("Tesseractパス", labels)
             checkbox_texts = [
@@ -1386,26 +1388,54 @@ class ModalConsistencyTests(unittest.TestCase):
                 for widget in descendants_of(modal.panel)
                 if isinstance(widget, ctk.CTkButton)
             ]
-            details_button = next(
-                button for button in buttons if button.cget("text") == "詳細"
+            environment_button = next(
+                button for button in buttons if button.cget("text") == "環境設定"
             )
-            paddle_label = next(
+            language_combo = next(
                 widget
                 for widget in descendants_of(modal.panel)
-                if isinstance(widget, ctk.CTkLabel)
-                and widget.cget("text") == "PaddleOCR（固定）"
+                if isinstance(widget, ctk.CTkComboBox)
             )
-            self.assertEqual(paddle_label.master.winfo_manager(), "")
-
-            details_button.invoke()
+            language_combo.set("English のみ")
+            environment_button.invoke()
             root.update()
 
-            self.assertEqual(paddle_label.master.winfo_manager(), "grid")
-            self.assertEqual(details_button.cget("text"), "閉じる")
-            self.assertLessEqual(modal.window.winfo_height(), root.winfo_height())
-            button_texts = [button.cget("text") for button in buttons]
+            self.assertFalse(modal.visible)
+            environment_modal = app.ocr_environment_modal
+            self.assertIsNotNone(environment_modal)
+            self.assertTrue(environment_modal.visible)
+            self.assertTrue(bool(environment_modal.window.overrideredirect()))
+            self.assertLessEqual(
+                environment_modal.window.winfo_height(), root.winfo_height()
+            )
+            environment_labels = [
+                widget
+                for widget in descendants_of(environment_modal.panel)
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+            environment_label_texts = [
+                widget.cget("text") for widget in environment_labels
+            ]
+            self.assertIn("OCR環境設定", environment_label_texts)
+            self.assertIn("PaddleOCR（固定）", environment_label_texts)
+            self.assertIn("診断ログ", environment_label_texts)
+            self.assertTrue(
+                any(
+                    "テンプレートには含まれません" in text
+                    for text in environment_label_texts
+                )
+            )
+            environment_buttons = [
+                widget
+                for widget in descendants_of(environment_modal.panel)
+                if isinstance(widget, ctk.CTkButton)
+            ]
+            button_texts = [button.cget("text") for button in environment_buttons]
             self.assertIn("開く", button_texts)
             self.assertIn("変更", button_texts)
+            self.assertIn("フォルダーを開く", button_texts)
+            self.assertIn("閉じる", button_texts)
+            self.assertNotIn("保存", button_texts)
             self.assertTrue(
                 any(
                     text in {"確認して更新", "ダウンロードして準備"}
@@ -1413,24 +1443,36 @@ class ModalConsistencyTests(unittest.TestCase):
                 )
             )
             open_button = next(
-                button for button in buttons if button.cget("text") == "開く"
+                button
+                for button in environment_buttons
+                if button.cget("text") == "開く"
             )
             change_button = next(
-                button for button in buttons if button.cget("text") == "変更"
+                button
+                for button in environment_buttons
+                if button.cget("text") == "変更"
             )
             verify_button = next(
                 button
-                for button in buttons
+                for button in environment_buttons
                 if button.cget("text")
                 in {"確認して更新", "ダウンロードして準備"}
             )
             self.assertIs(open_button.master, change_button.master)
             self.assertIsNot(open_button.master, verify_button.master)
 
+            environment_modal.window.event_generate("<Escape>", when="tail")
+            root.update()
+            self.assertIsNone(app.ocr_environment_modal)
+            self.assertTrue(modal.visible)
+            self.assertEqual(language_combo.get(), "English のみ")
+
             modal.window.event_generate("<Escape>", when="tail")
             root.update()
             self.assertIsNone(app.settings_modal)
         finally:
+            if app.ocr_environment_modal is not None:
+                app.ocr_environment_modal.destroy()
             if app.settings_modal is not None:
                 app.settings_modal.destroy()
             if app.workflow_choice_modal is not None:
