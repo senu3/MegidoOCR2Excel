@@ -884,6 +884,8 @@ class DirtyStateTests(unittest.TestCase):
             self.assertEqual(app.text_formatting.line_join, LINE_JOIN_NEWLINE)
             self.assertTrue(app.text_formatting.fullwidth_ascii)
             self.assertTrue(app.image_text_correction_enabled)
+            self.assertIn("この設定は未保存です", app.status_var.get())
+            self.assertIn("テンプレートを保存", app.status_var.get())
             self.assertEqual(app.current_results, [""])
             self.assertEqual(app.current_raw_results, [""])
             self.assertTrue(app.dirty)
@@ -1023,6 +1025,41 @@ class DirtyStateTests(unittest.TestCase):
             self.assertIs(
                 app.ocr_engine.image_text_corrector,
                 app.profile.image_text_corrector,
+            )
+        finally:
+            destroy_tk_root(root)
+
+    def test_basic_settings_status_reflects_template_save_state(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            settings_args = (
+                app._lang_display(app.lang_var.get()),
+                "全角スペース",
+                app.text_formatting.fullwidth_ascii,
+            )
+
+            app.template_path = Path("saved-template.json")
+            app._mark_clean()
+            app._apply_settings(MagicMock(), *settings_args, False)
+            self.assertIn("変更は未保存です", app.status_var.get())
+            self.assertIn("上書き保存", app.status_var.get())
+
+            app._mark_clean()
+            app._apply_settings(MagicMock(), *settings_args, False)
+            self.assertIn("テンプレートに保存済み", app.status_var.get())
+
+            app._mark_dirty()
+            app._apply_settings(MagicMock(), *settings_args, False)
+            self.assertIn("未保存の変更があります", app.status_var.get())
+
+            app.template_path = None
+            app._mark_clean()
+            app._apply_settings(MagicMock(), *settings_args, False)
+            self.assertIn(
+                "まだテンプレートに保存されていません",
+                app.status_var.get(),
             )
         finally:
             destroy_tk_root(root)
@@ -1339,7 +1376,10 @@ class ModalConsistencyTests(unittest.TestCase):
                 for widget in descendants_of(modal.panel)
                 if isinstance(widget, ctk.CTkCheckBox)
             ]
-            self.assertIn("「一」と「ー」を画像形状で補正", checkbox_texts)
+            self.assertIn(
+                "漢数字「一」と長音符「ー」を画像形状で補正",
+                checkbox_texts,
+            )
 
             buttons = [
                 widget
@@ -1413,7 +1453,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 if isinstance(widget, ctk.CTkCheckBox)
             ]
             self.assertNotIn(
-                "「一」と「ー」を画像形状で補正",
+                "漢数字「一」と長音符「ー」を画像形状で補正",
                 checkbox_texts,
             )
             self.assertFalse(app.image_text_correction_enabled)

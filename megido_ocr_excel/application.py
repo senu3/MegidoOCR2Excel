@@ -5310,6 +5310,29 @@ class ImageOcrExcelApp:
         )
         modal.show(focus=lang_combo)
 
+    def _basic_settings_status_message(self, changed: bool) -> str:
+        if changed:
+            if self.template_path is None:
+                return (
+                    "基本設定を更新しました。この設定は未保存です。"
+                    "認識テスト後、テンプレートを保存してください。"
+                )
+            return (
+                "基本設定を更新しました。変更は未保存です。"
+                "認識テスト後、テンプレートを上書き保存してください。"
+            )
+        if self.template_path is None:
+            return (
+                "基本設定は変更されていません。"
+                "この設定はまだテンプレートに保存されていません。"
+            )
+        if self.dirty:
+            return (
+                "基本設定は変更されていません。"
+                "テンプレートには未保存の変更があります。"
+            )
+        return "基本設定は変更されていません（テンプレートに保存済み）。"
+
     def _apply_settings(
         self,
         window: ModalOverlay,
@@ -5359,11 +5382,7 @@ class ImageOcrExcelApp:
             self.current_results = [""] * len(self.fields)
             self.current_raw_results = [""] * len(self.fields)
             self._mark_dirty()
-            self.status_var.set(
-                "基本設定を更新しました。認識テストを再実行し、テンプレートを保存してください。"
-            )
-        else:
-            self.status_var.set("基本設定は変更されていません。")
+        self.status_var.set(self._basic_settings_status_message(changed))
         window.destroy()
         if self.settings_modal is window:
             self.settings_modal = None
