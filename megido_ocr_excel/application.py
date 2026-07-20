@@ -1098,13 +1098,16 @@ class ImageOcrExcelApp:
         on_error=None,
         on_finally=None,
         on_cancel=None,
+        *,
+        show_loading_overlay: bool = True,
     ) -> None:
         if self.busy:
             self.status_var.set("処理中です。完了までお待ちください。")
             return
         self.busy = True
         self._operation_cancel_event = threading.Event()
-        self._show_loading(loading_message)
+        if show_loading_overlay:
+            self._show_loading(loading_message)
         logger.info("Background operation started | operation=%s", loading_message)
 
         def finish_common() -> bool:
@@ -1112,7 +1115,8 @@ class ImageOcrExcelApp:
             self._close_after_cancel = False
             self.busy = False
             self._operation_cancel_event = None
-            self._hide_loading()
+            if show_loading_overlay:
+                self._hide_loading()
             if on_finally is not None:
                 on_finally()
             return close_after_cancel
@@ -1214,6 +1218,10 @@ class ImageOcrExcelApp:
         if self._ocr_setup_operation:
             self.status_var.set("OCRの準備をキャンセルしています。")
             self.loading_note_var.set("モデル準備用プロセスを終了しています。")
+            if self.ocr_setup_note_label is not None:
+                self.ocr_setup_note_label.configure(
+                    text="モデル準備用プロセスを終了しています。"
+                )
         else:
             self.status_var.set("キャンセルを受け付けました。安全に停止しています。")
             self.loading_note_var.set("現在処理中の項目が終わるまでお待ちください。")
@@ -3877,7 +3885,14 @@ class ImageOcrExcelApp:
                     "今回は認識せず戻る"
                     if self._pending_ocr_action is not None
                     else "今は準備せず、範囲編集へ"
-                )
+                ),
+                command=self.defer_ocr_setup,
+                state="normal",
+                fg_color=COLOR_SECONDARY,
+                hover_color=COLOR_SECONDARY_HOVER,
+                border_width=1,
+                border_color=COLOR_BORDER,
+                text_color=COLOR_TEXT,
             )
             if secondary_visible:
                 self.ocr_setup_secondary_button.grid()
@@ -3912,6 +3927,66 @@ class ImageOcrExcelApp:
             self.ocr_setup_modal.set_escape_handler(escape_command)
             self.ocr_setup_modal.refresh_geometry()
         self._refresh_ocr_readiness_banner(status)
+
+    def _show_ocr_setup_progress(self) -> bool:
+        """Keep the OCR setup gate visible while model preparation runs."""
+        if (
+            self.ocr_setup_modal is None
+            or self.ocr_setup_status_label is None
+            or self.ocr_setup_note_label is None
+            or self.ocr_setup_primary_button is None
+            or self.ocr_setup_secondary_button is None
+        ):
+            return False
+        if self.ocr_setup_title_label is not None:
+            self.ocr_setup_title_label.configure(
+                text="OCR認識モデルを準備しています"
+            )
+        if self.ocr_setup_subtitle_label is not None:
+            self.ocr_setup_subtitle_label.configure(
+                text=(
+                    "認識モデルをダウンロードして動作確認しています。\n"
+                    "完了するまでこの画面を開いたままお待ちください。"
+                )
+            )
+        self.ocr_setup_status_label.configure(
+            text="準備中",
+            image=ICONS.get("refresh", 17, THEME.palette.info),
+            text_color=THEME.palette.info,
+        )
+        self.ocr_setup_note_label.configure(
+            text="モデル保存先を確認しています。"
+        )
+        self.ocr_setup_note_label.grid_configure(pady=(0, 12))
+        self.ocr_setup_primary_button.grid_remove()
+        self.ocr_setup_secondary_button.configure(
+            text="準備をキャンセル",
+            command=self.confirm_cancel_current_operation,
+            state="normal",
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+            text_color=COLOR_MUTED,
+        )
+        self.ocr_setup_secondary_button.grid()
+        if self.ocr_setup_settings_button is not None:
+            self.ocr_setup_settings_button.grid_remove()
+        if self.ocr_setup_progress is not None:
+            self.ocr_setup_progress.grid()
+            self.ocr_setup_progress.start()
+        self.ocr_setup_modal.panel.configure(
+            border_color=THEME.palette.info
+        )
+        self.ocr_setup_modal.set_focus_order(
+            [self.ocr_setup_secondary_button],
+            default=self.ocr_setup_secondary_button,
+        )
+        self.ocr_setup_modal.set_escape_handler(
+            self.confirm_cancel_current_operation
+        )
+        self.ocr_setup_modal.refresh_geometry()
+        self.ocr_setup_modal.show(focus=self.ocr_setup_secondary_button)
+        return True
 
     def _refresh_open_ocr_environment_settings(self) -> None:
         refresher = self._ocr_environment_ui_refresher
@@ -3954,17 +4029,17 @@ class ImageOcrExcelApp:
             return
         self.ocr_environment_last_error = ""
         language = self.lang_var.get()
-        if self.ocr_setup_modal is not None:
-            self.ocr_setup_modal.hide()
-        completed = {"ready": False}
+        progress_visible = self._show_ocr_setup_progress()
 
         def work() -> OcrEnvironmentStatus:
             def show_phase(phase: OcrSetupPhase) -> None:
                 try:
                     self.root.after(
                         0,
-                        lambda message=phase.message: self.loading_note_var.set(
-                            message
+                        lambda message=phase.message: (
+                            self.ocr_setup_note_label.configure(text=message)
+                            if self.ocr_setup_note_label is not None
+                            else None
                         ),
                     )
                 except Exception:
@@ -3980,7 +4055,6 @@ class ImageOcrExcelApp:
             return self.ocr_environment.record_verified()
 
         def on_success(_status: OcrEnvironmentStatus) -> None:
-            completed["ready"] = True
             self.status_var.set("OCRの準備が完了しました。")
 
         def on_error(error: Exception) -> None:
@@ -3992,10 +4066,7 @@ class ImageOcrExcelApp:
             self._ocr_setup_operation = False
             self._refresh_ocr_readiness_banner()
             self._refresh_open_ocr_environment_settings()
-            if completed["ready"]:
-                self._finish_ocr_setup_success()
-            else:
-                self.show_ocr_setup()
+            self.show_ocr_setup()
 
         self._ocr_setup_operation = True
         self._run_background(
@@ -4005,6 +4076,7 @@ class ImageOcrExcelApp:
             on_error,
             lambda: self.root.after(50, finish),
             lambda: self.status_var.set("OCRの準備をキャンセルしました。"),
+            show_loading_overlay=not progress_visible,
         )
 
     def repair_ocr_runtime(self) -> None:

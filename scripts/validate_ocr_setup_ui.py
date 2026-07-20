@@ -25,6 +25,7 @@ from megido_ocr_excel.ocr.environment import (
 
 VALIDATION_STATES = (
     "setup",
+    "progress",
     "verify",
     "check-failed",
     "location-error",
@@ -37,6 +38,11 @@ def status_for_state(state: str) -> OcrEnvironmentStatus:
     cache_dir = Path.home() / ".paddlex-ui-validation"
     states = {
         "setup": (
+            OCR_ENV_SETUP,
+            "認識モデルが必要",
+            "認識モデルをダウンロードします。通信環境により時間がかかります。",
+        ),
+        "progress": (
             OCR_ENV_SETUP,
             "認識モデルが必要",
             "認識モデルをダウンロードします。通信環境により時間がかかります。",
@@ -136,6 +142,9 @@ def run_validation(state: str, screenshot: Path | None = None) -> None:
         # The app is constructed before Tk maps its first window. Show once more
         # after mapping so manual runs and screenshots always expose the modal.
         root.after(100, app.show_ocr_setup)
+
+    if state == "progress":
+        root.after(150, app._show_ocr_setup_progress)
 
     if state == "check-failed":
         app.ocr_environment_last_error = (

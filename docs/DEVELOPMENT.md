@@ -35,6 +35,7 @@ uv run python scripts/validate_ocr_setup_ui.py --state setup
 `--state` には次を指定できます。
 
 - `setup`: 認識モデルの準備が必要
+- `progress`: 認識モデルを準備中
 - `verify`: 既存モデルまたは実行環境の明示確認が必要
 - `check-failed`: モデル準備・確認の失敗
 - `location-error`: モデル保存先のエラー

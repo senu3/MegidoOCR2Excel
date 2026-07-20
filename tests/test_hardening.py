@@ -690,6 +690,26 @@ class OcrSetupOnboardingTests(unittest.TestCase):
         try:
             with patch("megido_ocr_excel.application.threading.Thread") as thread_type:
                 app.prepare_ocr_environment()
+                self.assertTrue(app.ocr_setup_modal.visible)
+                self.assertFalse(app.loading_modal.visible)
+                self.assertTrue(app.busy)
+                self.assertEqual(
+                    app.ocr_setup_title_label.cget("text"),
+                    "OCR認識モデルを準備しています",
+                )
+                self.assertEqual(
+                    app.ocr_setup_status_label.cget("text"), "準備中"
+                )
+                self.assertEqual(
+                    app.ocr_setup_secondary_button.cget("text"),
+                    "準備をキャンセル",
+                )
+                self.assertEqual(
+                    app.ocr_setup_primary_button.winfo_manager(), ""
+                )
+                self.assertEqual(
+                    app.ocr_setup_progress.winfo_manager(), "grid"
+                )
                 worker = thread_type.call_args.kwargs["target"]
                 worker()
             manager.quick_status.return_value = ready
@@ -699,6 +719,17 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             app.ocr_setup_runner.run.assert_called_once()
             manager.record_verified.assert_called_once_with()
             self.assertEqual(app.status_var.get(), "OCRの準備が完了しました。")
+            self.assertTrue(app.ocr_setup_modal.visible)
+            self.assertEqual(
+                app.ocr_setup_title_label.cget("text"),
+                "OCRの準備が完了しました",
+            )
+            self.assertEqual(
+                app.ocr_setup_primary_button.cget("text"), "続ける"
+            )
+            self.assertEqual(
+                app.ocr_setup_secondary_button.winfo_manager(), ""
+            )
         finally:
             self._destroy(app, root)
 

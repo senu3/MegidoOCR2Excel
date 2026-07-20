@@ -26,6 +26,7 @@ class OcrSetupUiValidationTests(unittest.TestCase):
     def test_each_validation_state_maps_to_an_ocr_environment_state(self) -> None:
         expected = {
             "setup": OCR_ENV_SETUP,
+            "progress": OCR_ENV_SETUP,
             "verify": OCR_ENV_VERIFY,
             "check-failed": OCR_ENV_VERIFY,
             "location-error": OCR_ENV_LOCATION_ERROR,
