@@ -3597,7 +3597,7 @@ class ImageOcrExcelApp:
                 cursor="fleur",
             )
             drag_handle.grid(row=0, column=6, rowspan=2, sticky="e", padx=(0, 6), pady=8)
-            add_tooltip(drag_handle, "ドラッグして並べ替え")
+            add_tooltip(drag_handle, "ドラッグして並べ替え・別のセットへ移動")
             self.field_drag_handle_by_index[idx] = drag_handle
             drag_handle.bind(
                 "<ButtonPress-1>", lambda event, i=idx: self.start_field_drag(event, i)
