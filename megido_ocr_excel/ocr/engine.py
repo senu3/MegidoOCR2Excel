@@ -529,8 +529,15 @@ class PaddleBackend:
 
 
 class OcrEngine:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        image_text_corrector: Callable[
+            [Image.Image, TemplateField, str, int], str
+        ]
+        | None = None,
+    ) -> None:
         self.paddle_backend: PaddleBackend | None = None
+        self.image_text_corrector = image_text_corrector
         self._content_rect_image: Image.Image | None = None
         self._content_rect_settings: CoordinateSettings | None = None
         self._content_rect_value: tuple[int, int, int, int] | None = None
@@ -607,6 +614,19 @@ class OcrEngine:
             if backend_name == "paddle":
                 return None, None, f"PaddleOCRエラー: {exc}"
             raise
+
+        if self.image_text_corrector is not None:
+            reference_width = (
+                target_content_rect[2] - target_content_rect[0]
+                if target_content_rect is not None
+                else image.width
+            )
+            raw_text = self.image_text_corrector(
+                crop,
+                region,
+                raw_text,
+                reference_width,
+            )
 
         cleaned = clean_text(raw_text)
         formatted = (

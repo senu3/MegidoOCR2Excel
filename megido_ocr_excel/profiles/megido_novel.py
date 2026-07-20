@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from megido_ocr_excel.profiles.base import FieldPreset, OcrProfile
 from megido_ocr_excel.models import DialogueLogDetectionConfig
+from megido_ocr_excel.ocr.glyph_correction import HorizontalGlyphCorrector
 
 COORDINATE_DEFAULTS = {
     "coordinate_space": "content",
@@ -67,5 +68,12 @@ PROFILE = OcrProfile(
         log_top_ratio=0.05,
         log_bottom_ratio=0.911,
         pair_height_ratio=0.123,
+    ),
+    image_text_corrector=HorizontalGlyphCorrector(
+        field_prefixes=("セリフ", "補足セリフ"),
+        short_glyph="ー",
+        long_glyph="一",
+        short_max_width_ratio=0.0475,
+        long_min_width_ratio=0.0500,
     ),
 )

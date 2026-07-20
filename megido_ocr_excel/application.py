@@ -311,7 +311,7 @@ class ImageOcrExcelApp:
         )
         self.ocr_environment_restart_required = False
         self.ocr_environment_last_error = ""
-        self.ocr_engine = OcrEngine()
+        self.ocr_engine = OcrEngine(self.profile.image_text_corrector)
         self.excel_exporter = ExcelExporter()
 
         self.mode_var = StringVar(value=MODE_TEMPLATE)
