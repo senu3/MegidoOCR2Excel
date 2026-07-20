@@ -343,6 +343,29 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(bright_result.layout, "supplement_candidate")
         self.assertEqual(len(bright_result.candidate_fields), 1)
 
+    def test_supplement_fallback_supports_four_text_lines(self) -> None:
+        fields, settings = auto_detection_context()
+        assert PROFILE.dialogue_log_detection is not None
+        image = Image.open(".samples/e-2.png").convert("RGB")
+        line = image.crop((225, 1135, 798, 1205))
+        image.paste(Image.new("RGB", (720, 300), (0, 255, 20)), (150, 930))
+        for line_index in range(4):
+            image.paste(line, (225, 970 + line_index * 52))
+
+        result = detect_complete_dialogue_pairs(
+            image,
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(result.layout, "supplement_candidate")
+        self.assertEqual(len(result.candidate_fields), 1)
+        candidate = result.candidate_fields[0]
+        self.assertLessEqual(candidate.y1, 970)
+        self.assertGreaterEqual(candidate.y2, 1190)
+        self.assertGreater(candidate.y2 - candidate.y1, image.height * 0.12)
+
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
         fields = [
             TemplateField("話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER),

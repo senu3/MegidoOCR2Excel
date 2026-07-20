@@ -561,14 +561,15 @@ def _localized_supplement_text_region(
             text_rows.append((y, min(white_xs), max(white_xs), len(white_xs)))
 
     clusters: list[list[tuple[int, int, int, int]]] = []
+    max_text_row_gap = max(10, round(height * 0.009))
     for row in text_rows:
-        if not clusters or row[0] - clusters[-1][-1][0] > 10:
+        if not clusters or row[0] - clusters[-1][-1][0] > max_text_row_gap:
             clusters.append([row])
         else:
             clusters[-1].append(row)
 
     min_height = max(18, round(height * 0.018))
-    max_height = max(min_height, round(height * 0.10))
+    max_height = max(min_height, round(height * 0.12))
     min_width = max(40, round(width * 0.20))
     padding_x = max(10, round(width * 0.025))
     padding_y = max(8, round(height * 0.012))
