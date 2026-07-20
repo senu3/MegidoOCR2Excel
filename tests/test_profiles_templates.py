@@ -8,7 +8,7 @@ from pathlib import Path
 from megido_ocr_excel.models import LINE_JOIN_NEWLINE, SET_SLOT_SPEAKER, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
 from megido_ocr_excel.profiles import get_profile, registered_profiles
 from megido_ocr_excel.profiles.base import FieldPreset, OcrProfile
-from megido_ocr_excel.templates import TemplateValidationError, build_template_data, load_template, save_template, text_formatting_from_template
+from megido_ocr_excel.templates import TemplateValidationError, build_template_data, load_template, profile_options_from_template, save_template, text_formatting_from_template
 
 
 def valid_template(profile_id: str = "megido_novel") -> dict:
@@ -153,6 +153,34 @@ class TemplateV1Tests(unittest.TestCase):
 
             self.assertEqual(settings.line_join, LINE_JOIN_NEWLINE)
             self.assertTrue(settings.fullwidth_ascii)
+
+    def test_profile_image_correction_option_is_optional_and_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "profile-options.json"
+            data = valid_template()
+            data["profile_options"] = {"image_text_correction": False}
+
+            save_template(path, data)
+            options = profile_options_from_template(load_template(path))
+
+            self.assertFalse(options["image_text_correction"])
+
+            data.pop("profile_options")
+            path.write_text(json.dumps(data), encoding="utf-8")
+            self.assertEqual(profile_options_from_template(load_template(path)), {})
+
+    def test_profile_image_correction_option_requires_a_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "invalid-profile-options.json"
+            data = valid_template()
+            data["profile_options"] = {"image_text_correction": "off"}
+            path.write_text(json.dumps(data), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                TemplateValidationError,
+                "profile_options.image_text_correction",
+            ):
+                load_template(path)
 
 
 if __name__ == "__main__":

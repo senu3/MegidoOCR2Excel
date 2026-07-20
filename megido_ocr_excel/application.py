@@ -117,6 +117,7 @@ from megido_ocr_excel.templates import (
     correction_rules_from_template,
     fields_from_template,
     load_template,
+    profile_options_from_template,
     save_template,
     set_definition_from_template,
     text_formatting_from_template,
@@ -266,6 +267,9 @@ class ImageOcrExcelApp:
         self.zoom = 1.0
         self.coordinate_settings = self.profile.coordinate_settings()
         self.text_formatting = self.profile.text_formatting_settings()
+        self.image_text_correction_enabled = (
+            self.profile.image_text_corrector is not None
+        )
         self.current_content_rect: tuple[int, int, int, int] | None = None
 
         self.fields: list[TemplateField] = []
@@ -311,7 +315,11 @@ class ImageOcrExcelApp:
         )
         self.ocr_environment_restart_required = False
         self.ocr_environment_last_error = ""
-        self.ocr_engine = OcrEngine(self.profile.image_text_corrector)
+        self.ocr_engine = OcrEngine(
+            self.profile.image_text_corrector
+            if self.image_text_correction_enabled
+            else None
+        )
         self.excel_exporter = ExcelExporter()
 
         self.mode_var = StringVar(value=MODE_TEMPLATE)
@@ -4482,6 +4490,9 @@ class ImageOcrExcelApp:
             correction_rules=self.correction_rules,
             coordinate_settings=self.coordinate_settings,
             text_formatting=self.text_formatting,
+            profile_options={
+                "image_text_correction": self.image_text_correction_enabled,
+            },
             set_definition=self.set_definition,
             template_name=path.stem,
             profile_id=self.profile.profile_id,
@@ -4544,6 +4555,19 @@ class ImageOcrExcelApp:
             self.coordinate_settings = coordinate_settings_from_template(data)
             self.text_formatting = text_formatting_from_template(
                 data, self.profile.text_formatting_settings()
+            )
+            profile_options = profile_options_from_template(data)
+            self.image_text_correction_enabled = bool(
+                profile_options.get(
+                    "image_text_correction",
+                    self.profile.image_text_corrector is not None,
+                )
+                and self.profile.image_text_corrector is not None
+            )
+            self.ocr_engine.image_text_corrector = (
+                self.profile.image_text_corrector
+                if self.image_text_correction_enabled
+                else None
             )
             self._refresh_content_mapping()
             self.current_results = [""] * len(self.fields)
@@ -4634,6 +4658,9 @@ class ImageOcrExcelApp:
         )
         dialog_fullwidth_ascii = BooleanVar(
             window, value=self.text_formatting.fullwidth_ascii
+        )
+        dialog_image_text_correction = BooleanVar(
+            window, value=self.image_text_correction_enabled
         )
 
         panel = modal.panel
@@ -4911,8 +4938,35 @@ class ImageOcrExcelApp:
             border_width=1,
         )
         fullwidth_checkbox.grid(row=7, column=0, sticky="w", pady=(14, 0))
+        image_text_correction_checkbox = None
+        diagnostics_grid_row = 8
+        if self.profile.image_text_corrector is not None:
+            image_text_correction_checkbox = ctk.CTkCheckBox(
+                content,
+                text="漢数字「一」と長音符「ー」を画像形状で補正",
+                variable=dialog_image_text_correction,
+                font=UI_FONT_SMALL,
+                text_color=COLOR_TEXT,
+                checkbox_width=18,
+                checkbox_height=18,
+                corner_radius=4,
+                border_width=1,
+            )
+            image_text_correction_checkbox.grid(
+                row=8, column=0, sticky="w", pady=(12, 0)
+            )
+            add_tooltip(
+                image_text_correction_checkbox,
+                "判定できる場合だけ、元画像の横棒の幅から漢数字「一」と長音符「ー」を補正します。",
+            )
+            diagnostics_grid_row = 9
         diagnostics_row = ctk.CTkFrame(content, fg_color="transparent")
-        diagnostics_row.grid(row=8, column=0, sticky="ew", pady=(18, 0))
+        diagnostics_row.grid(
+            row=diagnostics_grid_row,
+            column=0,
+            sticky="ew",
+            pady=(18, 0),
+        )
         diagnostics_row.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             diagnostics_row,
@@ -4941,7 +4995,12 @@ class ImageOcrExcelApp:
             f"OCR結果は記録しません。保存先: {current_log_path().parent}",
         )
         buttons = ctk.CTkFrame(content, fg_color="transparent")
-        buttons.grid(row=9, column=0, sticky="e", pady=(24, 0))
+        buttons.grid(
+            row=diagnostics_grid_row + 1,
+            column=0,
+            sticky="e",
+            pady=(24, 0),
+        )
         cancel_button = ctk.CTkButton(
             buttons,
             text="キャンセル",
@@ -4965,6 +5024,7 @@ class ImageOcrExcelApp:
                 dialog_lang_display.get(),
                 dialog_line_join.get(),
                 dialog_fullwidth_ascii.get(),
+                dialog_image_text_correction.get(),
                 after_close,
             ),
             width=112,
@@ -5029,11 +5089,12 @@ class ImageOcrExcelApp:
                 [
                     line_join_menu,
                     fullwidth_checkbox,
-                    open_log_button,
-                    cancel_button,
-                    save_button,
-                    close_button,
                 ]
+            )
+            if image_text_correction_checkbox is not None:
+                focus_order.append(image_text_correction_checkbox)
+            focus_order.extend(
+                [open_log_button, cancel_button, save_button, close_button]
             )
             modal.set_focus_order(focus_order, default=lang_combo)
 
@@ -5255,6 +5316,7 @@ class ImageOcrExcelApp:
         lang_display: str,
         line_join_display: str,
         fullwidth_ascii_enabled: bool,
+        image_text_correction_enabled: bool | None = None,
         after_close=None,
     ) -> None:
         lang = self._lang_value(lang_display)
@@ -5270,14 +5332,29 @@ class ImageOcrExcelApp:
             line_join=line_join,
             fullwidth_ascii=fullwidth_ascii_enabled,
         ).normalized()
-        changed = (lang, text_formatting) != (
+        correction_enabled = bool(
+            (
+                self.image_text_correction_enabled
+                if image_text_correction_enabled is None
+                else image_text_correction_enabled
+            )
+            and self.profile.image_text_corrector is not None
+        )
+        changed = (lang, text_formatting, correction_enabled) != (
             self.lang_var.get(),
             self.text_formatting,
+            self.image_text_correction_enabled,
         )
         with self._without_dirty_tracking():
             self.lang_var.set(lang)
             self.lang_display_var.set(self._lang_display(lang))
             self.text_formatting = text_formatting
+            self.image_text_correction_enabled = correction_enabled
+            self.ocr_engine.image_text_corrector = (
+                self.profile.image_text_corrector
+                if correction_enabled
+                else None
+            )
         if changed:
             self.current_results = [""] * len(self.fields)
             self.current_raw_results = [""] * len(self.fields)

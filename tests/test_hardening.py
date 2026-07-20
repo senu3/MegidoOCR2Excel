@@ -883,6 +883,7 @@ class DirtyStateTests(unittest.TestCase):
 
             self.assertEqual(app.text_formatting.line_join, LINE_JOIN_NEWLINE)
             self.assertTrue(app.text_formatting.fullwidth_ascii)
+            self.assertTrue(app.image_text_correction_enabled)
             self.assertEqual(app.current_results, [""])
             self.assertEqual(app.current_raw_results, [""])
             self.assertTrue(app.dirty)
@@ -953,6 +954,11 @@ class DirtyStateTests(unittest.TestCase):
                 self.assertTrue(saved)
                 save_dialog.assert_not_called()
                 template_writer.assert_called_once()
+                self.assertTrue(
+                    template_writer.call_args.args[1]["profile_options"][
+                        "image_text_correction"
+                    ]
+                )
                 self.assertFalse(app.dirty)
 
                 save_as_path = Path(temp_dir) / "renamed.json"
@@ -982,6 +988,42 @@ class DirtyStateTests(unittest.TestCase):
                 self.assertFalse(saved)
                 self.assertTrue(app.dirty)
                 showerror.assert_called_once()
+        finally:
+            destroy_tk_root(root)
+
+    def test_basic_settings_toggle_profile_image_correction(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            self.assertTrue(app.image_text_correction_enabled)
+            self.assertIsNotNone(app.ocr_engine.image_text_corrector)
+
+            app._apply_settings(
+                MagicMock(),
+                app._lang_display(app.lang_var.get()),
+                "全角スペース",
+                app.text_formatting.fullwidth_ascii,
+                False,
+            )
+
+            self.assertFalse(app.image_text_correction_enabled)
+            self.assertIsNone(app.ocr_engine.image_text_corrector)
+            self.assertTrue(app.dirty)
+
+            app._apply_settings(
+                MagicMock(),
+                app._lang_display(app.lang_var.get()),
+                "全角スペース",
+                app.text_formatting.fullwidth_ascii,
+                True,
+            )
+
+            self.assertTrue(app.image_text_correction_enabled)
+            self.assertIs(
+                app.ocr_engine.image_text_corrector,
+                app.profile.image_text_corrector,
+            )
         finally:
             destroy_tk_root(root)
 
@@ -1292,6 +1334,12 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertIn("PaddleOCR（固定）", labels)
             self.assertNotIn("OCRバックエンド", labels)
             self.assertNotIn("Tesseractパス", labels)
+            checkbox_texts = [
+                widget.cget("text")
+                for widget in descendants_of(modal.panel)
+                if isinstance(widget, ctk.CTkCheckBox)
+            ]
+            self.assertIn("「一」と「ー」を画像形状で補正", checkbox_texts)
 
             buttons = [
                 widget
@@ -1342,6 +1390,34 @@ class ModalConsistencyTests(unittest.TestCase):
             modal.window.event_generate("<Escape>", when="tail")
             root.update()
             self.assertIsNone(app.settings_modal)
+        finally:
+            if app.settings_modal is not None:
+                app.settings_modal.destroy()
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            destroy_tk_root(root)
+
+    def test_settings_hide_image_correction_for_profiles_without_it(self) -> None:
+        root = ctk.CTk()
+        root.geometry("900x700+10000+10000")
+        profile = replace(APP_PROFILE, image_text_corrector=None)
+        app = ImageOcrExcelApp(root, profile=profile)
+        try:
+            app._hide_workflow_choice()
+            app.open_settings_modal()
+            root.update()
+
+            checkbox_texts = [
+                widget.cget("text")
+                for widget in descendants_of(app.settings_modal.panel)
+                if isinstance(widget, ctk.CTkCheckBox)
+            ]
+            self.assertNotIn(
+                "「一」と「ー」を画像形状で補正",
+                checkbox_texts,
+            )
+            self.assertFalse(app.image_text_correction_enabled)
+            self.assertIsNone(app.ocr_engine.image_text_corrector)
         finally:
             if app.settings_modal is not None:
                 app.settings_modal.destroy()

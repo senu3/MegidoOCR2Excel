@@ -80,6 +80,17 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
             raise TemplateValidationError("text_formatting.line_join が不正です。")
         if type(text_formatting.get("fullwidth_ascii")) is not bool:
             raise TemplateValidationError("text_formatting.fullwidth_ascii は真偽値で指定してください。")
+    profile_options = data.get("profile_options")
+    if profile_options is not None:
+        if not isinstance(profile_options, dict):
+            raise TemplateValidationError("profile_options はオブジェクトで指定してください。")
+        if (
+            "image_text_correction" in profile_options
+            and type(profile_options["image_text_correction"]) is not bool
+        ):
+            raise TemplateValidationError(
+                "profile_options.image_text_correction は真偽値で指定してください。"
+            )
 
     correction_rules = data.get("correction_rules", [])
     if not isinstance(correction_rules, list) or any(not isinstance(item, dict) for item in correction_rules):
@@ -119,6 +130,7 @@ def build_template_data(
     correction_rules: list[CorrectionRule] | None = None,
     coordinate_settings: CoordinateSettings | None = None,
     text_formatting: TextFormattingSettings | None = None,
+    profile_options: dict | None = None,
     set_definition: SetDefinition | None = None,
     template_name: str = "ocr-template",
     profile_id: str = "",
@@ -135,6 +147,7 @@ def build_template_data(
         "output_settings": output_settings,
         "coordinate_settings": (coordinate_settings or CoordinateSettings()).to_dict(),
         "text_formatting": (text_formatting or TextFormattingSettings()).to_dict(),
+        "profile_options": dict(profile_options or {}),
         "set_definition": (
             set_definition or set_definition_for_preset("conversation")
         ).to_dict(),
@@ -173,6 +186,11 @@ def text_formatting_from_template(
     fallback: TextFormattingSettings | None = None,
 ) -> TextFormattingSettings:
     return text_formatting_settings_from_dict(data.get("text_formatting"), fallback)
+
+
+def profile_options_from_template(data: dict) -> dict:
+    value = data.get("profile_options")
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def set_definition_from_template(data: dict) -> SetDefinition:

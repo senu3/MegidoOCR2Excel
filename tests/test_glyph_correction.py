@@ -124,6 +124,30 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
         self.assertIn("ああー、", value or "")
         self.assertNotIn("ああ一、", value or "")
 
+    def test_engine_without_profile_correction_keeps_the_ocr_result(self) -> None:
+        image = Image.open(".samples/5.png").convert("RGB")
+        field = detected_dialogue(image)
+        engine = OcrEngine()
+        misrecognized, _expected = SAMPLE_TEXT["5.png"]
+
+        with patch.object(
+            engine,
+            "recognize_detected_lines",
+            return_value=misrecognized,
+        ):
+            raw, value, error = engine.recognize_field_detail(
+                image,
+                field,
+                lang="jpn",
+                backend="paddle",
+                coordinate_settings=PROFILE.coordinate_settings(),
+                text_formatting=PROFILE.text_formatting_settings(),
+            )
+
+        self.assertIsNone(error)
+        self.assertEqual(raw, misrecognized)
+        self.assertIn("ああ一、", value or "")
+
 
 if __name__ == "__main__":
     unittest.main()
