@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
 
 from megido_ocr_excel.config import APP_PROFILE
 from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs, include_supplement_candidates
-from megido_ocr_excel.ocr.engine import OcrEngine, apply_correction_rules, apply_postprocess, clean_text, detect_tesseract, format_detected_text, prepare_for_ocr, scaled_field
+from megido_ocr_excel.ocr.engine import OcrEngine, apply_correction_rules, apply_postprocess, clean_text, detect_tesseract, format_ocr_text, prepare_for_ocr, scaled_field
 from megido_ocr_excel.models import CoordinateSettings, OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField
 from megido_ocr_excel.templates import coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, text_formatting_from_template
 
@@ -365,10 +365,9 @@ def recognize_image(
     except pytesseract.TesseractError as exc:
         return "", str(exc)
 
-    corrected = apply_correction_rules(
-        clean_text(raw_text), field, args.correction_rules
-    )
-    return apply_postprocess(corrected, field), ""
+    formatted = format_ocr_text(raw_text, args.text_formatting)
+    corrected = apply_correction_rules(formatted, field, args.correction_rules)
+    return apply_postprocess(corrected, field, preserve_whitespace=True), ""
 
 
 def recognize_with_engine(image: Image.Image, field: TemplateField, args: argparse.Namespace, engine: OcrEngine) -> tuple[str, str]:
@@ -420,7 +419,7 @@ def recognize_lines(crop: Image.Image, field: TemplateField, args: argparse.Name
         if cleaned:
             parts.append(cleaned)
 
-    formatted = format_detected_text("\n".join(parts), args.text_formatting)
+    formatted = format_ocr_text("\n".join(parts), args.text_formatting)
     corrected = apply_correction_rules(formatted, field, args.correction_rules)
     value = apply_postprocess(corrected, field, preserve_whitespace=True)
     return value, " / ".join(errors)

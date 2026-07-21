@@ -25,9 +25,10 @@ from megido_ocr_excel.export.excel import ExcelExporter, ExportSettings
 from megido_ocr_excel.operations import OperationCancelled
 from megido_ocr_excel.config import natural_image_sort_key
 from megido_ocr_excel.ocr.engine import (
+    OcrEngine,
     apply_postprocess,
     detect_content_rect,
-    format_detected_text,
+    format_ocr_text,
     scaled_field,
 )
 from megido_ocr_excel.models import (
@@ -103,23 +104,23 @@ class BatchWorkflowTests(unittest.TestCase):
 
             self.assertEqual(output.read_bytes(), original_bytes)
 
-    def test_detected_lines_support_shared_join_and_fullwidth_settings(self) -> None:
+    def test_all_ocr_modes_support_shared_join_and_fullwidth_settings(self) -> None:
         source = "ABC!? ()\n次の行"
 
         self.assertEqual(
-            format_detected_text(
+            format_ocr_text(
                 source, TextFormattingSettings(LINE_JOIN_NONE, False)
             ),
             "ABC!? ()次の行",
         )
         self.assertEqual(
-            format_detected_text(
+            format_ocr_text(
                 source, TextFormattingSettings(LINE_JOIN_FULLWIDTH_SPACE, True)
             ),
             "ＡＢＣ！？　（）　次の行",
         )
         self.assertEqual(
-            format_detected_text(
+            format_ocr_text(
                 source, TextFormattingSettings(LINE_JOIN_NEWLINE, True)
             ),
             "ＡＢＣ！？　（）\n次の行",
@@ -129,6 +130,20 @@ class BatchWorkflowTests(unittest.TestCase):
             apply_postprocess("一行目\n二行目", field, preserve_whitespace=True),
             "一行目\n二行目",
         )
+
+        engine = OcrEngine()
+        engine.recognize_prepared = MagicMock(return_value=source)
+        raw, value, error = engine.recognize_field_detail(
+            Image.new("RGB", (20, 20), "white"),
+            TemplateField("本文", 0, 0, 20, 20, ocr_line_split="none"),
+            backend="paddle",
+            text_formatting=TextFormattingSettings(
+                LINE_JOIN_FULLWIDTH_SPACE, True
+            ),
+        )
+        self.assertEqual(raw, "ABC!? () 次の行")
+        self.assertEqual(value, "ＡＢＣ！？　（）　次の行")
+        self.assertIsNone(error)
 
     def test_excel_wraps_and_expands_multiline_results(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -2643,7 +2643,7 @@ class ImageOcrExcelApp:
         formatting = [line_join]
         if self.text_formatting.fullwidth_ascii:
             formatting.append("全角化")
-        return f"行切り出し：{'・'.join(formatting)}"
+        return f"テキスト整形：{'・'.join(formatting)}"
 
     def _is_review_candidate(self, field: TemplateField) -> bool:
         return field.dialogue_role == DIALOGUE_ROLE_SUPPLEMENT
@@ -4799,7 +4799,7 @@ class ImageOcrExcelApp:
 
         ctk.CTkLabel(
             content,
-            text="テキスト整形（行切り出し共通）",
+            text="テキスト整形（全項目共通）",
             anchor="w",
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,

@@ -255,7 +255,7 @@ def fullwidth_ascii(text: str) -> str:
     return "".join(converted)
 
 
-def format_detected_text(
+def format_ocr_text(
     text: str,
     settings: TextFormattingSettings | None,
 ) -> str:
@@ -629,17 +629,13 @@ class OcrEngine:
             )
 
         cleaned = clean_text(raw_text)
-        formatted = (
-            format_detected_text(raw_text, text_formatting)
-            if field.ocr_line_split == "detected"
-            else cleaned
-        )
+        formatted = format_ocr_text(raw_text, text_formatting)
         corrected = apply_correction_rules(formatted, field, correction_rules)
         raw_display = raw_text.strip() if field.ocr_line_split == "detected" else cleaned
         return raw_display, apply_postprocess(
             corrected,
             field,
-            preserve_whitespace=field.ocr_line_split == "detected",
+            preserve_whitespace=True,
         ), None
 
     def recognize_prepared(self, image: Image.Image, lang: str, config: str, backend: str) -> str:

@@ -526,7 +526,7 @@ class WorkflowChoiceTests(unittest.TestCase):
             ]
 
             self.assertIn(THEME.copy.recognition_test_note, labels)
-            self.assertIn("行切り出し：全角空白・全角化", labels)
+            self.assertIn("テキスト整形：全角空白・全角化", labels)
             self.assertEqual(row_labels, ["#1", "話者"])
             self.assertIn("全項目をテスト", [button.cget("text") for button in buttons])
             self.assertIn(
