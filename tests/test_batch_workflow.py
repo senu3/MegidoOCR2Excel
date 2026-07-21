@@ -477,6 +477,23 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(result.layout, "normal")
         self.assertLessEqual(result.groups[0][1].x1, 40)
 
+    def test_normal_dialogue_crop_keeps_horizontal_text_margin(self) -> None:
+        fields, settings = auto_detection_context()
+        assert PROFILE.dialogue_log_detection is not None
+
+        image = Image.open(".samples/1.png")
+        result = detect_complete_dialogue_pairs(
+            image,
+            fields,
+            settings,
+            PROFILE.dialogue_log_detection,
+        )
+
+        self.assertEqual(result.layout, "normal")
+        dialogue = result.groups[0][2]
+        self.assertLessEqual(dialogue.x1, 33)
+        self.assertGreaterEqual(dialogue.x2, image.width - 33)
+
     def test_special_conversation_samples_are_outside_auto_detection(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None

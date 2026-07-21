@@ -69,6 +69,8 @@ PROFILE = OcrProfile(
         log_bottom_ratio=0.911,
         pair_height_ratio=0.123,
         normal_speaker_x1_ratio=0.035,
+        normal_dialogue_x1_ratio=0.03,
+        normal_dialogue_x2_ratio=0.97,
     ),
     image_text_corrector=HorizontalGlyphCorrector(
         field_prefixes=("セリフ", "補足セリフ"),
