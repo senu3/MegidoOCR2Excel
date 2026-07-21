@@ -19,6 +19,7 @@ from tkinter import (
     Canvas,
     Menu,
     StringVar,
+    TclError,
     filedialog,
 )
 
@@ -296,7 +297,6 @@ class ImageOcrExcelApp:
         self.dialogue_drop_section_by_pair: dict[int, ctk.CTkFrame] = {}
         self.dialogue_drag_target_pair: int | None = None
         self.review_order_label_by_index: dict[int, ctk.CTkLabel] = {}
-        self.review_summary_label_by_index: dict[int, ctk.CTkLabel] = {}
         self.selected_index: int | None = None
         self.editing_name_index: int | None = None
         self.editing_name_value: str = ""
@@ -370,6 +370,7 @@ class ImageOcrExcelApp:
         self.template_save_button: ctk.CTkButton | None = None
         self.template_more_button: ctk.CTkButton | None = None
         self.review_detail_host: ctk.CTkFrame | None = None
+        self.review_result_scroller: AutoHideScrollableFrame | None = None
         self.correction_rules_host: ctk.CTkFrame | None = None
         self.template_fields_scroller: AutoHideScrollableFrame | None = None
         self.canvas: Canvas
@@ -1447,8 +1448,8 @@ class ImageOcrExcelApp:
         self.dialogue_drop_section_by_pair = {}
         self.dialogue_drag_target_pair = None
         self.review_order_label_by_index = {}
-        self.review_summary_label_by_index = {}
         self.review_detail_host = None
+        self.review_result_scroller = None
         self.correction_rules_host = None
         self.template_fields_scroller = None
         mode = self.mode_var.get()
@@ -2004,6 +2005,7 @@ class ImageOcrExcelApp:
             border_width=1,
             border_color=COLOR_BORDER,
         )
+        self.review_result_scroller = scroller
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(2, 10))
         if not self.fields:
             self._empty_state(
@@ -2032,17 +2034,28 @@ class ImageOcrExcelApp:
             wraplength=350,
         ).pack(fill="x", padx=18, pady=(0, 8), before=scroller._parent_frame)
 
+        toolbar = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
+        toolbar.pack(fill="x", padx=16, pady=(0, 10), before=scroller._parent_frame)
+        toolbar.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            toolbar,
+            text=self._text_formatting_summary(),
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).grid(row=0, column=0, sticky="ew", padx=(2, 8))
         ctk.CTkButton(
-            body,
+            toolbar,
             text="全項目をテスト",
-            image=ICONS.get("scan", 18, THEME.palette.on_color),
+            image=ICONS.get("scan", 16, THEME.palette.on_color),
             compound="left",
             command=self.ocr_current_image,
-            height=THEME.layout.primary_button_height,
-            font=UI_FONT_BOLD,
+            width=138,
+            height=THEME.layout.entry_height,
+            font=UI_FONT_SMALL,
             fg_color=COLOR_PRIMARY,
             hover_color=COLOR_PRIMARY_HOVER,
-        ).pack(fill="x", padx=16, pady=(0, 10), before=scroller._parent_frame)
+        ).grid(row=0, column=1, sticky="e")
 
         self._ensure_result_buffers()
         self._ensure_review_selection()
@@ -2122,15 +2135,6 @@ class ImageOcrExcelApp:
         ctk.CTkLabel(
             row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT
         ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
-        summary_label = ctk.CTkLabel(
-            row,
-            text=self._postprocess_summary(field),
-            anchor="e",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        )
-        summary_label.grid(row=0, column=2, sticky="e", padx=(0, 8), pady=8)
-        self.review_summary_label_by_index[idx] = summary_label
 
         for widget in [row, *row.winfo_children()]:
             widget.bind("<Button-1>", lambda _event, i=idx: self.select_review_field(i))
@@ -2236,6 +2240,7 @@ class ImageOcrExcelApp:
                 preview,
                 text="",
                 image=crop_image,
+                height=112,
                 fg_color=COLOR_CANVAS_BG,
                 corner_radius=4,
             ).grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 6))
@@ -2243,6 +2248,7 @@ class ImageOcrExcelApp:
             ctk.CTkLabel(
                 preview,
                 text="範囲プレビューを表示できません",
+                height=112,
                 font=UI_FONT_SMALL,
                 text_color=COLOR_MUTED,
             ).grid(row=0, column=0, sticky="ew", padx=8, pady=(12, 8))
@@ -2628,23 +2634,16 @@ class ImageOcrExcelApp:
         tail = limit - head - 1
         return f"{value[:head]}…{value[-tail:]}"
 
-    def _postprocess_summary(self, field: TemplateField) -> str:
-        parts = [self._line_split_display(field.ocr_line_split)]
-        if field.ocr_line_split == "detected":
-            parts.append(
-                {
-                    LINE_JOIN_NONE: "空白なし",
-                    LINE_JOIN_FULLWIDTH_SPACE: "全角空白",
-                    LINE_JOIN_NEWLINE: "改行",
-                }[self.text_formatting.line_join]
-            )
-            if self.text_formatting.fullwidth_ascii:
-                parts.append("全角化")
-        if self._is_review_candidate(field):
-            parts.insert(0, "自動検出")
-        if self._has_legacy_postprocess(field):
-            parts.append("補正あり")
-        return " / ".join(parts)
+    def _text_formatting_summary(self) -> str:
+        line_join = {
+            LINE_JOIN_NONE: "空白なし",
+            LINE_JOIN_FULLWIDTH_SPACE: "全角空白",
+            LINE_JOIN_NEWLINE: "改行",
+        }[self.text_formatting.line_join]
+        formatting = [line_join]
+        if self.text_formatting.fullwidth_ascii:
+            formatting.append("全角化")
+        return f"行切り出し：{'・'.join(formatting)}"
 
     def _is_review_candidate(self, field: TemplateField) -> bool:
         return field.dialogue_role == DIALOGUE_ROLE_SUPPLEMENT
@@ -5598,8 +5597,6 @@ class ImageOcrExcelApp:
             if not self._commit_active_name_edit():
                 return
         if self.selected_index == idx:
-            if update_review_detail and self.mode_var.get() == MODE_REVIEW:
-                self._refresh_review_detail_panel()
             return
         self.selected_index = idx
         self._refresh_selection_rows()
@@ -5636,23 +5633,38 @@ class ImageOcrExcelApp:
                     else COLOR_SECONDARY
                 )
             )
-        summary = self.review_summary_label_by_index.get(idx)
-        if (
-            summary is not None
-            and summary.winfo_exists()
-            and 0 <= idx < len(self.fields)
-        ):
-            summary.configure(text=self._postprocess_summary(self.fields[idx]))
-
     def _refresh_review_detail_panel(self) -> None:
         if (
             self.review_detail_host is None
             or not self.review_detail_host.winfo_exists()
         ):
             return
+        scroll_fraction = self._review_scroll_fraction()
         for child in self.review_detail_host.winfo_children():
             child.destroy()
         self._render_postprocess_panel(self.review_detail_host)
+        if scroll_fraction is not None:
+            self.root.after_idle(
+                lambda fraction=scroll_fraction: self._restore_review_scroll(fraction)
+            )
+
+    def _review_scroll_fraction(self) -> float | None:
+        scroller = self.review_result_scroller
+        if scroller is None or not scroller.winfo_exists():
+            return None
+        try:
+            return float(scroller._parent_canvas.yview()[0])
+        except (AttributeError, TclError, IndexError):
+            return None
+
+    def _restore_review_scroll(self, fraction: float) -> None:
+        scroller = self.review_result_scroller
+        if scroller is None or not scroller.winfo_exists():
+            return
+        try:
+            scroller._parent_canvas.yview_moveto(fraction)
+        except (AttributeError, TclError):
+            return
 
     def _update_review_detail_values(self) -> None:
         idx = self.selected_index

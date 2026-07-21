@@ -419,7 +419,14 @@ class WorkflowChoiceTests(unittest.TestCase):
 
             previous_body = app.side_body
             app._render_side_body()
-            app.select_review_field(1)
+            first_row = app.field_row_by_index[0]
+            scroller = app.review_result_scroller
+            with (
+                patch.object(app, "_review_scroll_fraction", return_value=0.35),
+                patch.object(app, "_restore_review_scroll") as restore_scroll,
+            ):
+                app.select_review_field(1)
+                root.update_idletasks()
 
             descendants = []
             pending = list(app.review_detail_host.winfo_children())
@@ -435,6 +442,9 @@ class WorkflowChoiceTests(unittest.TestCase):
             self.assertIsNot(app.side_body, previous_body)
             self.assertFalse(previous_body.winfo_exists())
             self.assertEqual(app.selected_index, 1)
+            self.assertIs(app.field_row_by_index[0], first_row)
+            self.assertIs(app.review_result_scroller, scroller)
+            restore_scroll.assert_called_once_with(0.35)
             self.assertEqual(textboxes[0].get("1.0", "end-1c"), "候補結果")
             self.assertFalse(app.dirty)
             with patch.object(root, "destroy") as destroy:
@@ -505,14 +515,27 @@ class WorkflowChoiceTests(unittest.TestCase):
                 if isinstance(widget, ctk.CTkLabel)
             ]
             buttons = [
-                widget.cget("text")
+                widget
                 for widget in descendants
                 if isinstance(widget, ctk.CTkButton)
             ]
+            row_labels = [
+                widget.cget("text")
+                for widget in app.field_row_by_index[0].winfo_children()
+                if isinstance(widget, ctk.CTkLabel)
+            ]
 
             self.assertIn(THEME.copy.recognition_test_note, labels)
-            self.assertIn("全項目をテスト", buttons)
-            self.assertIn("選択項目をテスト", buttons)
+            self.assertIn("行切り出し：全角空白・全角化", labels)
+            self.assertEqual(row_labels, ["#1", "話者"])
+            self.assertIn("全項目をテスト", [button.cget("text") for button in buttons])
+            self.assertIn(
+                "選択項目をテスト", [button.cget("text") for button in buttons]
+            )
+            batch_button = next(
+                button for button in buttons if button.cget("text") == "全項目をテスト"
+            )
+            self.assertEqual(batch_button.cget("height"), THEME.layout.entry_height)
         finally:
             destroy_tk_root(root)
 
