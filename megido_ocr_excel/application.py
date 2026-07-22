@@ -325,7 +325,8 @@ class ImageOcrExcelApp:
         self.ocr_engine = OcrEngine(
             self.profile.image_text_corrector
             if self.image_text_correction_enabled
-            else None
+            else None,
+            self.profile.image_text_fallback,
         )
         self.excel_exporter = ExcelExporter()
 

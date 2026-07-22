@@ -5,9 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs
+from megido_ocr_excel.models import TemplateField
 from megido_ocr_excel.ocr.engine import OcrEngine
 from megido_ocr_excel.profiles.megido_novel import PROFILE
 
@@ -66,6 +67,63 @@ def correct_sample(image: Image.Image, text: str) -> str:
 
 
 class HorizontalGlyphCorrectionTests(unittest.TestCase):
+    def test_repeated_dots_are_recovered_only_for_thresholded_dialogue(self) -> None:
+        image = Image.open(".samples/b3.png").convert("RGB")
+        result = detect_complete_dialogue_pairs(
+            image,
+            PROFILE.auto_detection_fields(),
+            PROFILE.coordinate_settings(),
+            PROFILE.dialogue_log_detection,
+        )
+        field = result.groups[-1][2]
+        crop = image.crop((field.x1, field.y1, field.x2, field.y2))
+        fallback = PROFILE.image_text_fallback
+        assert fallback is not None
+
+        self.assertEqual(field.ocr_preprocess, "threshold")
+        self.assertEqual(fallback(crop, field, "", image.width), "…………")
+        field.ocr_preprocess = "gray"
+        self.assertEqual(fallback(crop, field, "", image.width), "")
+
+    def test_short_repeated_dots_can_recover_two_ellipsis_characters(self) -> None:
+        image = Image.new("RGB", (1080, 100), "white")
+        draw = ImageDraw.Draw(image)
+        for center_x in (40, 54, 68, 82, 96, 110):
+            draw.ellipse(
+                (center_x - 3, 47, center_x + 3, 53),
+                fill="black",
+            )
+        field = TemplateField(
+            "セリフ本文",
+            0,
+            0,
+            image.width,
+            image.height,
+            ocr_preprocess="threshold",
+            ocr_line_split="detected",
+        )
+        fallback = PROFILE.image_text_fallback
+        assert fallback is not None
+
+        self.assertEqual(fallback(image, field, "", image.width), "……")
+        self.assertEqual(fallback(image, field, "認識済み", image.width), "認識済み")
+
+    def test_empty_thresholded_dialogue_is_not_filled_with_punctuation(self) -> None:
+        image = Image.new("RGB", (1080, 100), "white")
+        field = TemplateField(
+            "セリフ本文",
+            0,
+            0,
+            image.width,
+            image.height,
+            ocr_preprocess="threshold",
+            ocr_line_split="detected",
+        )
+        fallback = PROFILE.image_text_fallback
+        assert fallback is not None
+
+        self.assertEqual(fallback(image, field, "", image.width), "")
+
     def test_megido_samples_resolve_one_and_prolonged_sound_marks(self) -> None:
         for filename, (misrecognized, expected) in SAMPLE_TEXT.items():
             with self.subTest(filename=filename):

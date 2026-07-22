@@ -190,6 +190,14 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertGreater(b1.groups[0][1].y2, 409)
         self.assertGreater(b1.groups[0][1].x2 - b1.groups[0][1].x1, 200)
         self.assertGreater(b1.groups[0][2].x2 - b1.groups[0][2].x1, 700)
+        self.assertTrue(
+            all(group[2].ocr_preprocess == "gray" for group in b1.groups[:-1])
+        )
+        self.assertEqual(b1.groups[-1][2].ocr_preprocess, "threshold")
+        self.assertTrue(
+            all(group[2].ocr_preprocess == "gray" for group in b2.groups[:-1])
+        )
+        self.assertEqual(b2.groups[-1][2].ocr_preprocess, "threshold")
 
     def test_dynamic_log_export_writes_only_complete_pairs_and_notices(self) -> None:
         fields, coordinate_settings = auto_detection_context()

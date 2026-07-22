@@ -1097,6 +1097,10 @@ class DirtyStateTests(unittest.TestCase):
         try:
             self.assertTrue(app.image_text_correction_enabled)
             self.assertIsNotNone(app.ocr_engine.image_text_corrector)
+            self.assertIs(
+                app.ocr_engine.image_text_fallback,
+                app.profile.image_text_fallback,
+            )
 
             app._apply_settings(
                 MagicMock(),
@@ -1108,6 +1112,10 @@ class DirtyStateTests(unittest.TestCase):
 
             self.assertFalse(app.image_text_correction_enabled)
             self.assertIsNone(app.ocr_engine.image_text_corrector)
+            self.assertIs(
+                app.ocr_engine.image_text_fallback,
+                app.profile.image_text_fallback,
+            )
             self.assertTrue(app.dirty)
 
             app._apply_settings(

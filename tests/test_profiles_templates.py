@@ -41,6 +41,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(profile.field_ocr_preset("セリフ3")["ocr_preprocess"], "gray")
         self.assertFalse(profile.has_field_ocr_preset("選択肢"))
         self.assertTrue(profile.text_formatting_settings().fullwidth_ascii)
+        self.assertIsNotNone(profile.image_text_fallback)
         self.assertIsNotNone(profile.image_text_corrector)
 
     def test_profile_model_can_define_an_independent_game(self) -> None:
@@ -58,6 +59,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(profile.coordinate_settings().coordinate_space, "image")
         self.assertEqual(profile.field_ocr_preset("Name 1")["ocr_lang"], "eng")
         self.assertEqual(profile.field_ocr_preset("Body")["ocr_lang"], "")
+        self.assertIsNone(profile.image_text_fallback)
         self.assertIsNone(profile.image_text_corrector)
 
 

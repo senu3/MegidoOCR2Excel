@@ -33,6 +33,7 @@ class OcrProfile:
     text_format_defaults: Mapping[str, object] = field(default_factory=dict)
     field_presets: tuple[FieldPreset, ...] = field(default_factory=tuple)
     dialogue_log_detection: DialogueLogDetectionConfig | None = None
+    image_text_fallback: ImageTextCorrector | None = None
     image_text_corrector: ImageTextCorrector | None = None
 
     def coordinate_settings(self) -> CoordinateSettings:

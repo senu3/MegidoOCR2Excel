@@ -158,7 +158,10 @@ def run_accuracy(
     if args.save_crops:
         args.save_crops.mkdir(parents=True, exist_ok=True)
 
-    engine = OcrEngine(APP_PROFILE.image_text_corrector)
+    engine = OcrEngine(
+        APP_PROFILE.image_text_corrector,
+        APP_PROFILE.image_text_fallback,
+    )
     rows: list[AccuracyRow] = []
     for image_path, csv_path in pairs:
         expected_sets = read_expected_sets(csv_path)

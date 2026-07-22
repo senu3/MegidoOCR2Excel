@@ -173,6 +173,7 @@ def detect_complete_dialogue_pairs(
     )
     for pair_id, (anchor_top, anchor_bottom) in enumerate(complete, start=1):
         pair_bottom = min(image.height, anchor_top + pair_height)
+        is_last_complete_pair = pair_id == len(complete)
         speaker = replace(
             speaker_base,
             x1=round(left + content_width * config.log_speaker_x1_ratio),
@@ -194,6 +195,11 @@ def detect_complete_dialogue_pairs(
             source_height=0,
             set_id=pair_id,
             slot_key=SET_SLOT_TEXT,
+            ocr_preprocess=(
+                "threshold"
+                if is_last_complete_pair
+                else dialogue_base.ocr_preprocess
+            ),
         )
         groups.append((pair_id, speaker, dialogue))
     return DialoguePairDetectionResult(

@@ -9,6 +9,90 @@ from megido_ocr_excel.ocr.engine import detect_line_bands
 
 
 @dataclass(frozen=True)
+class RepeatedDotCorrector:
+    """Recover punctuation-only log lines that OCR safely leaves blank."""
+
+    field_prefixes: tuple[str, ...]
+    dots_per_ellipsis: int = 3
+    min_dot_count: int = 6
+    max_dot_count: int = 20
+    dark_threshold: int = 110
+    min_width_ratio: float = 0.003
+    max_width_ratio: float = 0.012
+    min_fill_ratio: float = 0.45
+
+    def __call__(
+        self,
+        crop: Image.Image,
+        field: TemplateField,
+        text: str,
+        reference_width: int,
+    ) -> str:
+        if (
+            text.strip()
+            or reference_width <= 0
+            or field.ocr_line_split != "detected"
+            or field.ocr_preprocess != "threshold"
+            or not field.name.startswith(self.field_prefixes)
+        ):
+            return text
+
+        dot_count = self._repeated_dot_count(crop, reference_width)
+        if (
+            dot_count < self.min_dot_count
+            or dot_count > self.max_dot_count
+            or dot_count % self.dots_per_ellipsis
+        ):
+            return text
+        return "…" * (dot_count // self.dots_per_ellipsis)
+
+    def _repeated_dot_count(self, crop: Image.Image, reference_width: int) -> int:
+        gray = ImageOps.grayscale(crop)
+        candidates: list[tuple[float, float, int, int]] = []
+        for x1, y1, x2, y2, area in _dark_components(gray, self.dark_threshold):
+            width = x2 - x1
+            height = y2 - y1
+            width_ratio = width / reference_width
+            fill_ratio = area / max(1, width * height)
+            if (
+                not self.min_width_ratio <= width_ratio <= self.max_width_ratio
+                or not 0.65 <= width / max(1, height) <= 1.45
+                or fill_ratio < self.min_fill_ratio
+                or x1 <= 0
+                or y1 <= 0
+                or x2 >= gray.width
+                or y2 >= gray.height
+            ):
+                continue
+            candidates.append(((x1 + x2) / 2, (y1 + y2) / 2, width, height))
+
+        best_run = 0
+        for seed in candidates:
+            center_y_tolerance = max(2.0, seed[3] * 0.35)
+            row = sorted(
+                candidate
+                for candidate in candidates
+                if abs(candidate[1] - seed[1]) <= center_y_tolerance
+            )
+            run = 1
+            for previous, current in zip(row, row[1:]):
+                mean_width = (previous[2] + current[2]) / 2
+                gap = current[0] - previous[0]
+                similar_size = (
+                    max(previous[2], current[2])
+                    <= min(previous[2], current[2]) * 1.5
+                    and max(previous[3], current[3])
+                    <= min(previous[3], current[3]) * 1.5
+                )
+                if similar_size and mean_width * 1.35 <= gap <= mean_width * 3.0:
+                    run += 1
+                else:
+                    run = 1
+                best_run = max(best_run, run)
+        return best_run
+
+
+@dataclass(frozen=True)
 class HorizontalGlyphCorrector:
     """Resolve two isolated horizontal glyphs using profile-specific widths."""
 
