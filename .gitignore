@@ -12,3 +12,4 @@ wheels/
 .samples/*
 !.samples/
 !.samples/*.json
+docs/

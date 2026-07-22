@@ -13,9 +13,10 @@
 
 事前に [uv](https://docs.astral.sh/uv/getting-started/installation/) を導入してください。
 
-1. ファイルをすべて同じフォルダーに置く
-2. `MegidoOCR2Excel.cmd` をダブルクリックする
-3. 初回はランチャーの準備が終わるまで待つ
+1. [GitHub Releases](https://github.com/senu3/MegidoOCR2Excel/releases) のAssetsからWindows用ZIPをダウンロードする
+2. ZIPをフォルダーごと展開する
+3. `MegidoOCR2Excel.cmd` をダブルクリックする
+4. 初回はランチャーの準備が終わるまで待つ
 
 PowerShellから起動する場合は `.\run_app.ps1` を実行します。
 
