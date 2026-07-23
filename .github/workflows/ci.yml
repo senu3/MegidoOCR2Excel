@@ -41,8 +41,14 @@ jobs:
       - name: Verify lock file
         run: uv lock --check
 
-      - name: Install dependencies
+      - name: Verify runtime-only dependencies
         run: uv sync --locked --no-dev
+
+      - name: Install development tools
+        run: uv sync --locked
+
+      - name: Type-check application sources
+        run: uv run zuban check
 
       - name: Compile Python sources
         run: uv run python -m compileall -q main.py launcher.py megido_ocr_excel scripts tests

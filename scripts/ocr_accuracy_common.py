@@ -22,7 +22,7 @@ from megido_ocr_excel.models import CoordinateSettings, OCR_PREPROCESS_OPTIONS, 
 from megido_ocr_excel.templates import coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, text_formatting_from_template
 
 try:
-    import pytesseract
+    import pytesseract  # type: ignore[import-not-found]
 except ImportError:
     pytesseract = None
 
@@ -287,8 +287,9 @@ def measurement_fields(
     )
     if not detection.groups:
         return [], detection.review_reason or "会話を自動検出できませんでした。"
-    field_index = 1 if requested_field.slot_key == SET_SLOT_SPEAKER else 2
-    return [group[field_index] for group in detection.groups], ""
+    if requested_field.slot_key == SET_SLOT_SPEAKER:
+        return [group[1] for group in detection.groups], ""
+    return [group[2] for group in detection.groups], ""
 
 
 def detection_count_error(
@@ -445,6 +446,7 @@ def line_bands(crop: Image.Image, args: argparse.Namespace, expected: str) -> li
 def detect_line_bands(crop: Image.Image, args: argparse.Namespace) -> list[tuple[int, int]]:
     gray = ImageOps.grayscale(crop)
     pixels = gray.load()
+    assert pixels is not None
     min_count = max(3, int(crop.width * args.line_detect_min_ratio))
     rows: list[int] = []
     for y in range(gray.height):

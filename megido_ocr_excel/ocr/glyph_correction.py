@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 from PIL import Image, ImageOps
 
@@ -189,7 +190,7 @@ def _dark_components(
 ) -> list[tuple[int, int, int, int, int]]:
     """Return 8-connected dark components as half-open boxes plus their area."""
     width, height = gray.size
-    pixels = list(gray.get_flattened_data())
+    pixels = cast(list[int], list(gray.get_flattened_data()))
     remaining = bytearray(value < threshold for value in pixels)
     components: list[tuple[int, int, int, int, int]] = []
 

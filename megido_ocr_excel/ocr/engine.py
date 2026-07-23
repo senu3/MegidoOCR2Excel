@@ -9,14 +9,14 @@ import threading
 import warnings
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
 from megido_ocr_excel.models import COORDINATE_SPACE_CONTENT, CORRECTION_ALL_TARGET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, CoordinateSettings, CorrectionRule, TemplateField, TextFormattingSettings
 
 try:
-    import pytesseract
+    import pytesseract  # type: ignore[import-not-found]
 except ImportError:
     pytesseract = None
 
@@ -24,10 +24,10 @@ if pytesseract is not None:
     TesseractNotFoundError = pytesseract.TesseractNotFoundError
     TesseractError = pytesseract.TesseractError
 else:
-    class TesseractNotFoundError(Exception):
+    class TesseractNotFoundError(Exception):  # type: ignore[no-redef]
         pass
 
-    class TesseractError(Exception):
+    class TesseractError(Exception):  # type: ignore[no-redef]
         pass
 
 
@@ -84,7 +84,8 @@ def _stable_edge(values: list[int], cutoff: int, stable_run: int, reverse: bool 
 
 def _pixel_values(image: Image.Image) -> list[int]:
     flattened = getattr(image, "get_flattened_data", None)
-    return list(flattened() if callable(flattened) else image.getdata())
+    data = flattened() if callable(flattened) else image.getdata()
+    return cast(list[int], list(cast(Any, data)))
 
 
 def detect_content_rect(image: Image.Image, settings: CoordinateSettings) -> tuple[int, int, int, int] | None:
@@ -99,9 +100,9 @@ def detect_content_rect(image: Image.Image, settings: CoordinateSettings) -> tup
     bottom = _stable_edge(row_values, cutoff, normalized.stable_run, reverse=True)
     left = _stable_edge(col_values, cutoff, normalized.stable_run)
     right = _stable_edge(col_values, cutoff, normalized.stable_run, reverse=True)
-    if None in {left, top, right, bottom}:
+    if left is None or top is None or right is None or bottom is None:
         return None
-    rect = (int(left), int(top), int(right), int(bottom))
+    rect = (left, top, right, bottom)
     if rect[2] - rect[0] < image.width * 0.5 or rect[3] - rect[1] < image.height * 0.5:
         return None
     source_rect = normalized.source_content_rect
@@ -130,6 +131,7 @@ def scaled_field(
     else:
         target_rect = None
     if target_rect:
+        assert source_rect is not None
         source_x1, source_y1, source_x2, source_y2 = source_rect
         target_x1, target_y1, target_x2, target_y2 = target_rect
         scale_x = (target_x2 - target_x1) / (source_x2 - source_x1)
@@ -203,11 +205,12 @@ def prepare_white_glyph(image: Image.Image, scale: str = "auto", threshold: int 
 def crop_dark_content(image: Image.Image, threshold: int, margin: int) -> Image.Image:
     gray = ImageOps.grayscale(image)
     pixels = gray.load()
+    assert pixels is not None
     xs: list[int] = []
     ys: list[int] = []
     for y in range(gray.height):
         for x in range(gray.width):
-            if pixels[x, y] < threshold:
+            if cast(int, pixels[x, y]) < threshold:
                 xs.append(x)
                 ys.append(y)
 
@@ -278,12 +281,13 @@ def detect_line_bands(
 ) -> list[tuple[int, int]]:
     gray = ImageOps.grayscale(image)
     pixels = gray.load()
+    assert pixels is not None
     min_count = max(3, int(image.width * min_ratio))
     rows: list[int] = []
     for y in range(gray.height):
         count = 0
         for x in range(gray.width):
-            if pixels[x, y] < threshold:
+            if cast(int, pixels[x, y]) < threshold:
                 count += 1
         if count >= min_count:
             rows.append(y)

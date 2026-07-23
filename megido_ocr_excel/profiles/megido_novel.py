@@ -1,13 +1,20 @@
 from __future__ import annotations
 
-from megido_ocr_excel.profiles.base import FieldPreset, OcrProfile
+from typing import cast
+
+from megido_ocr_excel.profiles.base import (
+    CoordinateSettingsValues,
+    FieldPreset,
+    ImageTextCorrector,
+    OcrProfile,
+)
 from megido_ocr_excel.models import DialogueLogDetectionConfig
 from megido_ocr_excel.ocr.glyph_correction import (
     HorizontalGlyphCorrector,
     RepeatedDotCorrector,
 )
 
-COORDINATE_DEFAULTS = {
+COORDINATE_DEFAULTS: CoordinateSettingsValues = {
     "coordinate_space": "content",
     "source_content_rect": (0, 219, 1080, 2087),
     "black_threshold": 8,
@@ -75,12 +82,18 @@ PROFILE = OcrProfile(
         normal_dialogue_x1_ratio=0.03,
         normal_dialogue_x2_ratio=0.97,
     ),
-    image_text_fallback=RepeatedDotCorrector(field_prefixes=("セリフ",)),
-    image_text_corrector=HorizontalGlyphCorrector(
-        field_prefixes=("セリフ", "補足セリフ"),
-        short_glyph="ー",
-        long_glyph="一",
-        short_max_width_ratio=0.0475,
-        long_min_width_ratio=0.0500,
+    image_text_fallback=cast(
+        ImageTextCorrector,
+        RepeatedDotCorrector(field_prefixes=("セリフ",)),
+    ),
+    image_text_corrector=cast(
+        ImageTextCorrector,
+        HorizontalGlyphCorrector(
+            field_prefixes=("セリフ", "補足セリフ"),
+            short_glyph="ー",
+            long_glyph="一",
+            short_max_width_ratio=0.0475,
+            long_min_width_ratio=0.0500,
+        ),
     ),
 )

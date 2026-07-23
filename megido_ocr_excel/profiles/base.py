@@ -1,14 +1,31 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Mapping
+from typing import Mapping, Protocol, TypedDict
 
 from PIL import Image
 
 from megido_ocr_excel.models import CoordinateSettings, DialogueLogDetectionConfig, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, TextFormattingSettings, text_formatting_settings_from_dict
 
 
-ImageTextCorrector = Callable[[Image.Image, TemplateField, str, int], str]
+class ImageTextCorrector(Protocol):
+    def __call__(
+        self,
+        crop: Image.Image,
+        field: TemplateField,
+        text: str,
+        reference_width: int,
+        /,
+    ) -> str: ...
+
+
+class CoordinateSettingsValues(TypedDict, total=False):
+    coordinate_space: str
+    source_content_rect: tuple[int, int, int, int] | None
+    black_threshold: int
+    min_nonblack_ratio: float
+    stable_run: int
+    aspect_ratio_tolerance: float
 
 
 @dataclass(frozen=True)
@@ -28,7 +45,7 @@ class OcrProfile:
     app_title: str
     default_backend: str
     default_lang: str
-    coordinate_defaults: Mapping[str, object]
+    coordinate_defaults: CoordinateSettingsValues
     default_field_ocr: Mapping[str, object]
     text_format_defaults: Mapping[str, object] = field(default_factory=dict)
     field_presets: tuple[FieldPreset, ...] = field(default_factory=tuple)

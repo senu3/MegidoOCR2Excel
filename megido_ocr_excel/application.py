@@ -7,6 +7,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from tkinter import (
     BOTH,
     BOTTOM,
@@ -1500,9 +1501,6 @@ class ImageOcrExcelApp:
         layout_menu = ctk.CTkOptionMenu(
             layout_row,
             values=list(EXPORT_LAYOUT_DISPLAY.values()),
-            command=lambda display: self._set_export_layout(
-                EXPORT_LAYOUT_BY_DISPLAY[display], layout_menu
-            ),
             height=THEME.layout.entry_height,
             font=UI_FONT_SMALL,
             fg_color=COLOR_SECONDARY,
@@ -1511,6 +1509,11 @@ class ImageOcrExcelApp:
             dropdown_fg_color=COLOR_SURFACE_ALT,
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
+        )
+        layout_menu.configure(
+            command=lambda display: self._set_export_layout(
+                EXPORT_LAYOUT_BY_DISPLAY[display], layout_menu
+            )
         )
         layout_menu.set(EXPORT_LAYOUT_DISPLAY[self.export_layout_var.get()])
         layout_menu.grid(row=0, column=1, sticky="ew")
@@ -1528,7 +1531,6 @@ class ImageOcrExcelApp:
             preset_menu = ctk.CTkOptionMenu(
                 preset_row,
                 values=[SET_PRESET_DISPLAY[key] for key in SET_PRESET_OPTIONS],
-                command=lambda value: self._set_set_preset(value, preset_menu),
                 height=THEME.layout.entry_height,
                 font=UI_FONT_SMALL,
                 fg_color=COLOR_SECONDARY,
@@ -1537,6 +1539,9 @@ class ImageOcrExcelApp:
                 dropdown_fg_color=COLOR_SURFACE_ALT,
                 dropdown_hover_color=COLOR_SECONDARY_HOVER,
                 text_color=COLOR_TEXT,
+            )
+            preset_menu.configure(
+                command=lambda value: self._set_set_preset(value, preset_menu)
             )
             preset_menu.set(self.set_preset_var.get())
             preset_menu.grid(row=0, column=1, sticky="ew")
@@ -6012,10 +6017,11 @@ class ImageOcrExcelApp:
         try:
             canvas = scroller._parent_canvas
             canvas.update_idletasks()
-            content_height = max(1, int(canvas.bbox("all")[3]))
+            content_bbox = canvas.bbox("all")
+            content_height = max(1, int(content_bbox[3]))
             row_top = row.winfo_y()
             row_bottom = row_top + row.winfo_height()
-            visible_top = canvas.canvasy(0)
+            visible_top = cast(float, canvas.canvasy(0))
             visible_bottom = visible_top + canvas.winfo_height()
             if row_top < visible_top:
                 canvas.yview_moveto(max(0.0, row_top / content_height))
@@ -6126,8 +6132,7 @@ class ImageOcrExcelApp:
         mode = self.mode_var.get()
         if mode == MODE_EXPORT:
             return "break"
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        canvas_x, canvas_y = self._event_canvas_point(event)
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         x, y = self._event_image_point(event)
         hit_idx, _mode = (
@@ -6408,10 +6413,12 @@ class ImageOcrExcelApp:
             )
             return
         self._ensure_current_results()
-        for idx, value in (action.get("results") or {}).items():
+        results: dict[int, object] = action.get("results") or {}
+        for idx, value in results.items():
             if 0 <= idx < len(self.current_results):
                 self.current_results[idx] = str(value or "")
-        for idx, value in (action.get("raw_results") or {}).items():
+        raw_results: dict[int, object] = action.get("raw_results") or {}
+        for idx, value in raw_results.items():
             if 0 <= idx < len(self.current_raw_results):
                 self.current_raw_results[idx] = str(value or "")
         selected = action.get("selected")
@@ -6614,13 +6621,15 @@ class ImageOcrExcelApp:
         else:
             color = THEME.palette.disabled_fill
             label_bg = COLOR_MUTED
-        rect_kwargs = {
-            "outline": color,
-            "width": 3 if selected else 1 if selection_active else 2,
-        }
+        rect_width = 3 if selected else 1 if selection_active else 2
         if line_mode and field.enabled:
-            rect_kwargs["dash"] = (6, 3)
-        rect = self.canvas.create_rectangle(x1, y1, x2, y2, **rect_kwargs)
+            rect = self.canvas.create_rectangle(
+                x1, y1, x2, y2, outline=color, width=rect_width, dash=(6, 3)
+            )
+        else:
+            rect = self.canvas.create_rectangle(
+                x1, y1, x2, y2, outline=color, width=rect_width
+            )
         if (
             line_mode
             and field.enabled
@@ -6827,10 +6836,15 @@ class ImageOcrExcelApp:
                 left, bottom, right, bottom, fill=color, width=1, dash=(2, 4)
             )
 
-    def _event_image_point(self, event) -> tuple[int, int]:
-        return int(self.canvas.canvasx(event.x) / self.zoom), int(
-            self.canvas.canvasy(event.y) / self.zoom
+    def _event_canvas_point(self, event) -> tuple[float, float]:
+        return (
+            cast(float, self.canvas.canvasx(event.x)),
+            cast(float, self.canvas.canvasy(event.y)),
         )
+
+    def _event_image_point(self, event) -> tuple[int, int]:
+        canvas_x, canvas_y = self._event_canvas_point(event)
+        return int(canvas_x / self.zoom), int(canvas_y / self.zoom)
 
     def _hit_test_label(self, canvas_x: float, canvas_y: float) -> int | None:
         for idx in reversed(self._canvas_draw_order()):
@@ -6926,8 +6940,7 @@ class ImageOcrExcelApp:
         if self.drag_start is not None:
             self.canvas.configure(cursor="crosshair")
             return
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        canvas_x, canvas_y = self._event_canvas_point(event)
         pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
         if pair_hit is not None:
             state = self.canvas_pair_handles.get(pair_hit) or {}
@@ -7034,8 +7047,7 @@ class ImageOcrExcelApp:
     def on_canvas_double_click(self, event) -> str:
         if not self.original_image or self.mode_var.get() != MODE_TEMPLATE:
             return "break"
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        canvas_x, canvas_y = self._event_canvas_point(event)
         idx = self._hit_test_label(canvas_x, canvas_y)
         if idx is None:
             x, y = self._event_image_point(event)
@@ -7063,8 +7075,7 @@ class ImageOcrExcelApp:
             return
         if not self._commit_active_name_edit():
             return
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        canvas_x, canvas_y = self._event_canvas_point(event)
         x, y = self._event_image_point(event)
         field_hit_idx, field_mode = self._hit_test_field(x, y)
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
@@ -7365,8 +7376,7 @@ class ImageOcrExcelApp:
         self.redraw()
 
     def _canvas_selection_hit(self, event) -> int | None:
-        canvas_x = self.canvas.canvasx(event.x)
-        canvas_y = self.canvas.canvasy(event.y)
+        canvas_x, canvas_y = self._event_canvas_point(event)
         pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
         if pair_hit is not None:
             indexes = tuple(

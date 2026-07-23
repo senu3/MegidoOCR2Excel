@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import Callable, Sequence
 from tkinter import BOTH, Event, Misc, TclError, Toplevel
+from typing import Any, cast
 
 import customtkinter as ctk
 
@@ -14,7 +15,7 @@ class ModalOverlay:
 
     def __init__(
         self,
-        root: Misc,
+        root: ctk.CTk,
         *,
         width: int,
         backdrop_color: str,
@@ -29,7 +30,7 @@ class ModalOverlay:
         self._visible = False
         self._destroyed = False
         self._default_focus: Misc | None = None
-        self._default_action: Misc | None = None
+        self._default_action: Any | None = None
         self._previous_focus: Misc | None = None
         self._escape_handler: Callable[[], object] | None = None
         self._showing = False
@@ -358,8 +359,7 @@ class ModalOverlay:
 
     def _release_grab(self) -> None:
         try:
-            if self.window.grab_current() is self.window:
-                self.window.grab_release()
+            self.window.grab_release()
         except TclError:
             pass
 
@@ -388,14 +388,17 @@ class ModalOverlay:
         if self._default_action is None:
             return None
         focused = self.root.focus_get()
-        target = next(
-            (
-                widget
-                for widget in self._focus_order
-                if self._owns_focus(widget, focused)
-                and callable(getattr(widget, "invoke", None))
+        target = cast(
+            Any,
+            next(
+                (
+                    widget
+                    for widget in self._focus_order
+                    if self._owns_focus(widget, focused)
+                    and callable(getattr(widget, "invoke", None))
+                ),
+                self._default_action,
             ),
-            self._default_action,
         )
         try:
             if target.cget("state") == "disabled":

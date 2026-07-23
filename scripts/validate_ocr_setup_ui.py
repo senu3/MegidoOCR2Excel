@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+from typing import Any, cast
 
 import customtkinter as ctk
 from PIL import ImageGrab
@@ -133,7 +134,7 @@ class ValidationImageOcrExcelApp(app_module.ImageOcrExcelApp):
 def run_validation(state: str, screenshot: Path | None = None) -> None:
     status = status_for_state(state)
     manager = ValidationOcrEnvironmentManager(status)
-    app_module.OcrEnvironmentManager = lambda: manager
+    app_module.OcrEnvironmentManager = cast(Any, lambda: manager)
 
     root = ctk.CTk()
     app = ValidationImageOcrExcelApp(root)
@@ -141,7 +142,7 @@ def run_validation(state: str, screenshot: Path | None = None) -> None:
     if state != "ready":
         # The app is constructed before Tk maps its first window. Show once more
         # after mapping so manual runs and screenshots always expose the modal.
-        root.after(100, app.show_ocr_setup)
+        root.after(100, lambda: app.show_ocr_setup())
 
     if state == "progress":
         root.after(150, app._show_ocr_setup_progress)

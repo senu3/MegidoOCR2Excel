@@ -6,6 +6,12 @@
 uv run python -m unittest discover -s tests
 ```
 
+型検査はZubanで行います。Zubanは開発用依存関係なので、利用者向けの実行環境にはインストールされません。
+
+```powershell
+uv run zuban check
+```
+
 `.samples`の検証画像を使うローカルテストは、専用スクリプトから実行します。このスクリプトは通常のテストに加えて、`private_sample_test`で分類された検出・画像補正テストも有効にします。
 
 ```powershell

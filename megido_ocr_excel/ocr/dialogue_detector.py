@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from typing import cast
 
 from PIL import Image
 
@@ -15,6 +16,20 @@ from megido_ocr_excel.models import (
     set_definition_for_preset,
     set_groups,
 )
+
+RgbPixel = tuple[int, int, int]
+
+
+def _rgb_pixel(image: Image.Image, position: tuple[int, int]) -> RgbPixel:
+    return cast(RgbPixel, image.getpixel(position))
+
+
+def _rgb_pixels(image: Image.Image) -> list[RgbPixel]:
+    return cast(list[RgbPixel], list(image.get_flattened_data()))
+
+
+def _gray_pixels(image: Image.Image) -> list[int]:
+    return cast(list[int], list(image.get_flattened_data()))
 
 
 @dataclass(frozen=True)
@@ -238,10 +253,10 @@ def _log_anchor_has_speaker_text(
     x2 = round(left + width * config.log_speaker_x2_ratio)
     text_right = x1 + max(1, round((x2 - x1) * 0.45))
     anchor_top, anchor_bottom = band
-    pixels = list(
-        image.crop((x1, anchor_top, text_right, anchor_bottom + 1))
-        .convert("RGB")
-        .get_flattened_data()
+    pixels = _rgb_pixels(
+        image.crop((x1, anchor_top, text_right, anchor_bottom + 1)).convert(
+            "RGB"
+        )
     )
     bright = sum(min(pixel) > 175 for pixel in pixels)
     return bright / max(1, len(pixels)) > 0.008
@@ -424,7 +439,10 @@ def _speaker_bar_bands(
     sample_step = max(1, (x2 - x1) // 90)
     matching_rows: list[int] = []
     for y in range(max(0, y1), min(rgb.height, y2)):
-        pixels = [rgb.getpixel((x, y)) for x in range(max(0, x1), min(rgb.width, x2), sample_step)]
+        pixels = [
+            _rgb_pixel(rgb, (x, y))
+            for x in range(max(0, x1), min(rgb.width, x2), sample_step)
+        ]
         if not pixels:
             continue
         matching = sum(
@@ -460,7 +478,7 @@ def _light_panel_bottom(
     last_light = start_y
     dark_run = 0
     for y in range(start_y, min(image.height, bottom)):
-        pixels = [rgb.getpixel((x, y)) for x in range(x1, x2, step)]
+        pixels = [_rgb_pixel(rgb, (x, y)) for x in range(x1, x2, step)]
         light_ratio = sum(sum(pixel) / 3 > 125 for pixel in pixels) / max(
             1, len(pixels)
         )
@@ -477,7 +495,7 @@ def _light_panel_bottom(
 def _bar_has_text(image: Image.Image, field: TemplateField) -> bool:
     text_right = field.x1 + max(1, round((field.x2 - field.x1) * 0.45))
     crop = image.crop((field.x1, field.y1, text_right, field.y2)).convert("RGB")
-    pixels = list(crop.get_flattened_data())
+    pixels = _rgb_pixels(crop)
     bright = sum(min(pixel) > 175 for pixel in pixels)
     return bright / max(1, len(pixels)) > 0.008
 
@@ -486,7 +504,7 @@ def _region_has_bright_or_dark_text(
     image: Image.Image, field: TemplateField
 ) -> bool:
     crop = image.crop((field.x1, field.y1, field.x2, field.y2)).convert("L")
-    pixels = list(crop.get_flattened_data())
+    pixels = _gray_pixels(crop)
     dark = sum(value < 70 for value in pixels)
     return dark / max(1, len(pixels)) > 0.004
 
@@ -507,7 +525,7 @@ def _supplement_candidate_region(
     step = max(1, (x2 - x1) // 140)
     candidate_rows: list[int] = []
     for y in range(y1, y2):
-        pixels = [rgb.getpixel((x, y)) for x in range(x1, x2, step)]
+        pixels = [_rgb_pixel(rgb, (x, y)) for x in range(x1, x2, step)]
         blue_ratio = sum(
             blue > red * 1.18 and blue > green * 1.03 and 40 < blue < 190
             for red, green, blue in pixels
@@ -582,13 +600,13 @@ def _localized_supplement_text_region(
     for y in range(search_y1, search_y2):
         white_xs = []
         for x in sample_xs:
-            pixel = rgb.getpixel((x, y))
+            pixel = _rgb_pixel(rgb, (x, y))
             if min(pixel) <= 175 or max(pixel) - min(pixel) >= 70:
                 continue
             outlined = any(
                 left <= x + delta_x < right
                 and top <= y + delta_y < bottom
-                and max(rgb.getpixel((x + delta_x, y + delta_y))) < 105
+                and max(_rgb_pixel(rgb, (x + delta_x, y + delta_y))) < 105
                 for delta_x, delta_y in outline_offsets
             )
             if outlined:
@@ -634,7 +652,7 @@ def _localized_supplement_text_region(
             min(search_x2, cluster_x2 + padding_x),
             min(anchor_top, cluster_y2 + 1 + padding_y),
         )
-        pixels = list(rgb.crop(candidate).get_flattened_data())
+        pixels = _rgb_pixels(rgb.crop(candidate))
         navy_ratio = sum(
             blue > red * 1.18
             and blue > green * 1.03
@@ -661,7 +679,7 @@ def _narrator_region(
     rgb = image.convert("RGB")
     sample_step = max(1, min(width, height) // 180)
     samples = [
-        rgb.getpixel((x, y))
+        _rgb_pixel(rgb, (x, y))
         for y in range(top, bottom, sample_step)
         for x in range(left, right, sample_step)
     ]
@@ -677,7 +695,7 @@ def _narrator_region(
     point_step = max(1, width // 540)
     for y in range(search_y1, search_y2, point_step):
         for x in range(search_x1, search_x2, point_step):
-            red, green, blue = rgb.getpixel((x, y))
+            red, green, blue = _rgb_pixel(rgb, (x, y))
             if min(red, green, blue) > 165 and max(red, green, blue) - min(
                 red, green, blue
             ) < 55:

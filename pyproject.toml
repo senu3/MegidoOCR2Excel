@@ -20,5 +20,19 @@ tesseract = [
 [project.scripts]
 megido-ocr-to-excel = "megido_ocr_excel.application:main"
 
+[dependency-groups]
+dev = [
+    "zuban==0.9.0",
+]
+
 [tool.uv]
 package = false
+
+[tool.zuban]
+mode = "default"
+files = [
+    "main.py",
+    "launcher.py",
+    "megido_ocr_excel",
+    "scripts",
+]

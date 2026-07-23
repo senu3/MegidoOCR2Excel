@@ -25,7 +25,7 @@ class DialogAction:
 class AppDialogs:
     """Synchronous, themed replacements for tkinter.messagebox dialogs."""
 
-    def __init__(self, root: Misc) -> None:
+    def __init__(self, root: ctk.CTk) -> None:
         self.root = root
         self.active_modal: ModalOverlay | None = None
 

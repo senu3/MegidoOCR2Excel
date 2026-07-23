@@ -209,10 +209,10 @@ class LauncherWindow:
     def _draw_scan_icon(canvas: tk.Canvas) -> None:
         color = PALETTE.primary
         width = 2
-        canvas.create_line(10, 15, 10, 10, 15, 10, fill=color, width=width)
-        canvas.create_line(23, 10, 28, 10, 28, 15, fill=color, width=width)
-        canvas.create_line(10, 23, 10, 28, 15, 28, fill=color, width=width)
-        canvas.create_line(23, 28, 28, 28, 28, 23, fill=color, width=width)
+        canvas.create_line([10, 15, 10, 10, 15, 10], fill=color, width=width)
+        canvas.create_line([23, 10, 28, 10, 28, 15], fill=color, width=width)
+        canvas.create_line([10, 23, 10, 28, 15, 28], fill=color, width=width)
+        canvas.create_line([23, 28, 28, 28, 28, 23], fill=color, width=width)
         canvas.create_line(15, 19, 23, 19, fill=color, width=width)
 
     def _center_window(self) -> None:
@@ -420,7 +420,9 @@ class LauncherWindow:
         self.status_title.configure(text="中止しています", foreground=PALETTE.warning)
         self.status_note.configure(text="現在の処理を終了しています。しばらくお待ちください。")
         for child in self.actions.winfo_children():
-            child.configure(state="disabled")
+            configure = getattr(child, "configure", None)
+            if callable(configure):
+                configure(state="disabled")
         self.service.cancel()
 
     def finish_cancelled(self, error: Exception) -> None:

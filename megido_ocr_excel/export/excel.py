@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment
 from openpyxl.utils.cell import coordinate_to_tuple
+from openpyxl.worksheet.worksheet import Worksheet
 from PIL import Image
 
 from megido_ocr_excel.persistence import atomic_save_workbook
@@ -405,12 +406,19 @@ class ExcelExporter:
     def _prepare_output_sheet(self, output_path: Path, settings: ExportSettings):
         if settings.write_mode == "追記" and output_path.exists():
             workbook = load_workbook(output_path)
-            sheet = workbook[settings.sheet_name] if settings.sheet_name in workbook.sheetnames else workbook.create_sheet(settings.sheet_name)
+            sheet = cast(
+                Worksheet,
+                workbook[settings.sheet_name]
+                if settings.sheet_name in workbook.sheetnames
+                else workbook.create_sheet(settings.sheet_name),
+            )
             row_cursor = max(settings.start_row, sheet.max_row + 1) if self._sheet_has_values(sheet) else settings.start_row
             return workbook, sheet, row_cursor
 
         workbook = Workbook()
         sheet = workbook.active
+        if sheet is None:
+            sheet = workbook.create_sheet()
         sheet.title = settings.sheet_name
         return workbook, sheet, settings.start_row
 

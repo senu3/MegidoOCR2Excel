@@ -48,7 +48,8 @@ def _version_tuple(version: str) -> tuple[int, int, int]:
         raise ValueError(
             "バージョンは 0.2.0 のような major.minor.patch 形式で指定してください。"
         )
-    return tuple(int(value) for value in match.groups())
+    major, minor, patch = match.groups()
+    return int(major), int(minor), int(patch)
 
 
 def _version_texts(project_root: Path) -> tuple[str, str]:

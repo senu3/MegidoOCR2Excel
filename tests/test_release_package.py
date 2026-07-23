@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
+import tomllib
 import unittest
 import zipfile
 from pathlib import Path
@@ -27,8 +28,22 @@ class ReleasePackageTests(unittest.TestCase):
         for relative_path in files:
             self.assertNotIn("tests", relative_path.parts)
             self.assertNotIn("scripts", relative_path.parts)
+            self.assertNotIn(".venv", relative_path.parts)
+            self.assertNotIn("zuban", relative_path.as_posix().lower())
             self.assertNotIn("__pycache__", relative_path.parts)
             self.assertNotIn(relative_path.suffix.lower(), {".pyc", ".pyo"})
+
+    def test_zuban_is_declared_only_as_a_development_dependency(self) -> None:
+        pyproject = tomllib.loads(
+            (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        runtime = pyproject["project"]["dependencies"]
+        development = pyproject["dependency-groups"]["dev"]
+
+        self.assertFalse(
+            any(str(requirement).lower().startswith("zuban") for requirement in runtime)
+        )
+        self.assertIn("zuban==0.9.0", development)
 
     def test_release_build_is_deterministic_and_checksum_matches(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

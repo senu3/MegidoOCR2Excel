@@ -298,7 +298,11 @@ class SingleInstanceLock:
             else:
                 import fcntl
 
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                flock = getattr(fcntl, "flock")
+                flock(
+                    stream.fileno(),
+                    getattr(fcntl, "LOCK_EX") | getattr(fcntl, "LOCK_NB"),
+                )
         except OSError as exc:
             stream.close()
             raise LauncherBusy(
@@ -319,7 +323,9 @@ class SingleInstanceLock:
             else:
                 import fcntl
 
-                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+                getattr(fcntl, "flock")(
+                    stream.fileno(), getattr(fcntl, "LOCK_UN")
+                )
         finally:
             stream.close()
             self._stream = None
