@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -28,6 +30,7 @@ OPTIONAL_PUBLIC_FILES = (
 )
 PACKAGE_DIR = Path("megido_ocr_excel")
 ARCHIVE_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+VERSION_PATTERN = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 
 
 @dataclass(frozen=True)
@@ -39,8 +42,24 @@ class ReleaseArtifact:
     files: tuple[Path, ...]
 
 
-def _project_version(project_root: Path) -> str:
-    pyproject = (project_root / "pyproject.toml").read_text(encoding="utf-8")
+def _version_tuple(version: str) -> tuple[int, int, int]:
+    match = VERSION_PATTERN.fullmatch(version)
+    if match is None:
+        raise ValueError(
+            "バージョンは 0.2.0 のような major.minor.patch 形式で指定してください。"
+        )
+    return tuple(int(value) for value in match.groups())
+
+
+def _version_texts(project_root: Path) -> tuple[str, str]:
+    pyproject = (project_root / "pyproject.toml").read_bytes().decode("utf-8")
+    package_init = (project_root / PACKAGE_DIR / "__init__.py").read_bytes().decode(
+        "utf-8"
+    )
+    return pyproject, package_init
+
+
+def _versions_from_texts(pyproject: str, package_init: str) -> tuple[str, str]:
     project_match = re.search(
         r"(?ms)^\[project\].*?^version\s*=\s*[\"']([^\"']+)[\"']",
         pyproject,
@@ -48,23 +67,99 @@ def _project_version(project_root: Path) -> str:
     if project_match is None:
         raise ValueError("pyproject.toml の [project] version を取得できません。")
 
-    package_init = (project_root / PACKAGE_DIR / "__init__.py").read_text(
-        encoding="utf-8"
-    )
     package_match = re.search(
         r"(?m)^__version__\s*=\s*[\"']([^\"']+)[\"']", package_init
     )
     if package_match is None:
         raise ValueError("megido_ocr_excel.__version__ を取得できません。")
 
-    project_version = project_match.group(1)
-    package_version = package_match.group(1)
+    return project_match.group(1), package_match.group(1)
+
+
+def project_version(project_root: Path) -> str:
+    project_version, package_version = _versions_from_texts(
+        *_version_texts(project_root)
+    )
     if project_version != package_version:
         raise ValueError(
             "バージョンが一致しません: "
             f"pyproject.toml={project_version}, package={package_version}"
         )
+    _version_tuple(project_version)
     return project_version
+
+
+def _replace_version(text: str, pattern: str, version: str, source: str) -> str:
+    updated, count = re.subn(pattern, rf"\g<1>{version}\g<3>", text, count=1)
+    if count != 1:
+        raise ValueError(f"{source} のバージョンを書き換えられません。")
+    return updated
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    handle, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def update_project_version(project_root: Path, version: str) -> tuple[str, str]:
+    project_root = project_root.resolve()
+    requested = _version_tuple(version)
+    pyproject_path = project_root / "pyproject.toml"
+    package_path = project_root / PACKAGE_DIR / "__init__.py"
+    pyproject, package_init = _version_texts(project_root)
+    current_project, current_package = _versions_from_texts(
+        pyproject, package_init
+    )
+    if current_project != current_package:
+        raise ValueError(
+            "バージョンが一致しません: "
+            f"pyproject.toml={current_project}, package={current_package}"
+        )
+    current = _version_tuple(current_project)
+    if requested < current:
+        raise ValueError(
+            f"現在の {current_project} より古いバージョン {version} は指定できません。"
+        )
+    if requested == current:
+        return current_project, current_project
+
+    updated_pyproject = _replace_version(
+        pyproject,
+        r'(?ms)(^\[project\].*?^version\s*=\s*[\"\'])([^\"\']+)([\"\'])',
+        version,
+        "pyproject.toml",
+    )
+    updated_package = _replace_version(
+        package_init,
+        r'(?m)(^__version__\s*=\s*[\"\'])([^\"\']+)([\"\'])',
+        version,
+        "megido_ocr_excel/__init__.py",
+    )
+    originals = {
+        pyproject_path: pyproject.encode("utf-8"),
+        package_path: package_init.encode("utf-8"),
+    }
+    try:
+        _atomic_write_bytes(pyproject_path, updated_pyproject.encode("utf-8"))
+        _atomic_write_bytes(package_path, updated_package.encode("utf-8"))
+        if project_version(project_root) != version:
+            raise ValueError("更新後のバージョン確認に失敗しました。")
+    except Exception:
+        for path, data in originals.items():
+            _atomic_write_bytes(path, data)
+        raise
+    return current_project, version
 
 
 def collect_release_files(project_root: Path) -> tuple[Path, ...]:
@@ -151,28 +246,57 @@ def validate_release_archive(
             raise ValueError(f"ZIPのCRC検査に失敗しました: {bad_file}")
 
 
-def build_release(project_root: Path, output_dir: Path) -> ReleaseArtifact:
+def build_release(
+    project_root: Path,
+    output_dir: Path,
+    *,
+    version: str | None = None,
+) -> ReleaseArtifact:
     project_root = project_root.resolve()
     output_dir = output_dir.resolve()
-    version = _project_version(project_root)
-    files = collect_release_files(project_root)
-    root_name = f"MegidoOCR2Excel-v{version}-Windows"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    archive_path = output_dir / f"{root_name}.zip"
-    checksum_path = output_dir / f"{root_name}.sha256"
-
-    _write_archive(project_root, archive_path, root_name, files)
-    validate_release_archive(archive_path, root_name, files)
-    digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-    checksum_path.write_text(
-        f"{digest}  {archive_path.name}\n", encoding="ascii", newline="\n"
+    version_paths = (
+        project_root / "pyproject.toml",
+        project_root / PACKAGE_DIR / "__init__.py",
     )
-    return ReleaseArtifact(version, archive_path, checksum_path, digest, files)
+    originals = (
+        {path: path.read_bytes() for path in version_paths}
+        if version is not None
+        else None
+    )
+    try:
+        if version is not None:
+            update_project_version(project_root, version)
+        version = project_version(project_root)
+        files = collect_release_files(project_root)
+        root_name = f"MegidoOCR2Excel-v{version}-Windows"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = output_dir / f"{root_name}.zip"
+        checksum_path = output_dir / f"{root_name}.sha256"
+
+        _write_archive(project_root, archive_path, root_name, files)
+        validate_release_archive(archive_path, root_name, files)
+        digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+        checksum_path.write_text(
+            f"{digest}  {archive_path.name}\n", encoding="ascii", newline="\n"
+        )
+        return ReleaseArtifact(version, archive_path, checksum_path, digest, files)
+    except Exception:
+        if originals is not None:
+            for path, data in originals.items():
+                _atomic_write_bytes(path, data)
+        raise
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="GitHub Releases用のWindows配布ZIPを生成します。"
+    )
+    parser.add_argument(
+        "--version",
+        help=(
+            "公開するバージョン。指定時はpyproject.tomlとパッケージの"
+            "バージョンを一括更新します。"
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -182,8 +306,15 @@ def main() -> int:
     )
     args = parser.parse_args()
     project_root = Path(__file__).resolve().parents[1]
-    artifact = build_release(project_root, args.output_dir)
+    before = project_version(project_root)
+    artifact = build_release(
+        project_root,
+        args.output_dir,
+        version=args.version,
+    )
 
+    if args.version is not None:
+        print(f"Version: {before} -> {artifact.version}")
     print(f"Created: {artifact.archive_path}")
     print(f"Created: {artifact.checksum_path}")
     print(f"SHA256:  {artifact.sha256}")

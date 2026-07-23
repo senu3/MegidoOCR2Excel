@@ -59,6 +59,7 @@ from scripts.ocr_accuracy_common import (
 )
 from megido_ocr_excel.templates import coordinate_settings_from_template
 from megido_ocr_excel.profiles.megido_novel import PROFILE
+from tests.private_samples import private_sample_test
 
 
 def auto_detection_context() -> tuple[list[TemplateField], CoordinateSettings]:
@@ -162,6 +163,7 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertTrue(sheet.cell(2, 2).alignment.wrap_text)
             self.assertGreaterEqual(sheet.row_dimensions[2].height or 0, 30)
 
+    @private_sample_test
     def test_log_detector_tracks_shifted_complete_pairs_and_skips_fragments(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -199,6 +201,7 @@ class BatchWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(b2.groups[-1][2].ocr_preprocess, "threshold")
 
+    @private_sample_test
     def test_dynamic_log_export_writes_only_complete_pairs_and_notices(self) -> None:
         fields, coordinate_settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -224,6 +227,7 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual(len(result.notices), 2)
             self.assertIn("Notices", load_workbook(output).sheetnames)
 
+    @private_sample_test
     def test_mixed_normal_speakerless_narration_and_log_images_export_together(self) -> None:
         fields = [
             TemplateField(
@@ -276,6 +280,7 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual([record.row_count for record in result.records], [1, 1, 1, 5])
             self.assertEqual(result.errors, [])
 
+    @private_sample_test
     def test_single_screen_patterns_are_classified_safely(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -323,6 +328,7 @@ class BatchWorkflowTests(unittest.TestCase):
         )
         self.assertIn("補足セリフ", supplement.review_reason)
 
+    @private_sample_test
     def test_supplement_fallback_ignores_the_surrounding_scene_color(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -365,6 +371,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(bright_result.layout, "supplement_candidate")
         self.assertEqual(len(bright_result.candidate_fields), 1)
 
+    @private_sample_test
     def test_supplement_fallback_supports_four_text_lines(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -388,6 +395,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertGreaterEqual(candidate.y2, 1190)
         self.assertGreater(candidate.y2 - candidate.y1, image.height * 0.12)
 
+    @private_sample_test
     def test_supplement_candidate_requires_text_like_content(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -403,6 +411,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(len(result.groups), 1)
         self.assertEqual(result.candidate_fields, [])
 
+    @private_sample_test
     def test_log_detection_requires_speaker_text_in_repeated_blue_bands(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -417,6 +426,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(result.layout, "normal")
         self.assertEqual(len(result.groups), 1)
 
+    @private_sample_test
     def test_shifted_log_reuses_recorded_content_rect_when_black_edge_detection_is_ambiguous(self) -> None:
         fields = [
             TemplateField("話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER),
@@ -434,6 +444,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(result.layout, "log")
         self.assertEqual(len(result.groups), 5)
 
+    @private_sample_test
     def test_supplement_is_automatically_written_as_the_same_speakers_next_dialogue(self) -> None:
         fields = [
             TemplateField("話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER),
@@ -470,6 +481,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 ["2", "話者", "補足セリフ候補"],
             )
 
+    @private_sample_test
     def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -486,6 +498,7 @@ class BatchWorkflowTests(unittest.TestCase):
 
         self.assertEqual(layouts, ["normal"] * 9)
 
+    @private_sample_test
     def test_normal_speaker_crop_keeps_left_text_margin(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -500,6 +513,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual(result.layout, "normal")
         self.assertLessEqual(result.groups[0][1].x1, 40)
 
+    @private_sample_test
     def test_normal_dialogue_crop_keeps_horizontal_text_margin(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -517,6 +531,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertLessEqual(dialogue.x1, 33)
         self.assertGreaterEqual(dialogue.x2, image.width - 33)
 
+    @private_sample_test
     def test_special_conversation_samples_are_outside_auto_detection(self) -> None:
         fields, settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None
@@ -534,6 +549,7 @@ class BatchWorkflowTests(unittest.TestCase):
         self.assertEqual([result.layout for result in results], ["unknown", "unknown"])
         self.assertEqual([len(result.groups) for result in results], [0, 0])
 
+    @private_sample_test
     def test_accuracy_samples_preserve_repeated_dialogues_and_expand_supplements(self) -> None:
         b1 = read_expected_sets(Path(".samples/b1.csv"))
         b2 = read_expected_sets(Path(".samples/b2.csv"))
@@ -550,6 +566,7 @@ class BatchWorkflowTests(unittest.TestCase):
         )
         self.assertIn("意訳", supplement[1].text)
 
+    @private_sample_test
     def test_accuracy_measurement_uses_the_same_dynamic_groups_as_export(self) -> None:
         fields, settings = auto_detection_context()
         speaker = next(field for field in fields if field.slot_key == SET_SLOT_SPEAKER)
@@ -658,6 +675,7 @@ class BatchWorkflowTests(unittest.TestCase):
             with Image.open(save_crops / "sample_dialogue.png") as crop:
                 self.assertEqual(crop.size, (10, 10))
 
+    @private_sample_test
     def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
         fields, coordinate_settings = auto_detection_context()
         assert PROFILE.dialogue_log_detection is not None

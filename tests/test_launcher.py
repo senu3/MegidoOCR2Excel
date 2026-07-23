@@ -60,7 +60,9 @@ class LauncherCoreTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name) / "project"
         self.root.mkdir()
-        (self.root / "pyproject.toml").write_text("[project]\nname='test'\n")
+        (self.root / "pyproject.toml").write_text(
+            "[project]\nname='test'\nversion='0.1.0'\n"
+        )
         (self.root / "uv.lock").write_text("version = 1\n")
         (self.root / ".python-version").write_text("3.12\n")
         self.local_app_data = Path(self.temp_dir.name) / "local"
@@ -145,6 +147,38 @@ class LauncherCoreTests(unittest.TestCase):
         self.assertFalse(status.ready)
         self.assertFalse(status.first_setup)
         self.assertIn("更新", status.reason)
+
+    def test_version_update_preserves_ocr_settings_and_models(self) -> None:
+        self._add_runtime_python()
+        save_state(self.paths.state_path, project_signature(self.root))
+        settings_path = self.paths.app_data_dir / "settings.json"
+        settings_path.write_text('{"ocr_cache_mode":"automatic"}\n')
+        model_path = (
+            Path(self.temp_dir.name)
+            / "home"
+            / ".paddlex"
+            / "official_models"
+            / "test"
+            / "model.bin"
+        )
+        model_path.parent.mkdir(parents=True)
+        model_path.write_bytes(b"model-data")
+        settings_before = settings_path.read_bytes()
+        model_before = model_path.read_bytes()
+
+        (self.root / "pyproject.toml").write_text(
+            "[project]\nname='test'\nversion='0.2.0'\n"
+        )
+        service = self._service(FakeRunner())
+
+        self.assertFalse(service.status().ready)
+        self.assertIn("更新", service.status().reason)
+        service.prepare()
+
+        self.assertEqual(settings_path.read_bytes(), settings_before)
+        self.assertEqual(model_path.read_bytes(), model_before)
+        state = load_state(self.paths.state_path)
+        self.assertEqual(state["project_signature"], project_signature(self.root))
 
     def test_prepare_syncs_probes_then_marks_ready(self) -> None:
         runner = FakeRunner()

@@ -11,6 +11,7 @@ from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pair
 from megido_ocr_excel.models import TemplateField
 from megido_ocr_excel.ocr.engine import OcrEngine
 from megido_ocr_excel.profiles.megido_novel import PROFILE
+from tests.private_samples import private_sample_test
 
 
 SAMPLE_TEXT = {
@@ -67,6 +68,7 @@ def correct_sample(image: Image.Image, text: str) -> str:
 
 
 class HorizontalGlyphCorrectionTests(unittest.TestCase):
+    @private_sample_test
     def test_repeated_dots_are_recovered_only_for_thresholded_dialogue(self) -> None:
         image = Image.open(".samples/b3.png").convert("RGB")
         result = detect_complete_dialogue_pairs(
@@ -124,12 +126,14 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
 
         self.assertEqual(fallback(image, field, "", image.width), "")
 
+    @private_sample_test
     def test_megido_samples_resolve_one_and_prolonged_sound_marks(self) -> None:
         for filename, (misrecognized, expected) in SAMPLE_TEXT.items():
             with self.subTest(filename=filename):
                 image = Image.open(Path(".samples") / filename).convert("RGB")
                 self.assertEqual(correct_sample(image, misrecognized), expected)
 
+    @private_sample_test
     def test_degraded_sample_keeps_the_prolonged_sound_shape(self) -> None:
         image = Image.open(".samples/5.png").convert("RGB")
         half = image.resize(
@@ -142,6 +146,7 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
             with self.subTest(size=variant.size):
                 self.assertEqual(correct_sample(variant, misrecognized), expected)
 
+    @private_sample_test
     def test_candidate_count_mismatch_and_unrelated_fields_are_not_changed(self) -> None:
         image = Image.open(".samples/5.png").convert("RGB")
         corrector = PROFILE.image_text_corrector
@@ -157,6 +162,7 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
             SAMPLE_TEXT["5.png"][0],
         )
 
+    @private_sample_test
     def test_engine_applies_profile_correction_before_formatting(self) -> None:
         image = Image.open(".samples/5.png").convert("RGB")
         field = detected_dialogue(image)
@@ -182,6 +188,7 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
         self.assertIn("ああー、", value or "")
         self.assertNotIn("ああ一、", value or "")
 
+    @private_sample_test
     def test_engine_without_profile_correction_keeps_the_ocr_result(self) -> None:
         image = Image.open(".samples/5.png").convert("RGB")
         field = detected_dialogue(image)

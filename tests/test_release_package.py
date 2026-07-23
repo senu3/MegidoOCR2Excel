@@ -11,6 +11,8 @@ from scripts.build_release import (
     PUBLIC_FILES,
     build_release,
     collect_release_files,
+    project_version,
+    update_project_version,
 )
 
 
@@ -34,8 +36,10 @@ class ReleasePackageTests(unittest.TestCase):
             first = build_release(PROJECT_ROOT, temp_root / "first")
             second = build_release(PROJECT_ROOT, temp_root / "second")
 
-            self.assertEqual(first.version, "0.1.0")
-            self.assertEqual(first.archive_path.read_bytes(), second.archive_path.read_bytes())
+            self.assertEqual(first.version, project_version(PROJECT_ROOT))
+            self.assertEqual(
+                first.archive_path.read_bytes(), second.archive_path.read_bytes()
+            )
             self.assertEqual(
                 first.sha256,
                 hashlib.sha256(first.archive_path.read_bytes()).hexdigest(),
@@ -58,6 +62,75 @@ class ReleasePackageTests(unittest.TestCase):
             path for path in OPTIONAL_PUBLIC_FILES if (PROJECT_ROOT / path).is_file()
         }
         self.assertEqual(existing, existing.intersection(files))
+
+    def test_version_update_changes_both_sources_and_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            package = root / "megido_ocr_excel"
+            package.mkdir()
+            (root / "pyproject.toml").write_text(
+                '[project]\nname = "test"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            (package / "__init__.py").write_text(
+                '__version__ = "0.1.0"\n', encoding="utf-8"
+            )
+
+            self.assertEqual(update_project_version(root, "0.2.0"), ("0.1.0", "0.2.0"))
+            self.assertEqual(project_version(root), "0.2.0")
+            self.assertIn(
+                'version = "0.2.0"',
+                (root / "pyproject.toml").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                '__version__ = "0.2.0"',
+                (package / "__init__.py").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(update_project_version(root, "0.2.0"), ("0.2.0", "0.2.0"))
+
+    def test_version_update_rejects_invalid_and_older_versions(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            package = root / "megido_ocr_excel"
+            package.mkdir()
+            pyproject = root / "pyproject.toml"
+            package_init = package / "__init__.py"
+            pyproject.write_text(
+                '[project]\nname = "test"\nversion = "0.2.0"\n',
+                encoding="utf-8",
+            )
+            package_init.write_text(
+                '__version__ = "0.2.0"\n', encoding="utf-8"
+            )
+            original = (pyproject.read_bytes(), package_init.read_bytes())
+
+            for value in ("0.1.9", "v0.3.0", "0.3"):
+                with self.subTest(value=value), self.assertRaises(ValueError):
+                    update_project_version(root, value)
+
+            self.assertEqual(
+                (pyproject.read_bytes(), package_init.read_bytes()), original
+            )
+
+    def test_failed_versioned_build_restores_version_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            package = root / "megido_ocr_excel"
+            package.mkdir()
+            pyproject = root / "pyproject.toml"
+            package_init = package / "__init__.py"
+            pyproject.write_text(
+                '[project]\nname = "test"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            package_init.write_text(
+                '__version__ = "0.1.0"\n', encoding="utf-8"
+            )
+
+            with self.assertRaises(FileNotFoundError):
+                build_release(root, root / "dist", version="0.2.0")
+
+            self.assertEqual(project_version(root), "0.1.0")
 
 
 if __name__ == "__main__":

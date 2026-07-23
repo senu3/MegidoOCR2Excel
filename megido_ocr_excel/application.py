@@ -26,6 +26,7 @@ from tkinter import (
 import customtkinter as ctk
 from PIL import Image, ImageTk
 
+from megido_ocr_excel import __version__
 from megido_ocr_excel.ui.dialogs import AppDialogs
 from megido_ocr_excel.diagnostics import (
     configure_logging,
@@ -4861,8 +4862,17 @@ class ImageOcrExcelApp:
             )
             note_row = 8
 
-        buttons = ctk.CTkFrame(content, fg_color="transparent")
-        buttons.grid(row=note_row, column=0, sticky="e", pady=(24, 0))
+        footer = ctk.CTkFrame(content, fg_color="transparent")
+        footer.grid(row=note_row, column=0, sticky="ew", pady=(24, 0))
+        ctk.CTkLabel(
+            footer,
+            text=f"バージョン {__version__}",
+            anchor="w",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).pack(side=LEFT)
+        buttons = ctk.CTkFrame(footer, fg_color="transparent")
+        buttons.pack(side=RIGHT)
         cancel_button = ctk.CTkButton(
             buttons,
             text="キャンセル",

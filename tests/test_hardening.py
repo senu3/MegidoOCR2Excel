@@ -11,6 +11,8 @@ from unittest.mock import MagicMock, patch
 import customtkinter as ctk
 from PIL import Image
 
+from megido_ocr_excel import __version__
+from tests.private_samples import private_sample_test
 from megido_ocr_excel.persistence import atomic_save_workbook, atomic_write_text
 from megido_ocr_excel.config import APP_PROFILE
 from megido_ocr_excel.application import (
@@ -385,6 +387,7 @@ class WorkflowChoiceTests(unittest.TestCase):
         self.assertEqual(app._dispatch_shortcut(command, object()), "break")
         command.assert_not_called()
 
+    @private_sample_test
     def test_supplement_candidate_panel_renders_and_does_not_dirty_the_app(self) -> None:
         root = ctk.CTk()
         root.withdraw()
@@ -453,6 +456,7 @@ class WorkflowChoiceTests(unittest.TestCase):
         finally:
             destroy_tk_root(root)
 
+    @private_sample_test
     def test_recognition_test_hides_raw_ocr(self) -> None:
         root = ctk.CTk()
         root.withdraw()
@@ -494,6 +498,7 @@ class WorkflowChoiceTests(unittest.TestCase):
         finally:
             destroy_tk_root(root)
 
+    @private_sample_test
     def test_recognition_test_uses_concise_copy_and_actions(self) -> None:
         root = ctk.CTk()
         root.withdraw()
@@ -1471,6 +1476,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 if isinstance(widget, ctk.CTkLabel)
             ]
             self.assertIn("基本設定", labels)
+            self.assertIn(f"バージョン {__version__}", labels)
             self.assertIn("OCR言語", labels)
             self.assertIn("OCR環境", labels)
             self.assertNotIn("PaddleOCR（固定）", labels)
@@ -2163,6 +2169,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         finally:
             destroy_tk_root(root)
 
+    @private_sample_test
     def test_switching_auto_detection_to_image_rows_fixes_the_current_coordinate_source(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
         app.export_layout_var = MagicMock()
