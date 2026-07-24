@@ -8,7 +8,7 @@ from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs
-from megido_ocr_excel.models import TemplateField
+from megido_ocr_excel.models import SET_SLOT_SUPPLEMENT, TemplateField
 from megido_ocr_excel.ocr.engine import OcrEngine
 from megido_ocr_excel.profiles.megido_novel import PROFILE
 from tests.private_samples import private_sample_test
@@ -69,7 +69,7 @@ def correct_sample(image: Image.Image, text: str) -> str:
 
 class HorizontalGlyphCorrectionTests(unittest.TestCase):
     @private_sample_test
-    def test_repeated_dots_are_recovered_only_for_thresholded_dialogue(self) -> None:
+    def test_repeated_dots_are_recovered_for_all_dialogue_preprocessing(self) -> None:
         image = Image.open(".samples/b3.png").convert("RGB")
         result = detect_complete_dialogue_pairs(
             image,
@@ -85,7 +85,7 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
         self.assertEqual(field.ocr_preprocess, "threshold")
         self.assertEqual(fallback(crop, field, "", image.width), "…………")
         field.ocr_preprocess = "gray"
-        self.assertEqual(fallback(crop, field, "", image.width), "")
+        self.assertEqual(fallback(crop, field, "", image.width), "…………")
 
     def test_short_repeated_dots_can_recover_two_ellipsis_characters(self) -> None:
         image = Image.new("RGB", (1080, 100), "white")
@@ -101,7 +101,7 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
             0,
             image.width,
             image.height,
-            ocr_preprocess="threshold",
+            ocr_preprocess="gray",
             ocr_line_split="detected",
         )
         fallback = PROFILE.image_text_fallback
@@ -110,7 +110,12 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
         self.assertEqual(fallback(image, field, "", image.width), "……")
         self.assertEqual(fallback(image, field, "認識済み", image.width), "認識済み")
 
-    def test_empty_thresholded_dialogue_is_not_filled_with_punctuation(self) -> None:
+        field.name = "任意項目"
+        self.assertEqual(fallback(image, field, "", image.width), "")
+        field.slot_key = SET_SLOT_SUPPLEMENT
+        self.assertEqual(fallback(image, field, "", image.width), "……")
+
+    def test_empty_dialogue_is_not_filled_with_punctuation(self) -> None:
         image = Image.new("RGB", (1080, 100), "white")
         field = TemplateField(
             "セリフ本文",

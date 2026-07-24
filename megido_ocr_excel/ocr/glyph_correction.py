@@ -5,15 +5,20 @@ from typing import cast
 
 from PIL import Image, ImageOps
 
-from megido_ocr_excel.models import TemplateField
+from megido_ocr_excel.models import (
+    SET_SLOT_SUPPLEMENT,
+    SET_SLOT_TEXT,
+    TemplateField,
+)
 from megido_ocr_excel.ocr.engine import detect_line_bands
 
 
 @dataclass(frozen=True)
 class RepeatedDotCorrector:
-    """Recover punctuation-only log lines that OCR safely leaves blank."""
+    """Recover punctuation-only dialogue lines that OCR safely leaves blank."""
 
     field_prefixes: tuple[str, ...]
+    slot_keys: tuple[str, ...] = (SET_SLOT_TEXT, SET_SLOT_SUPPLEMENT)
     dots_per_ellipsis: int = 3
     min_dot_count: int = 6
     max_dot_count: int = 20
@@ -29,12 +34,14 @@ class RepeatedDotCorrector:
         text: str,
         reference_width: int,
     ) -> str:
+        is_dialogue = field.slot_key in self.slot_keys or field.name.startswith(
+            self.field_prefixes
+        )
         if (
             text.strip()
             or reference_width <= 0
             or field.ocr_line_split != "detected"
-            or field.ocr_preprocess != "threshold"
-            or not field.name.startswith(self.field_prefixes)
+            or not is_dialogue
         ):
             return text
 

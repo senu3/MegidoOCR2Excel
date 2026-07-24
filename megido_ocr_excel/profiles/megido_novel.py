@@ -84,7 +84,7 @@ PROFILE = OcrProfile(
     ),
     image_text_fallback=cast(
         ImageTextCorrector,
-        RepeatedDotCorrector(field_prefixes=("セリフ",)),
+        RepeatedDotCorrector(field_prefixes=("セリフ", "補足セリフ")),
     ),
     image_text_corrector=cast(
         ImageTextCorrector,
