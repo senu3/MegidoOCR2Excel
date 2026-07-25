@@ -10,6 +10,7 @@ from pathlib import Path
 from scripts.build_release import (
     OPTIONAL_PUBLIC_FILES,
     PUBLIC_FILES,
+    USER_GUIDE_IMAGES,
     build_release,
     collect_release_files,
     project_version,
@@ -24,6 +25,7 @@ class ReleasePackageTests(unittest.TestCase):
     def test_public_manifest_contains_only_runtime_and_user_files(self) -> None:
         files = collect_release_files(PROJECT_ROOT)
         self.assertTrue(set(PUBLIC_FILES).issubset(files))
+        self.assertTrue(set(USER_GUIDE_IMAGES).issubset(files))
         self.assertIn(Path("megido_ocr_excel/application.py"), files)
         for relative_path in files:
             self.assertNotIn("tests", relative_path.parts)

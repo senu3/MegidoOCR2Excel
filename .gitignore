@@ -12,4 +12,10 @@ wheels/
 .samples/*
 !.samples/
 !.samples/*.json
-docs/
+
+# Keep generated documentation screenshots, but ignore other untracked docs.
+docs/*
+!docs/images/
+docs/images/*
+!docs/images/user-guide/
+!docs/images/user-guide/*.png

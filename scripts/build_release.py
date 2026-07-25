@@ -10,6 +10,15 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 
+USER_GUIDE_IMAGES = (
+    Path("docs/images/user-guide/basic-settings.png"),
+    Path("docs/images/user-guide/excel-output.png"),
+    Path("docs/images/user-guide/range-and-columns.png"),
+    Path("docs/images/user-guide/recognition-test-result.png"),
+    Path("docs/images/user-guide/start-method.png"),
+)
+
+
 PUBLIC_FILES = (
     Path(".python-version"),
     Path("MegidoOCR2Excel.cmd"),
@@ -20,6 +29,7 @@ PUBLIC_FILES = (
     Path("pyproject.toml"),
     Path("run_app.ps1"),
     Path("uv.lock"),
+    *USER_GUIDE_IMAGES,
 )
 OPTIONAL_PUBLIC_FILES = (
     Path("LICENSE"),
