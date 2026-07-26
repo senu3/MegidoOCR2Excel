@@ -1488,7 +1488,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 if isinstance(widget, ctk.CTkCheckBox)
             ]
             self.assertIn(
-                "漢数字「一」と長音符「ー」を画像形状で補正",
+                "横線記号（一・ー・――）を画像形状で補正",
                 checkbox_texts,
             )
 
@@ -1604,7 +1604,7 @@ class ModalConsistencyTests(unittest.TestCase):
                 if isinstance(widget, ctk.CTkCheckBox)
             ]
             self.assertNotIn(
-                "漢数字「一」と長音符「ー」を画像形状で補正",
+                "横線記号（一・ー・――）を画像形状で補正",
                 checkbox_texts,
             )
             self.assertFalse(app.image_text_correction_enabled)

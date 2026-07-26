@@ -102,13 +102,19 @@ class RepeatedDotCorrector:
 
 @dataclass(frozen=True)
 class HorizontalGlyphCorrector:
-    """Resolve two isolated horizontal glyphs using profile-specific widths."""
+    """Resolve ambiguous horizontal glyphs using profile-specific widths."""
 
     field_prefixes: tuple[str, ...]
     short_glyph: str
     long_glyph: str
     short_max_width_ratio: float
     long_min_width_ratio: float
+    double_bar_glyph: str = "―"
+    double_bar_count: int = 2
+    double_bar_min_width_ratio: float = 0.065
+    double_bar_max_width_ratio: float = 0.105
+    double_bar_dark_threshold: int = 70
+    double_bar_min_aspect_ratio: float = 8.0
     dark_threshold: int = 100
     min_aspect_ratio: float = 5.0
     min_width_to_line_height: float = 0.65
@@ -132,6 +138,7 @@ class HorizontalGlyphCorrector:
         ):
             return text
 
+        text = self._correct_boundary_double_bars(crop, text, reference_width)
         ambiguous_positions = [
             index
             for index, char in enumerate(text)
@@ -152,6 +159,111 @@ class HorizontalGlyphCorrector:
             elif width_ratio >= self.long_min_width_ratio:
                 corrected[text_index] = self.long_glyph
         return "".join(corrected)
+
+    def _correct_boundary_double_bars(
+        self,
+        crop: Image.Image,
+        text: str,
+        reference_width: int,
+    ) -> str:
+        segments = text.splitlines(keepends=True)
+        bodies = [segment.rstrip("\r\n") for segment in segments]
+        if not bodies or any(not body for body in bodies):
+            return text
+
+        bands = detect_line_bands(
+            crop,
+            threshold=self.double_bar_dark_threshold,
+            min_ratio=0.015,
+            gap=max(2, round(crop.width * 0.01)),
+            padding=0,
+        )
+        if len(bands) != len(bodies):
+            return text
+
+        ambiguous = {
+            self.short_glyph,
+            self.long_glyph,
+            self.double_bar_glyph,
+        }
+        replacement = self.double_bar_glyph * self.double_bar_count
+        corrected: list[str] = []
+        changed = False
+        for segment, body, band in zip(segments, bodies, bands):
+            line = ImageOps.grayscale(crop.crop((0, band[0], crop.width, band[1])))
+            candidates, ink_left, ink_right = self._double_bar_candidates(
+                line,
+                reference_width,
+            )
+            suffix = segment[len(body) :]
+            new_body = body
+            edge_tolerance = max(2, round(reference_width * 0.004))
+
+            if (
+                new_body[0] in ambiguous
+                and not new_body.startswith(replacement)
+                and any(x1 <= ink_left + edge_tolerance for x1, _x2 in candidates)
+            ):
+                new_body = replacement + new_body[1:]
+            if (
+                new_body[-1] in ambiguous
+                and not new_body.endswith(replacement)
+                and any(x2 >= ink_right - edge_tolerance for _x1, x2 in candidates)
+            ):
+                new_body = new_body[:-1] + replacement
+
+            changed = changed or new_body != body
+            corrected.append(new_body + suffix)
+        return "".join(corrected) if changed else text
+
+    def _double_bar_candidates(
+        self,
+        line: Image.Image,
+        reference_width: int,
+    ) -> tuple[list[tuple[int, int]], int, int]:
+        line_height = line.height
+        if line_height <= 0:
+            return [], 0, line.width
+
+        components = _dark_components(line, self.double_bar_dark_threshold)
+        min_ink_area = (
+            line_height * line_height * self.min_area_to_line_height_squared
+        )
+        ink_components = [
+            component
+            for component in components
+            if component[4] >= min_ink_area
+            and component[0] > 0
+            and component[2] < line.width
+        ]
+        if not ink_components:
+            return [], 0, line.width
+
+        candidates: list[tuple[int, int]] = []
+        for x1, y1, x2, y2, area in ink_components:
+            width = x2 - x1
+            height = y2 - y1
+            width_ratio = width / reference_width
+            center_y_ratio = (y1 + y2) / 2 / line_height
+            if (
+                not self.double_bar_min_width_ratio
+                <= width_ratio
+                <= self.double_bar_max_width_ratio
+                or width / max(1, height) < self.double_bar_min_aspect_ratio
+                or height > line_height * self.max_height_to_line_height
+                or not self.min_center_y_ratio
+                <= center_y_ratio
+                <= self.max_center_y_ratio
+                or area < min_ink_area
+            ):
+                continue
+            candidates.append((x1, x2))
+
+        return (
+            candidates,
+            min(component[0] for component in ink_components),
+            max(component[2] for component in ink_components),
+        )
 
     def _horizontal_candidates(self, crop: Image.Image) -> list[int]:
         bands = detect_line_bands(

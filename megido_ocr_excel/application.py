@@ -4849,7 +4849,7 @@ class ImageOcrExcelApp:
         if self.profile.image_text_corrector is not None:
             image_text_correction_checkbox = ctk.CTkCheckBox(
                 content,
-                text="漢数字「一」と長音符「ー」を画像形状で補正",
+                text="横線記号（一・ー・――）を画像形状で補正",
                 variable=dialog_image_text_correction,
                 font=UI_FONT_SMALL,
                 text_color=COLOR_TEXT,
@@ -4863,7 +4863,7 @@ class ImageOcrExcelApp:
             )
             add_tooltip(
                 image_text_correction_checkbox,
-                "判定できる場合だけ、元画像の横棒の幅から漢数字「一」と長音符「ー」を補正します。",
+                "判定できる場合だけ、元画像の横棒の幅と位置から「一」「ー」「――」を補正します。",
             )
             note_row = 8
 

@@ -139,6 +139,42 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
                 self.assertEqual(correct_sample(image, misrecognized), expected)
 
     @private_sample_test
+    def test_double_bar_is_recovered_at_dialogue_line_start(self) -> None:
+        image = Image.open(".samples/b6.png").convert("RGB")
+        suffix = (
+            "被害については見当もつかん\n"
+            "なにしろ、空間の繋ぎ目から\n"
+            "別の場所へ行ったが最後…"
+        )
+
+        for recognized in ("一", "ー", "―"):
+            with self.subTest(recognized=recognized):
+                self.assertEqual(
+                    correct_sample(image, recognized + suffix),
+                    "――" + suffix,
+                )
+
+    def test_double_bar_is_recovered_at_line_end_but_not_in_the_middle(self) -> None:
+        image = Image.new("RGB", (1080, 100), "white")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((40, 25, 70, 75), fill="black")
+        draw.rectangle((100, 49, 180, 50), fill="black")
+        field = TemplateField(
+            "セリフ本文",
+            0,
+            0,
+            image.width,
+            image.height,
+            ocr_preprocess="gray",
+            ocr_line_split="detected",
+        )
+        corrector = PROFILE.image_text_corrector
+        assert corrector is not None
+
+        self.assertEqual(corrector(image, field, "本文ー", image.width), "本文――")
+        self.assertNotIn("――", corrector(image, field, "本ー文", image.width))
+
+    @private_sample_test
     def test_degraded_sample_keeps_the_prolonged_sound_shape(self) -> None:
         image = Image.open(".samples/5.png").convert("RGB")
         half = image.resize(
