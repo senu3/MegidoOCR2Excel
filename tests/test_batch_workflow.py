@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import tempfile
 import unittest
 from argparse import Namespace
@@ -16,6 +17,7 @@ from megido_ocr_excel.export.queue import (
     STATUS_SUCCESS,
     ImageQueue,
 )
+from megido_ocr_excel.export.csv import CsvExporter
 from megido_ocr_excel.ocr.dialogue_detector import (
     DialoguePairDetectionResult,
     detect_complete_dialogue_pairs,
@@ -104,6 +106,117 @@ class BatchWorkflowTests(unittest.TestCase):
                 )
 
             self.assertEqual(output.read_bytes(), original_bytes)
+
+    def test_csv_export_uses_utf8_bom_and_preserves_special_characters(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "1.png"
+            output = root / "output.csv"
+            Image.new("RGB", (10, 10), "white").save(image_path)
+            fields = [
+                TemplateField("話者", 0, 0, 5, 10),
+                TemplateField("本文", 5, 0, 10, 10),
+            ]
+
+            def recognize(_image, field):
+                return (
+                    "話者名" if field.name == "話者" else "読点,あり\n改行あり",
+                    None,
+                )
+
+            result = CsvExporter().export(
+                output,
+                [image_path],
+                fields,
+                ExportSettings(),
+                recognize,
+            )
+
+            self.assertTrue(output.read_bytes().startswith(b"\xef\xbb\xbf"))
+            with output.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual(
+                rows,
+                [
+                    ["画像名", "話者", "本文"],
+                    ["1.png", "話者名", "読点,あり\n改行あり"],
+                ],
+            )
+            self.assertEqual(result.total_images, 1)
+            self.assertEqual(result.records[0].start_row, 2)
+
+    def test_cancelled_csv_export_does_not_replace_existing_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "1.png"
+            output = root / "output.csv"
+            Image.new("RGB", (10, 10), "white").save(image_path)
+            output.write_text("変更前", encoding="utf-8")
+            original_bytes = output.read_bytes()
+            cancelled = False
+
+            def recognize(_image, _field):
+                nonlocal cancelled
+                cancelled = True
+                return "未保存", None
+
+            with self.assertRaises(OperationCancelled):
+                CsvExporter().export(
+                    output,
+                    [image_path],
+                    [TemplateField("本文", 0, 0, 10, 10)],
+                    ExportSettings(),
+                    recognize,
+                    cancel_check=lambda: cancelled,
+                )
+
+            self.assertEqual(output.read_bytes(), original_bytes)
+
+    def test_csv_retry_replaces_only_failed_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first_image = root / "1.png"
+            second_image = root / "2.png"
+            output = root / "output.csv"
+            for image_path in (first_image, second_image):
+                Image.new("RGB", (10, 10), "white").save(image_path)
+            field = TemplateField("本文", 0, 0, 10, 10)
+            exporter = CsvExporter()
+
+            recognition_results = iter(
+                [(None, "認識失敗"), ("成功済み", None)]
+            )
+
+            def first_recognition(_image, _field):
+                return next(recognition_results)
+
+            first_result = exporter.export(
+                output,
+                [first_image, second_image],
+                [field],
+                ExportSettings(),
+                first_recognition,
+            )
+            retry_result = exporter.retry_failed(
+                output,
+                first_result,
+                [field],
+                ExportSettings(),
+                lambda _image, _field: ("復旧", None),
+                retry_files=[first_image],
+            )
+
+            with output.open("r", encoding="utf-8-sig", newline="") as handle:
+                rows = list(csv.reader(handle))
+            self.assertEqual(
+                rows,
+                [
+                    ["画像名", "本文"],
+                    ["1.png", "復旧"],
+                    ["2.png", "成功済み"],
+                ],
+            )
+            self.assertEqual(retry_result.errors, [])
 
     def test_all_ocr_modes_support_shared_join_and_fullwidth_settings(self) -> None:
         source = "ABC!? ()\n次の行"
@@ -945,6 +1058,7 @@ class BatchWorkflowTests(unittest.TestCase):
             root = Path(temp_dir)
             image_path = root / "missions.png"
             output = root / "heading-text.xlsx"
+            csv_output = root / "heading-text.csv"
             Image.new("RGB", (20, 20), "white").save(image_path)
             definition = set_definition_for_preset(SET_PRESET_HEADING_TEXT)
             fields = [
@@ -969,6 +1083,27 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual(
                 [sheet.cell(2, column).value for column in range(2, 5)],
                 ["1", "見出し", "本文"],
+            )
+
+            CsvExporter().export(
+                csv_output,
+                [image_path],
+                fields,
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
+                lambda _image, field: (field.name, None),
+                set_definition=definition,
+            )
+            with csv_output.open(
+                "r", encoding="utf-8-sig", newline=""
+            ) as handle:
+                csv_rows = list(csv.reader(handle))
+
+            self.assertEqual(
+                csv_rows,
+                [
+                    ["画像名", "順序", "見出し", "本文"],
+                    ["missions.png", "1", "見出し", "本文"],
+                ],
             )
 
 

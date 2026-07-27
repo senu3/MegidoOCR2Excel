@@ -121,24 +121,69 @@ class ExcelExporter:
         raise_if_cancelled(cancel_check)
         set_resolver = set_resolver or dialogue_pair_resolver
         definition = (set_definition or set_definition_for_preset("conversation")).normalized()
-        if settings.output_layout == EXPORT_LAYOUT_SET and set_resolver is None:
-            set_error = set_validation_error(fields, definition)
-            if set_error:
-                raise ValueError(set_error)
         workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
-        headers = self._headers(fields, settings, definition)
+        headers = self.headers(fields, settings, definition)
         if settings.include_header and row_cursor == settings.start_row:
             self._write_excel_row(sheet, row_cursor, settings.start_col, headers)
             row_cursor += 1
 
+        rows, result = self.recognize_rows(
+            image_files,
+            fields,
+            settings,
+            ocr_callback,
+            start_row=row_cursor,
+            progress_callback=progress_callback,
+            set_definition=definition,
+            set_resolver=set_resolver,
+            cancel_check=cancel_check,
+        )
+        for row in rows:
+            self._write_excel_row(sheet, row_cursor, settings.start_col, row)
+            row_cursor += 1
+
+        raise_if_cancelled(cancel_check)
+        self._fit_output_columns(sheet)
+        self._write_error_sheet(workbook, result.errors)
+        self._write_notice_sheet(workbook, result.notices)
+
+        raise_if_cancelled(cancel_check)
+        atomic_save_workbook(workbook, output_path)
+        return result
+
+    def recognize_rows(
+        self,
+        image_files: list[Path],
+        fields: list[TemplateField],
+        settings: ExportSettings,
+        ocr_callback: OcrCallback,
+        *,
+        start_row: int = 1,
+        progress_callback: Callable[[int, int, Path], None] | None = None,
+        set_definition: SetDefinition | None = None,
+        set_resolver: SetResolver | None = None,
+        cancel_check: CancelCheck | None = None,
+    ) -> tuple[list[list[str]], ExportResult]:
+        """Recognize images into format-neutral rows for spreadsheet exporters."""
+        raise_if_cancelled(cancel_check)
+        definition = (
+            set_definition or set_definition_for_preset("conversation")
+        ).normalized()
+        if settings.output_layout == EXPORT_LAYOUT_SET and set_resolver is None:
+            set_error = set_validation_error(fields, definition)
+            if set_error:
+                raise ValueError(set_error)
+
+        output_rows: list[list[str]] = []
         errors: list[ExportError] = []
         notices: list[ExportNotice] = []
         records: list[ImageExportRecord] = []
+        row_cursor = start_row
         total = len(image_files)
 
         for row_index, image_path in enumerate(image_files, start=1):
             raise_if_cancelled(cancel_check)
-            rows, image_errors, image_notices = self._recognize_image_rows(
+            rows, image_errors, image_notices = self.recognize_image_rows(
                 image_path,
                 fields,
                 settings,
@@ -147,28 +192,24 @@ class ExcelExporter:
                 set_resolver,
                 cancel_check,
             )
-            start_row = row_cursor
-            for row in rows:
-                self._write_excel_row(sheet, row_cursor, settings.start_col, row)
-                row_cursor += 1
-            errors.extend(image_errors)
-            notices.extend(image_notices)
             records.append(
                 ImageExportRecord(
-                    image_path, start_row, len(rows), image_errors, image_notices
+                    image_path,
+                    row_cursor,
+                    len(rows),
+                    image_errors,
+                    image_notices,
                 )
             )
+            output_rows.extend(rows)
+            row_cursor += len(rows)
+            errors.extend(image_errors)
+            notices.extend(image_notices)
             if progress_callback:
                 progress_callback(row_index, total, image_path)
 
         raise_if_cancelled(cancel_check)
-        self._fit_output_columns(sheet)
-        self._write_error_sheet(workbook, errors)
-        self._write_notice_sheet(workbook, notices)
-
-        raise_if_cancelled(cancel_check)
-        atomic_save_workbook(workbook, output_path)
-        return ExportResult(total, errors, records, notices)
+        return output_rows, ExportResult(total, errors, records, notices)
 
     def retry_failed(
         self,
@@ -210,7 +251,7 @@ class ExcelExporter:
 
         for row_index, record in enumerate(retry_records, start=1):
             raise_if_cancelled(cancel_check)
-            rows, image_errors, image_notices = self._recognize_image_rows(
+            rows, image_errors, image_notices = self.recognize_image_rows(
                 record.image_path,
                 fields,
                 settings,
@@ -225,7 +266,7 @@ class ExcelExporter:
                 sheet,
                 record,
                 settings.start_col,
-                len(self._headers(fields, settings, definition)),
+                len(self.headers(fields, settings, definition)),
             )
             for offset, row in enumerate(rows):
                 self._write_excel_row(sheet, record.start_row + offset, settings.start_col, row)
@@ -250,7 +291,7 @@ class ExcelExporter:
         records = [updated_by_path.get(record.image_path, record) for record in previous_result.records]
         return ExportResult(previous_result.total_images, errors, records, notices)
 
-    def _recognize_image_rows(
+    def recognize_image_rows(
         self,
         image_path: Path,
         fields: list[TemplateField],
@@ -388,7 +429,7 @@ class ExcelExporter:
             return rows
         return [[*([image_path.name] if settings.include_filename else []), *([""] * len(fields))]]
 
-    def _headers(
+    def headers(
         self,
         fields: list[TemplateField],
         settings: ExportSettings,

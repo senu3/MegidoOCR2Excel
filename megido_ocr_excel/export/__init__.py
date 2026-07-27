@@ -1,1 +1,1 @@
-"""Excel export and batch queue support."""
+"""Spreadsheet export and batch queue support."""

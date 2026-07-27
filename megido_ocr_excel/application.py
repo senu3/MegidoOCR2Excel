@@ -45,6 +45,7 @@ from megido_ocr_excel.export.queue import (
     ImageQueue,
     ImageQueueItem,
 )
+from megido_ocr_excel.export.csv import CsvExporter
 from megido_ocr_excel.ocr.dialogue_detector import (
     detect_complete_dialogue_pairs,
     include_supplement_candidates,
@@ -331,6 +332,7 @@ class ImageOcrExcelApp:
             self.profile.image_text_fallback,
         )
         self.excel_exporter = ExcelExporter()
+        self.csv_exporter = CsvExporter(self.excel_exporter)
 
         self.mode_var = StringVar(value=MODE_TEMPLATE)
         self.image_var = StringVar(value="画像未選択")
@@ -364,9 +366,11 @@ class ImageOcrExcelApp:
         self.queue_status_labels: dict[Path, ctk.CTkLabel] = {}
         self.queue_summary_var = StringVar(value="処理対象 0 / 0")
         self.retry_button: ctk.CTkButton | None = None
+        self.export_more_button: ctk.CTkButton | None = None
         self.last_export_result: ExportResult | None = None
         self.last_export_signature: tuple | None = None
         self.last_export_output_path: Path | None = None
+        self.last_export_format = ""
 
         self.side_body: ctk.CTkFrame | None = None
         self.template_toolbar: ctk.CTkFrame | None = None
@@ -781,6 +785,30 @@ class ImageOcrExcelApp:
             + button.winfo_width()
             - menu.winfo_reqwidth()
         )
+        y = button.winfo_rooty() + button.winfo_height()
+        try:
+            menu.tk_popup(x, y)
+        finally:
+            menu.grab_release()
+
+    def show_export_actions_menu(self, button: ctk.CTkButton) -> None:
+        menu = Menu(
+            self.root,
+            tearoff=0,
+            background=COLOR_SURFACE_ALT,
+            foreground=COLOR_TEXT,
+            activebackground=COLOR_PRIMARY,
+            activeforeground=THEME.palette.on_color,
+            disabledforeground=THEME.palette.disabled_fill,
+            borderwidth=1,
+            relief="flat",
+        )
+        menu.add_command(
+            label="CSV形式で保存…",
+            command=self.export_to_csv,
+        )
+        menu.update_idletasks()
+        x = button.winfo_rootx() + button.winfo_width() - menu.winfo_reqwidth()
         y = button.winfo_rooty() + button.winfo_height()
         try:
             menu.tk_popup(x, y)
@@ -1251,7 +1279,7 @@ class ImageOcrExcelApp:
             if self._ocr_setup_operation
             else (
                 "現在処理中の項目が終わり次第、安全に停止します。"
-                "\nExcel出力中の場合、未完了の内容は保存されません。"
+                "\nファイル出力中の場合、未完了の内容は保存されません。"
             )
         )
         if not self.dialogs.askyesno(
@@ -1414,7 +1442,7 @@ class ImageOcrExcelApp:
                 "処理中です",
                 "処理をキャンセルして終了しますか？\n\n"
                 "現在処理中の項目が終わり次第、安全に停止します。"
-                "\nExcel出力中の場合、未完了の内容は保存されません。",
+                "\nファイル出力中の場合、未完了の内容は保存されません。",
                 yes_text="キャンセルして終了",
                 no_text="戻る",
                 destructive=True,
@@ -2811,6 +2839,7 @@ class ImageOcrExcelApp:
 
         actions = ctk.CTkFrame(body, fg_color=COLOR_SURFACE)
         actions.pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
+        actions.grid_columnconfigure(0, weight=1)
         retry_count = (
             len(self.image_queue.failed_files()) if self.last_export_result else 0
         )
@@ -2829,7 +2858,13 @@ class ImageOcrExcelApp:
             border_width=1,
             border_color=COLOR_BORDER,
         )
-        self.retry_button.pack(fill="x", pady=(0, 6))
+        self.retry_button.grid(
+            row=0,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(0, 6),
+        )
         ctk.CTkButton(
             actions,
             text="Excel出力",
@@ -2841,7 +2876,36 @@ class ImageOcrExcelApp:
             font=UI_FONT_BOLD,
             fg_color=COLOR_CTA,
             hover_color=COLOR_CTA_HOVER,
-        ).pack(fill="x")
+        ).grid(row=1, column=0, sticky="ew", padx=(0, 4))
+        self.export_more_button = ctk.CTkButton(
+            actions,
+            text="",
+            image=ICONS.get("more", 18, COLOR_MUTED),
+            command=lambda: None,
+            width=40,
+            height=THEME.layout.export_button_height,
+            corner_radius=THEME.layout.control_radius,
+            fg_color="transparent",
+            hover_color=COLOR_UTILITY_HOVER,
+            border_width=0,
+        )
+        self.export_more_button.configure(
+            command=lambda button=self.export_more_button: (
+                self.show_export_actions_menu(button)
+            )
+        )
+        self.export_more_button.grid(row=1, column=1)
+        add_tooltip(
+            self.export_more_button,
+            "その他の出力",
+        )
+        ctk.CTkLabel(
+            actions,
+            text="Excelがない場合は、右のメニューからCSVで保存できます。",
+            anchor="e",
+            font=UI_FONT_SMALL,
+            text_color=COLOR_MUTED,
+        ).grid(row=2, column=0, columnspan=2, sticky="e", pady=(3, 0))
 
     def _render_image_queue(self, parent) -> None:
         panel = ctk.CTkFrame(
@@ -3049,6 +3113,7 @@ class ImageOcrExcelApp:
         self.last_export_result = None
         self.last_export_signature = None
         self.last_export_output_path = None
+        self.last_export_format = ""
         if reset_queue:
             self.image_queue.prepare(self.image_queue.included_files())
         self._update_queue_summary()
@@ -7607,6 +7672,202 @@ class ImageOcrExcelApp:
             self.export_layout_var.get(),
         )
 
+    def _build_csv_export_settings(self) -> ExportSettings:
+        return ExportSettings(
+            sheet_name="CSV",
+            write_mode="上書き",
+            start_row=1,
+            start_col=1,
+            include_filename=self.export_include_filename_var.get(),
+            include_header=self.export_include_header_var.get(),
+            output_layout=self.export_layout_var.get(),
+        )
+
+    def export_to_csv(self, _event=None) -> None:
+        fields = self._enabled_fields()
+        if not fields:
+            self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
+            return
+        pair_error = self._validate_dialogue_pair_export(fields)
+        if pair_error:
+            self.dialogs.showerror("セット設定エラー", pair_error)
+            return
+        if not self.image_files:
+            self.dialogs.showerror("画像なし", "画像フォルダを選択してください。")
+            return
+        image_files = self.image_queue.included_files()
+        if not image_files:
+            self.dialogs.showerror(
+                "処理対象なし", "画像キューで処理する画像を1枚以上選択してください。"
+            )
+            return
+        if not self._require_ocr_ready(self.export_to_csv):
+            return
+
+        file_name = filedialog.asksaveasfilename(
+            title="CSV出力先を選択",
+            defaultextension=".csv",
+            filetypes=[("CSV file", "*.csv")],
+            confirmoverwrite=False,
+        )
+        if not file_name:
+            return
+        output_path = Path(file_name)
+        if output_path.exists() and not self.dialogs.askyesno(
+            "上書き確認",
+            f"既存ファイルを上書きします。\n{output_path}",
+            yes_text="上書きする",
+            no_text="戻る",
+            destructive=True,
+        ):
+            return
+
+        settings = self._build_csv_export_settings()
+        total = len(image_files)
+        self.progress_var.set(f"0 / {total}")
+        self.status_var.set("CSV出力を開始しました。")
+        image_files = list(image_files)
+        export_fields = [self._field_for_ocr(field) for field in fields]
+        coordinate_settings = replace(self.coordinate_settings)
+        lang = self.lang_var.get()
+        tesseract_path = ""
+        backend = self.profile.default_backend
+        correction_rules = [replace(rule) for rule in self.correction_rules]
+        dialogue_detection = self.profile.dialogue_log_detection
+        text_formatting = self.text_formatting
+        export_definition = self.set_definition
+        set_resolver = None
+        if (
+            dialogue_detection is not None
+            and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+            and self.auto_detection_enabled
+            and export_definition.preset == SET_PRESET_CONVERSATION
+        ):
+            set_resolver = _dialogue_set_resolver(
+                coordinate_settings,
+                dialogue_detection,
+            )
+
+        export_signature = self._export_structure_signature(export_fields, settings)
+        self._clear_retry_context()
+        self.image_queue.prepare(image_files)
+        for path in image_files:
+            self._refresh_queue_item_status(path)
+
+        def update_progress(
+            row_index: int, total_count: int, image_path: Path
+        ) -> None:
+            def apply_update() -> None:
+                self.image_queue.mark_processing(image_path)
+                self._refresh_queue_item_status(image_path)
+                self.progress_var.set(f"{row_index} / {total_count}")
+                self.status_var.set(f"OCR中: {image_path.name}")
+                self._update_loading(
+                    "CSVへ出力しています",
+                    note=f"{row_index} / {total_count} 画像\n{image_path.name}",
+                    progress=row_index / max(1, total_count),
+                )
+
+            self.root.after(0, apply_update)
+
+        def work():
+            return self.csv_exporter.export(
+                output_path,
+                image_files,
+                export_fields,
+                settings,
+                lambda image, field: self.ocr_engine.recognize_field(
+                    image,
+                    field,
+                    lang,
+                    tesseract_path,
+                    backend,
+                    correction_rules,
+                    coordinate_settings,
+                    text_formatting,
+                ),
+                update_progress,
+                set_definition=export_definition,
+                set_resolver=set_resolver,
+                cancel_check=self._is_operation_cancelled,
+            )
+
+        def on_success(result: ExportResult) -> None:
+            logger.info(
+                "CSV export result | images=%d | errors=%d | notices=%d",
+                result.total_images,
+                len(result.errors),
+                len(result.notices),
+            )
+            self.last_export_result = result
+            self.last_export_signature = export_signature
+            self.last_export_output_path = output_path
+            self.last_export_format = "csv"
+            self.image_queue.apply_result(result)
+            self._render_side_body()
+            if result.errors:
+                self.status_var.set(
+                    f"CSVへ出力しました（エラー {len(result.errors)} 件）: {output_path}"
+                )
+                self.dialogs.showwarning(
+                    "完了（エラーあり）",
+                    f"{result.total_images} 画像の処理が完了しました。"
+                    f"\nOCRエラー {len(result.errors)} 件はCSVで空欄になっています。"
+                    "\n該当画像は画像キューで確認できます。"
+                    + (
+                        f"\n除外通知: {len(result.notices)} 件"
+                        if result.notices
+                        else ""
+                    )
+                    + f"\n{output_path}",
+                )
+            else:
+                notice_suffix = (
+                    f"（除外通知 {len(result.notices)} 件）"
+                    if result.notices
+                    else ""
+                )
+                self.status_var.set(f"CSVへ出力しました{notice_suffix}: {output_path}")
+                self.dialogs.showinfo(
+                    "完了",
+                    f"{result.total_images} 画像をCSVへ出力しました。"
+                    + (
+                        f"\n除外通知: {len(result.notices)} 件"
+                        if result.notices
+                        else ""
+                    )
+                    + f"\n{output_path}",
+                )
+
+        def on_error(error: Exception) -> None:
+            self.image_queue.prepare(image_files)
+            self._render_side_body()
+            self.status_var.set("CSV出力に失敗しました。")
+            self.dialogs.showerror(
+                "出力エラー", f"CSVへ出力できませんでした。\n{error}"
+            )
+
+        def on_finally() -> None:
+            self.progress_var.set("")
+
+        def on_cancel() -> None:
+            self.image_queue.prepare(image_files)
+            self._render_side_body()
+            self.status_var.set(
+                "CSV出力をキャンセルしました。ファイルは変更されていません。"
+            )
+
+        self._run_background(
+            "CSVへ出力しています",
+            work,
+            on_success,
+            on_error,
+            on_finally,
+            on_cancel,
+            loading_note=f"0 / {total} 画像\n出力の準備をしています。",
+            loading_progress=0.0,
+        )
+
     def export_to_excel(self, _event=None) -> None:
         fields = self._enabled_fields()
         if not fields:
@@ -7727,6 +7988,7 @@ class ImageOcrExcelApp:
             self.last_export_result = result
             self.last_export_signature = export_signature
             self.last_export_output_path = output_path
+            self.last_export_format = "excel"
             self.image_queue.apply_result(result)
             self._render_side_body()
             if result.errors:
@@ -7789,7 +8051,10 @@ class ImageOcrExcelApp:
 
     def retry_failed_images(self) -> None:
         if self.last_export_result is None or self.last_export_output_path is None:
-            self.dialogs.showinfo("再実行対象なし", "先にExcel出力を実行してください。")
+            self.dialogs.showinfo(
+                "再実行対象なし",
+                "先にExcelまたはCSV出力を実行してください。",
+            )
             return
         retry_files = self.image_queue.failed_files()
         if not retry_files:
@@ -7800,22 +8065,35 @@ class ImageOcrExcelApp:
         if pair_error:
             self.dialogs.showerror("セット設定エラー", pair_error)
             return
-        settings, error = self._build_export_settings()
-        if error or settings is None:
-            self.dialogs.showerror(
-                "出力設定エラー", error or "Excel出力設定を確認してください。"
-            )
-            return
+        export_format = getattr(self, "last_export_format", "excel") or "excel"
+        if export_format == "csv":
+            settings = self._build_csv_export_settings()
+        else:
+            settings, error = self._build_export_settings()
+            if error or settings is None:
+                self.dialogs.showerror(
+                    "出力設定エラー", error or "Excel出力設定を確認してください。"
+                )
+                return
         current_signature = self._export_structure_signature(fields, settings)
         if (
-            self.output_path != self.last_export_output_path
+            (
+                export_format == "excel"
+                and self.output_path != self.last_export_output_path
+            )
             or current_signature != self.last_export_signature
         ):
+            destination_label = (
+                "ファイル名列、ヘッダー行、Excelの行単位・出力列"
+                if export_format == "csv"
+                else "出力先、シート、開始セル、Excelの行単位・出力列"
+            )
             self.dialogs.showerror(
                 "再実行できません",
-                "出力先、シート、開始セル、Excelの行単位・出力列のいずれかが"
+                f"{destination_label}のいずれかが"
                 "前回の出力から変更されています。\n"
-                "全画像をExcel出力し直してください。",
+                f"全画像を{export_format.upper() if export_format == 'csv' else 'Excel'}"
+                "出力し直してください。",
             )
             return
         if not self._require_ocr_ready(self.retry_failed_images):
@@ -7863,7 +8141,12 @@ class ImageOcrExcelApp:
             self.root.after(0, apply_update)
 
         def work():
-            return self.excel_exporter.retry_failed(
+            exporter = (
+                self.csv_exporter
+                if export_format == "csv"
+                else self.excel_exporter
+            )
+            return exporter.retry_failed(
                 output_path,
                 previous_result,
                 export_fields,
@@ -7887,7 +8170,8 @@ class ImageOcrExcelApp:
 
         def on_success(result: ExportResult) -> None:
             logger.info(
-                "Excel retry result | retried=%d | remaining_errors=%d",
+                "%s retry result | retried=%d | remaining_errors=%d",
+                export_format.upper(),
                 total,
                 len(result.errors),
             )
@@ -7923,7 +8207,11 @@ class ImageOcrExcelApp:
         def on_cancel() -> None:
             self.image_queue.apply_result(previous_result)
             self._render_side_body()
-            self.status_var.set("失敗分の再実行をキャンセルしました。Excelは変更されていません。")
+            format_label = "CSV" if export_format == "csv" else "Excel"
+            self.status_var.set(
+                f"失敗分の再実行をキャンセルしました。"
+                f"{format_label}は変更されていません。"
+            )
 
         self._run_background(
             "失敗した画像を再実行しています",

@@ -1934,6 +1934,51 @@ class FieldNameInteractionTests(unittest.TestCase):
                 app.workflow_choice_modal.destroy()
             destroy_tk_root(root)
 
+    def test_csv_export_is_presented_as_a_secondary_action(self) -> None:
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root)
+        try:
+            app._hide_workflow_choice()
+            app.mode_var.set(MODE_EXPORT)
+            app._render_side_body()
+            buttons = [
+                widget
+                for widget in descendants_of(app.side_body)
+                if isinstance(widget, ctk.CTkButton)
+            ]
+            excel_button = next(
+                button for button in buttons if button.cget("text") == "Excel出力"
+            )
+            labels = [
+                widget.cget("text")
+                for widget in descendants_of(app.side_body)
+                if isinstance(widget, ctk.CTkLabel)
+            ]
+
+            self.assertNotEqual(excel_button.cget("fg_color"), "transparent")
+            self.assertIsNotNone(app.export_more_button)
+            self.assertEqual(
+                app.export_more_button.cget("fg_color"),
+                "transparent",
+            )
+            self.assertLess(
+                int(app.export_more_button.cget("width")),
+                int(excel_button.cget("width")),
+            )
+            self.assertNotIn(
+                "CSV形式で保存…",
+                [button.cget("text") for button in buttons],
+            )
+            self.assertIn(
+                "Excelがない場合は、右のメニューからCSVで保存できます。",
+                labels,
+            )
+        finally:
+            if app.workflow_choice_modal is not None:
+                app.workflow_choice_modal.destroy()
+            destroy_tk_root(root)
+
     def test_set_preflight_repeats_item_combination(self) -> None:
         root = ctk.CTk()
         root.withdraw()
