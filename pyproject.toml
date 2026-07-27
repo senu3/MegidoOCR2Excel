@@ -1,6 +1,6 @@
 [project]
 name = "megidoocr2excel"
-version = "0.1.0"
+version = "0.2.7"
 description = "OCR template tool for extracting fixed novel-game screenshots to Excel."
 readme = "README.md"
 requires-python = ">=3.10"
