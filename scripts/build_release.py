@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import os
 import re
+import subprocess
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -173,6 +174,14 @@ def update_project_version(project_root: Path, version: str) -> tuple[str, str]:
     return current_project, version
 
 
+def _refresh_uv_lock(project_root: Path) -> None:
+    subprocess.run(
+        ("uv", "lock"),
+        cwd=project_root,
+        check=True,
+    )
+
+
 def collect_release_files(project_root: Path) -> tuple[Path, ...]:
     missing = [path for path in PUBLIC_FILES if not (project_root / path).is_file()]
     if missing:
@@ -268,6 +277,7 @@ def build_release(
     version_paths = (
         project_root / "pyproject.toml",
         project_root / PACKAGE_DIR / "__init__.py",
+        project_root / "uv.lock",
     )
     originals = (
         {path: path.read_bytes() for path in version_paths}
@@ -277,6 +287,7 @@ def build_release(
     try:
         if version is not None:
             update_project_version(project_root, version)
+            _refresh_uv_lock(project_root)
         version = project_version(project_root)
         files = collect_release_files(project_root)
         root_name = f"MegidoOCR2Excel-v{version}-Windows"
@@ -305,8 +316,8 @@ def main() -> int:
     parser.add_argument(
         "--version",
         help=(
-            "公開するバージョン。指定時はpyproject.tomlとパッケージの"
-            "バージョンを一括更新します。"
+            "公開するバージョン。指定時はpyproject.toml、パッケージ、"
+            "uv.lockのバージョンを一括更新します。"
         ),
     )
     parser.add_argument(

@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import subprocess
 import tempfile
 import tomllib
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from scripts.build_release import (
     OPTIONAL_PUBLIC_FILES,
     PUBLIC_FILES,
     USER_GUIDE_IMAGES,
+    _refresh_uv_lock,
     build_release,
     collect_release_files,
     project_version,
@@ -46,6 +49,16 @@ class ReleasePackageTests(unittest.TestCase):
             any(str(requirement).lower().startswith("zuban") for requirement in runtime)
         )
         self.assertIn("zuban==0.9.0", development)
+
+    def test_uv_lock_is_refreshed_in_the_project_directory(self) -> None:
+        with patch("scripts.build_release.subprocess.run") as run:
+            _refresh_uv_lock(PROJECT_ROOT)
+
+        run.assert_called_once_with(
+            ("uv", "lock"),
+            cwd=PROJECT_ROOT,
+            check=True,
+        )
 
     def test_release_build_is_deterministic_and_checksum_matches(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
@@ -136,6 +149,7 @@ class ReleasePackageTests(unittest.TestCase):
             package.mkdir()
             pyproject = root / "pyproject.toml"
             package_init = package / "__init__.py"
+            lock_file = root / "uv.lock"
             pyproject.write_text(
                 '[project]\nname = "test"\nversion = "0.1.0"\n',
                 encoding="utf-8",
@@ -143,11 +157,37 @@ class ReleasePackageTests(unittest.TestCase):
             package_init.write_text(
                 '__version__ = "0.1.0"\n', encoding="utf-8"
             )
+            lock_file.write_text(
+                '[[package]]\nname = "test"\nversion = "0.1.0"\n',
+                encoding="utf-8",
+            )
+            originals = {
+                path: path.read_bytes()
+                for path in (pyproject, package_init, lock_file)
+            }
 
-            with self.assertRaises(FileNotFoundError):
+            def fail_lock_refresh(project_root: Path) -> None:
+                (project_root / "uv.lock").write_text(
+                    '[[package]]\nname = "test"\nversion = "0.2.0"\n',
+                    encoding="utf-8",
+                )
+                raise subprocess.CalledProcessError(1, ("uv", "lock"))
+
+            with (
+                patch(
+                    "scripts.build_release._refresh_uv_lock",
+                    side_effect=fail_lock_refresh,
+                ) as refresh,
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
                 build_release(root, root / "dist", version="0.2.0")
 
+            refresh.assert_called_once_with(root.resolve())
             self.assertEqual(project_version(root), "0.1.0")
+            self.assertEqual(
+                {path: path.read_bytes() for path in originals},
+                originals,
+            )
 
 
 if __name__ == "__main__":
