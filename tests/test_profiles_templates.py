@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from megido_ocr_excel.models import LINE_JOIN_NEWLINE, SET_SLOT_SPEAKER, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
+from megido_ocr_excel.models import LINE_JOIN_NEWLINE, CoordinateSettings, TEMPLATE_VERSION, TemplateField, TextFormattingSettings
+from megido_ocr_excel.set_definitions import SET_SLOT_SPEAKER
 from megido_ocr_excel.profiles import get_profile, registered_profiles
 from megido_ocr_excel.profiles.base import FieldPreset, OcrProfile
 from megido_ocr_excel.templates import TemplateValidationError, build_template_data, load_template, profile_options_from_template, save_template, text_formatting_from_template
@@ -48,7 +49,6 @@ class ProfileTests(unittest.TestCase):
         profile = OcrProfile(
             profile_id="another_game",
             name="Another game",
-            app_title="Another OCR",
             default_backend="tesseract",
             default_lang="eng",
             coordinate_defaults={"coordinate_space": "image"},

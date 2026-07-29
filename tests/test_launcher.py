@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import megido_ocr_excel.launcher.probe as launcher_probe
+from megido_ocr_excel.apps.megido import CONFIG
 
 from megido_ocr_excel.launcher.core import (
     DEFAULT_PYTHON_VERSION,
@@ -392,7 +393,11 @@ class LauncherCoreTests(unittest.TestCase):
             redirect_stdout(output),
         ):
             service_type.return_value.status.return_value = status
-            exit_code = launcher_main(["--check"], project_root=self.root)
+            exit_code = launcher_main(
+                ["--check"],
+                project_root=self.root,
+                app_config=CONFIG,
+            )
 
         payload = json.loads(output.getvalue())
         self.assertEqual(exit_code, 2)

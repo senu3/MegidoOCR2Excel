@@ -5,10 +5,10 @@ from typing import cast
 
 from PIL import Image, ImageOps
 
-from megido_ocr_excel.models import (
+from megido_ocr_excel.models import TemplateField
+from megido_ocr_excel.set_definitions import (
     SET_SLOT_SUPPLEMENT,
     SET_SLOT_TEXT,
-    TemplateField,
 )
 from megido_ocr_excel.ocr.engine import detect_line_bands
 

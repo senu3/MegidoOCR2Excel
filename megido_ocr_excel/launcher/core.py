@@ -77,7 +77,7 @@ def _handoff_command(
     if not executable:
         raise LauncherError(
             "uvが見つかりません。uvをインストールしてターミナルを開き直した後、"
-            "MegidoOCR2Excel.cmdを実行してください。"
+            "配布フォルダー内の起動用 .cmd ファイルを実行してください。"
         )
     launcher_script = Path(project_root).resolve() / "launcher.py"
     if not launcher_script.is_file():
@@ -180,11 +180,16 @@ def launch_application_handoff(
 def launcher_paths(
     project_root: Path,
     *,
+    app_directory_name: str = "MegidoOCR2Excel",
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
 ) -> LauncherPaths:
     root = Path(project_root).resolve()
-    app_data = default_app_data_dir(environ, home)
+    app_data = default_app_data_dir(
+        environ,
+        home,
+        app_directory_name,
+    )
     runtime_dir = app_data / "runtime" / f"v{RUNTIME_GENERATION}"
     log_dir = app_data / "logs"
     return LauncherPaths(

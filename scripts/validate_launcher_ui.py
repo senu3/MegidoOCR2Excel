@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from megido_ocr_excel.launcher.core import LauncherPaths, LauncherStatus
 from megido_ocr_excel.launcher.ui import LauncherWindow
+from megido_ocr_excel.apps.megido import CONFIG
 
 
 VALIDATION_STATES = ("first", "update", "repair", "running", "error")
@@ -68,6 +69,7 @@ def run(state: str, screenshot: Path) -> None:
         root,
         service,  # type: ignore[arg-type]
         status,
+        CONFIG,
         force_repair=state == "repair",
     )
     if state == "running":

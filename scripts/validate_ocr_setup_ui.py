@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import megido_ocr_excel.application as app_module
+from megido_ocr_excel.apps.megido import CONFIG, PROFILE
 from megido_ocr_excel.ocr.environment import (
     OCR_ENV_LOCATION_ERROR,
     OCR_ENV_READY,
@@ -137,7 +138,7 @@ def run_validation(state: str, screenshot: Path | None = None) -> None:
     app_module.OcrEnvironmentManager = cast(Any, lambda: manager)
 
     root = ctk.CTk()
-    app = ValidationImageOcrExcelApp(root)
+    app = ValidationImageOcrExcelApp(root, PROFILE, CONFIG)
     root.title(f"{root.title()} [UI検証: {state}]")
     if state != "ready":
         # The app is constructed before Tk maps its first window. Show once more

@@ -19,8 +19,9 @@ from megido_ocr_excel.export.queue import (
 )
 from megido_ocr_excel.export.csv import CsvExporter
 from megido_ocr_excel.ocr.dialogue_detector import (
-    DialoguePairDetectionResult,
-    detect_complete_dialogue_pairs,
+    DialogueSetDetectionResult,
+    dialogue_detection_to_set_result,
+    detect_dialogue_sets,
     include_supplement_candidates,
 )
 from megido_ocr_excel.export.excel import ExcelExporter, ExportSettings
@@ -40,16 +41,19 @@ from megido_ocr_excel.models import (
     LINE_JOIN_FULLWIDTH_SPACE,
     LINE_JOIN_NEWLINE,
     LINE_JOIN_NONE,
-    SET_PRESET_HEADING_TEXT,
+    CoordinateSettings,
+    SetDetectionResult,
+    TemplateField,
+    TextFormattingSettings,
+    set_validation_error,
+)
+from megido_ocr_excel.set_definitions import (
+    CONVERSATION_SET_DEFINITION,
+    HEADING_TEXT_SET_DEFINITION,
     SET_SLOT_HEADING,
     SET_SLOT_SPEAKER,
     SET_SLOT_SUPPLEMENT,
     SET_SLOT_TEXT,
-    CoordinateSettings,
-    TemplateField,
-    TextFormattingSettings,
-    set_definition_for_preset,
-    set_validation_error,
 )
 from scripts.ocr_accuracy_common import (
     build_accuracy_row,
@@ -60,7 +64,7 @@ from scripts.ocr_accuracy_common import (
     recognize_with_engine,
 )
 from megido_ocr_excel.templates import coordinate_settings_from_template
-from megido_ocr_excel.profiles.megido_novel import PROFILE
+from megido_ocr_excel.profiles.megido_novel import DIALOGUE_DETECTION, PROFILE
 from tests.private_samples import private_sample_test
 
 
@@ -70,8 +74,8 @@ def auto_detection_context() -> tuple[list[TemplateField], CoordinateSettings]:
 
 class BatchWorkflowTests(unittest.TestCase):
     def test_detection_results_own_their_candidate_field_lists(self) -> None:
-        first = DialoguePairDetectionResult([])
-        second = DialoguePairDetectionResult([])
+        first = DialogueSetDetectionResult([])
+        second = DialogueSetDetectionResult([])
 
         first.candidate_fields.append(TemplateField("候補", 0, 0, 1, 1))
 
@@ -279,19 +283,19 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_log_detector_tracks_shifted_complete_pairs_and_skips_fragments(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
-        b1 = detect_complete_dialogue_pairs(
+        b1 = detect_dialogue_sets(
             Image.open(".samples/b1.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
-        b2 = detect_complete_dialogue_pairs(
+        b2 = detect_dialogue_sets(
             Image.open(".samples/b2.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(len(b1.groups), 5)
@@ -317,7 +321,7 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_dynamic_log_export_writes_only_complete_pairs_and_notices(self) -> None:
         fields, coordinate_settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "log.xlsx"
             result = ExcelExporter().export(
@@ -326,11 +330,14 @@ class BatchWorkflowTests(unittest.TestCase):
                 fields,
                 ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, field: (field.name, None),
-                dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
-                    image,
-                    detection_fields,
-                    coordinate_settings,
-                    PROFILE.dialogue_log_detection,
+                set_definition=CONVERSATION_SET_DEFINITION,
+                set_resolver=lambda image, detection_fields: dialogue_detection_to_set_result(
+                    detect_dialogue_sets(
+                        image,
+                        detection_fields,
+                        coordinate_settings,
+                        DIALOGUE_DETECTION,
+                    )
                 ),
             )
 
@@ -358,7 +365,7 @@ class BatchWorkflowTests(unittest.TestCase):
             ),
         ]
         coordinate_settings = PROFILE.coordinate_settings()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "mixed.xlsx"
             result = ExcelExporter().export(
@@ -382,11 +389,14 @@ class BatchWorkflowTests(unittest.TestCase):
                     ),
                     None,
                 ),
-                dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
-                    image,
-                    detection_fields,
-                    coordinate_settings,
-                    PROFILE.dialogue_log_detection,
+                set_definition=CONVERSATION_SET_DEFINITION,
+                set_resolver=lambda image, detection_fields: dialogue_detection_to_set_result(
+                    detect_dialogue_sets(
+                        image,
+                        detection_fields,
+                        coordinate_settings,
+                        DIALOGUE_DETECTION,
+                    )
                 ),
             )
 
@@ -396,31 +406,31 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_single_screen_patterns_are_classified_safely(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
-        normal = detect_complete_dialogue_pairs(
+        normal = detect_dialogue_sets(
             Image.open(".samples/9.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
-        speakerless = detect_complete_dialogue_pairs(
+        speakerless = detect_dialogue_sets(
             Image.open(".samples/c.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
-        narration = detect_complete_dialogue_pairs(
+        narration = detect_dialogue_sets(
             Image.open(".samples/d.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
-        supplement = detect_complete_dialogue_pairs(
+        supplement = detect_dialogue_sets(
             Image.open(".samples/e.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(normal.layout, "normal")
@@ -444,14 +454,14 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_supplement_fallback_ignores_the_surrounding_scene_color(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
         image = Image.open(".samples/e-2.png").convert("RGB")
 
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             image,
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(result.layout, "supplement_candidate")
@@ -475,11 +485,11 @@ class BatchWorkflowTests(unittest.TestCase):
             image,
             scene_mask,
         )
-        bright_result = detect_complete_dialogue_pairs(
+        bright_result = detect_dialogue_sets(
             bright_scene,
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
         self.assertEqual(bright_result.layout, "supplement_candidate")
         self.assertEqual(len(bright_result.candidate_fields), 1)
@@ -487,18 +497,18 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_supplement_fallback_supports_four_text_lines(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
         image = Image.open(".samples/e-2.png").convert("RGB")
         line = image.crop((225, 1135, 798, 1205))
         image.paste(Image.new("RGB", (720, 300), (0, 255, 20)), (150, 930))
         for line_index in range(4):
             image.paste(line, (225, 970 + line_index * 52))
 
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             image,
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(result.layout, "supplement_candidate")
@@ -511,13 +521,13 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_supplement_candidate_requires_text_like_content(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             Image.open(".samples/12.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(result.layout, "normal")
@@ -527,13 +537,13 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_log_detection_requires_speaker_text_in_repeated_blue_bands(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             Image.open(".samples/14.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(result.layout, "normal")
@@ -547,11 +557,11 @@ class BatchWorkflowTests(unittest.TestCase):
         ]
         settings = PROFILE.coordinate_settings()
         settings = replace(settings, source_content_rect=(0, 219, 1080, 2087))
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             Image.open(".samples/b2.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(result.layout, "log")
@@ -572,12 +582,15 @@ class BatchWorkflowTests(unittest.TestCase):
                 fields,
                 ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, field: (field.name, None),
-                dialogue_pair_resolver=lambda image, detection_fields: include_supplement_candidates(
-                    detect_complete_dialogue_pairs(
-                        image,
-                        detection_fields,
-                        settings,
-                        PROFILE.dialogue_log_detection,
+                set_definition=CONVERSATION_SET_DEFINITION,
+                set_resolver=lambda image, detection_fields: dialogue_detection_to_set_result(
+                    include_supplement_candidates(
+                        detect_dialogue_sets(
+                            image,
+                            detection_fields,
+                            settings,
+                            DIALOGUE_DETECTION,
+                        )
                     )
                 ),
             )
@@ -597,14 +610,14 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_existing_novel_samples_are_not_misclassified_as_logs_or_supplements(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
         layouts = [
-            detect_complete_dialogue_pairs(
+            detect_dialogue_sets(
                 Image.open(f".samples/{index}.png"),
                 fields,
                 settings,
-                PROFILE.dialogue_log_detection,
+                DIALOGUE_DETECTION,
             ).layout
             for index in range(1, 10)
         ]
@@ -614,13 +627,13 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_normal_speaker_crop_keeps_left_text_margin(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             Image.open(".samples/1.png"),
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(result.layout, "normal")
@@ -629,14 +642,14 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_normal_dialogue_crop_keeps_horizontal_text_margin(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
         image = Image.open(".samples/1.png")
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             image,
             fields,
             settings,
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
 
         self.assertEqual(result.layout, "normal")
@@ -647,14 +660,14 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_special_conversation_samples_are_outside_auto_detection(self) -> None:
         fields, settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
 
         results = [
-            detect_complete_dialogue_pairs(
+            detect_dialogue_sets(
                 Image.open(Path(".samples") / filename),
                 fields,
                 settings,
-                PROFILE.dialogue_log_detection,
+                DIALOGUE_DETECTION,
             )
             for filename in ("f.jpg", "g.png")
         ]
@@ -791,7 +804,7 @@ class BatchWorkflowTests(unittest.TestCase):
     @private_sample_test
     def test_intentionally_blank_speakerless_frame_is_not_an_ocr_error(self) -> None:
         fields, coordinate_settings = auto_detection_context()
-        assert PROFILE.dialogue_log_detection is not None
+        assert DIALOGUE_DETECTION is not None
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "blank.xlsx"
             result = ExcelExporter().export(
@@ -800,11 +813,14 @@ class BatchWorkflowTests(unittest.TestCase):
                 fields,
                 ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, _field: ("", None),
-                dialogue_pair_resolver=lambda image, detection_fields: detect_complete_dialogue_pairs(
-                    image,
-                    detection_fields,
-                    coordinate_settings,
-                    PROFILE.dialogue_log_detection,
+                set_definition=CONVERSATION_SET_DEFINITION,
+                set_resolver=lambda image, detection_fields: dialogue_detection_to_set_result(
+                    detect_dialogue_sets(
+                        image,
+                        detection_fields,
+                        coordinate_settings,
+                        DIALOGUE_DETECTION,
+                    )
                 ),
             )
 
@@ -881,7 +897,7 @@ class BatchWorkflowTests(unittest.TestCase):
             workbook = load_workbook(output_path)
             self.assertIn("Errors", workbook.sheetnames)
 
-    def test_empty_dialogue_pair_results_are_each_written_as_warning(self) -> None:
+    def test_empty_set_results_are_each_written_as_warning(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             image_path = root / "1.png"
@@ -898,10 +914,60 @@ class BatchWorkflowTests(unittest.TestCase):
                 fields,
                 ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, _field: ("", None),
+                set_definition=CONVERSATION_SET_DEFINITION,
             )
 
             self.assertEqual(len(result.errors), 2)
             self.assertTrue(all("空です" in error.error for error in result.errors))
+
+    def test_set_export_requires_an_explicit_definition(self) -> None:
+        settings = ExportSettings(output_layout=EXPORT_LAYOUT_SET)
+
+        with self.assertRaisesRegex(ValueError, "セット定義"):
+            ExcelExporter().recognize_rows(
+                [],
+                [],
+                settings,
+                lambda _image, _field: ("", None),
+            )
+
+        with self.assertRaisesRegex(ValueError, "セット定義"):
+            CsvExporter().export(
+                Path("unused.csv"),
+                [],
+                [],
+                settings,
+                lambda _image, _field: ("", None),
+            )
+
+    def test_incomplete_detected_set_is_reported_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / "scene.png"
+            Image.new("RGB", (20, 20), "white").save(image_path)
+            speaker = TemplateField(
+                "話者",
+                0,
+                0,
+                20,
+                10,
+                set_id=1,
+                slot_key=SET_SLOT_SPEAKER,
+            )
+
+            rows, result = ExcelExporter().recognize_rows(
+                [image_path],
+                [speaker],
+                ExportSettings(output_layout=EXPORT_LAYOUT_SET),
+                lambda _image, field: (field.name, None),
+                set_definition=CONVERSATION_SET_DEFINITION,
+                set_resolver=lambda _image, _fields: SetDetectionResult(
+                    groups=[(1, {SET_SLOT_SPEAKER: speaker})]
+                ),
+            )
+
+            self.assertEqual(rows, [])
+            self.assertEqual(len(result.errors), 1)
+            self.assertIn("セリフ", result.errors[0].error)
 
     def test_queue_preserves_failed_state_across_exclusion(self) -> None:
         first = Path("1.png")
@@ -984,7 +1050,7 @@ class BatchWorkflowTests(unittest.TestCase):
             self.assertEqual(retried_sheet.max_row, 2)
             self.assertEqual(retried_sheet.cell(2, 2).value, "復旧")
 
-    def test_dialogue_pair_retry_keeps_recorded_row_range(self) -> None:
+    def test_set_retry_keeps_recorded_row_range(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             image_path = root / "scene.png"
@@ -1004,18 +1070,26 @@ class BatchWorkflowTests(unittest.TestCase):
                 fields,
                 settings,
                 lambda _image, _field: (None, "失敗"),
+                set_definition=CONVERSATION_SET_DEFINITION,
             )
 
             self.assertEqual(first_result.records[0].row_count, 2)
             values = iter(["A", "一行目", "B", "二行目"])
-            exporter.retry_failed(output, first_result, fields, settings, lambda _image, _field: (next(values), None))
+            exporter.retry_failed(
+                output,
+                first_result,
+                fields,
+                settings,
+                lambda _image, _field: (next(values), None),
+                set_definition=CONVERSATION_SET_DEFINITION,
+            )
             sheet = load_workbook(output)["OCR"]
 
             self.assertEqual(sheet.max_row, 3)
             self.assertEqual([sheet.cell(2, column).value for column in range(1, 5)], ["scene.png", "1", "A", "一行目"])
             self.assertEqual([sheet.cell(3, column).value for column in range(1, 5)], ["scene.png", "2", "B", "二行目"])
 
-    def test_dialogue_pairs_ignore_field_list_order(self) -> None:
+    def test_sets_ignore_field_list_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             image_path = root / "scene.png"
@@ -1035,6 +1109,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 fields,
                 ExportSettings(output_layout=EXPORT_LAYOUT_SET),
                 lambda _image, field: (recognized[field.name], None),
+                set_definition=CONVERSATION_SET_DEFINITION,
             )
             sheet = load_workbook(output)["OCR"]
 
@@ -1049,7 +1124,7 @@ class BatchWorkflowTests(unittest.TestCase):
             TemplateField("本文", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_TEXT),
         ]
 
-        definition = set_definition_for_preset("conversation")
+        definition = CONVERSATION_SET_DEFINITION
         self.assertIn("セリフ", set_validation_error(missing, definition) or "")
         self.assertIn("複数", set_validation_error(duplicate, definition) or "")
 
@@ -1060,7 +1135,7 @@ class BatchWorkflowTests(unittest.TestCase):
             output = root / "heading-text.xlsx"
             csv_output = root / "heading-text.csv"
             Image.new("RGB", (20, 20), "white").save(image_path)
-            definition = set_definition_for_preset(SET_PRESET_HEADING_TEXT)
+            definition = HEADING_TEXT_SET_DEFINITION
             fields = [
                 TemplateField("本文", 0, 10, 20, 20, set_id=1, slot_key=SET_SLOT_TEXT),
                 TemplateField("見出し", 0, 0, 20, 10, set_id=1, slot_key=SET_SLOT_HEADING),

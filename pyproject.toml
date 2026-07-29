@@ -18,7 +18,7 @@ tesseract = [
 ]
 
 [project.scripts]
-megido-ocr-to-excel = "megido_ocr_excel.application:main"
+megido-ocr-to-excel = "megido_ocr_excel.apps.megido:main"
 
 [dependency-groups]
 dev = [

@@ -5,7 +5,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from megido_ocr_excel.persistence import atomic_write_text
-from megido_ocr_excel.models import EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, LINE_JOIN_OPTIONS, OCR_LINE_SPLIT_OPTIONS, SET_PRESET_OPTIONS, CoordinateSettings, TEMPLATE_VERSION, CorrectionRule, SetDefinition, TemplateField, TextFormattingSettings, coordinate_settings_from_dict, correction_rule_from_dict, field_from_dict, set_definition_for_preset, set_definition_from_dict, set_validation_error, text_formatting_settings_from_dict
+from megido_ocr_excel.models import (
+    DEFAULT_SET_DEFINITION,
+    EXPORT_LAYOUT_OPTIONS,
+    EXPORT_LAYOUT_SET,
+    LINE_JOIN_OPTIONS,
+    OCR_LINE_SPLIT_OPTIONS,
+    CoordinateSettings,
+    TEMPLATE_VERSION,
+    CorrectionRule,
+    SetDefinition,
+    TemplateField,
+    TextFormattingSettings,
+    coordinate_settings_from_dict,
+    correction_rule_from_dict,
+    field_from_dict,
+    set_definition_from_dict,
+    set_validation_error,
+    text_formatting_settings_from_dict,
+)
+from megido_ocr_excel.set_definitions import example_set_definition
 
 
 TEMPLATE_FORMAT = "image-ocr-to-excel-template"
@@ -52,8 +71,8 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
     if output_settings.get("output_layout") not in EXPORT_LAYOUT_OPTIONS:
         raise TemplateValidationError("output_settings.output_layout が不正です。")
     set_definition_data = _require_mapping(data, "set_definition")
-    if set_definition_data.get("preset") not in SET_PRESET_OPTIONS:
-        raise TemplateValidationError("set_definition.preset が不正です。")
+    if not str(set_definition_data.get("preset") or "").strip():
+        raise TemplateValidationError("set_definition.preset を指定してください。")
     for key in ("name", "order_label"):
         if not str(set_definition_data.get(key) or "").strip():
             raise TemplateValidationError(f"set_definition.{key} を指定してください。")
@@ -71,6 +90,47 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
         column_keys.append(str(column["key"]).strip())
     if len(column_keys) != len(set(column_keys)):
         raise TemplateValidationError("set_definition.columns の key が重複しています。")
+    extra_slots = set_definition_data.get("extra_slots", [])
+    if not isinstance(extra_slots, list):
+        raise TemplateValidationError(
+            "set_definition.extra_slots は配列で指定してください。"
+        )
+    extra_keys: list[str] = []
+    for index, column in enumerate(extra_slots, start=1):
+        if not isinstance(column, dict):
+            raise TemplateValidationError(
+                f"set_definition.extra_slots[{index}] はオブジェクトで指定してください。"
+            )
+        key = str(column.get("key") or "").strip()
+        label = str(column.get("label") or "").strip()
+        if not key or not label:
+            raise TemplateValidationError(
+                f"set_definition.extra_slots[{index}] に key と label を指定してください。"
+            )
+        if column.get("ocr_line_split") not in OCR_LINE_SPLIT_OPTIONS:
+            raise TemplateValidationError(
+                f"set_definition.extra_slots[{index}].ocr_line_split が不正です。"
+            )
+        extra_keys.append(key)
+    all_slot_keys = [*column_keys, *extra_keys]
+    if len(all_slot_keys) != len(set(all_slot_keys)):
+        raise TemplateValidationError(
+            "set_definition のスロットkeyが重複しています。"
+        )
+    additional_rows = set_definition_data.get("additional_rows", [])
+    if not isinstance(additional_rows, list):
+        raise TemplateValidationError(
+            "set_definition.additional_rows は配列で指定してください。"
+        )
+    for index, row in enumerate(additional_rows, start=1):
+        if (
+            not isinstance(row, list)
+            or len(row) != len(column_keys)
+            or any(str(key) not in all_slot_keys for key in row)
+        ):
+            raise TemplateValidationError(
+                f"set_definition.additional_rows[{index}] が不正です。"
+            )
     _require_mapping(data, "coordinate_settings")
     text_formatting = data.get("text_formatting")
     if text_formatting is not None:
@@ -114,7 +174,10 @@ def validate_template_data(data: object, expected_profile_id: str | None = None)
         if "slot_key" not in item or not isinstance(item["slot_key"], str):
             raise TemplateValidationError(f"fields[{index}].slot_key を文字列で指定してください。")
     if output_settings.get("output_layout") == EXPORT_LAYOUT_SET:
-        definition = set_definition_from_dict(set_definition_data)
+        definition = set_definition_from_dict(
+            set_definition_data,
+            _template_set_fallback(str(set_definition_data["preset"])),
+        )
         error = set_validation_error([field_from_dict(item) for item in fields], definition)
         if error:
             raise TemplateValidationError(error)
@@ -149,7 +212,7 @@ def build_template_data(
         "text_formatting": (text_formatting or TextFormattingSettings()).to_dict(),
         "profile_options": dict(profile_options or {}),
         "set_definition": (
-            set_definition or set_definition_for_preset("conversation")
+            set_definition or DEFAULT_SET_DEFINITION
         ).to_dict(),
         "correction_rules": [rule.to_dict() for rule in correction_rules or [] if rule.pattern.strip()],
         "fields": [field.to_dict() for field in fields],
@@ -193,5 +256,29 @@ def profile_options_from_template(data: dict) -> dict:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def set_definition_from_template(data: dict) -> SetDefinition:
-    return set_definition_from_dict(data.get("set_definition"))
+def _template_set_fallback(
+    preset: str,
+    definitions: tuple[SetDefinition, ...] = (),
+) -> SetDefinition:
+    match = next(
+        (definition for definition in definitions if definition.preset == preset),
+        None,
+    )
+    if match is not None:
+        return match
+    try:
+        return example_set_definition(preset)
+    except ValueError:
+        return DEFAULT_SET_DEFINITION
+
+
+def set_definition_from_template(
+    data: dict,
+    definitions: tuple[SetDefinition, ...] = (),
+) -> SetDefinition:
+    item = data.get("set_definition")
+    preset = str(item.get("preset") or "") if isinstance(item, dict) else ""
+    return set_definition_from_dict(
+        item,
+        _template_set_fallback(preset, definitions),
+    )

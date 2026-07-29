@@ -8,16 +8,45 @@ from PIL import Image
 from megido_ocr_excel.ocr.engine import detect_content_rect, scaled_field
 from megido_ocr_excel.models import (
     CoordinateSettings,
+    SetDetectionResult,
+    TemplateField,
+    set_groups,
+)
+from megido_ocr_excel.set_definitions import (
+    CONVERSATION_SET_DEFINITION,
     SET_SLOT_SPEAKER,
     SET_SLOT_SUPPLEMENT,
     SET_SLOT_TEXT,
-    DialogueLogDetectionConfig,
-    TemplateField,
-    set_definition_for_preset,
-    set_groups,
 )
 
 RgbPixel = tuple[int, int, int]
+
+
+@dataclass(frozen=True)
+class DialogueLogDetectionConfig:
+    """Visual rules for locating repeated dialogue cards."""
+
+    anchor_x1_ratio: float
+    anchor_x2_ratio: float
+    log_top_ratio: float
+    log_bottom_ratio: float
+    pair_height_ratio: float
+    min_bar_height_ratio: float = 0.015
+    max_bar_height_ratio: float = 0.03
+    row_match_ratio: float = 0.5
+    max_band_gap: int = 4
+    normal_anchor_top_ratio: float = 0.62
+    normal_anchor_bottom_ratio: float = 0.82
+    normal_speaker_x1_ratio: float = 0.05
+    normal_speaker_x2_ratio: float = 0.72
+    normal_dialogue_x1_ratio: float = 0.04
+    normal_dialogue_x2_ratio: float = 0.96
+    log_speaker_x1_ratio: float = 0.10
+    log_speaker_x2_ratio: float = 0.38
+    log_dialogue_x1_ratio: float = 0.10
+    log_dialogue_x2_ratio: float = 0.86
+    speaker_vertical_padding_ratio: float = 0.006
+    max_auto_detection_aspect_ratio: float = 1.0
 
 
 def _rgb_pixel(image: Image.Image, position: tuple[int, int]) -> RgbPixel:
@@ -33,7 +62,7 @@ def _gray_pixels(image: Image.Image) -> list[int]:
 
 
 @dataclass(frozen=True)
-class DialoguePairDetectionResult:
+class DialogueSetDetectionResult:
     groups: list[tuple[int, TemplateField, TemplateField]]
     skipped_leading: int = 0
     skipped_trailing: int = 0
@@ -58,35 +87,35 @@ class DialoguePairDetectionResult:
 
 
 def include_supplement_candidates(
-    result: DialoguePairDetectionResult,
-) -> DialoguePairDetectionResult:
+    result: DialogueSetDetectionResult,
+) -> DialogueSetDetectionResult:
     if not result.candidate_fields:
         return result
     approved_groups: list[tuple[int, TemplateField, TemplateField]] = []
-    next_pair_id = 1
-    for group_index, (_pair_id, speaker, dialogue) in enumerate(result.groups):
+    next_set_id = 1
+    for group_index, (_set_id, speaker, dialogue) in enumerate(result.groups):
         approved_groups.append(
             (
-                next_pair_id,
-                replace(speaker, set_id=next_pair_id),
-                replace(dialogue, set_id=next_pair_id),
+                next_set_id,
+                replace(speaker, set_id=next_set_id),
+                replace(dialogue, set_id=next_set_id),
             )
         )
-        next_pair_id += 1
+        next_set_id += 1
         if group_index == 0:
             for candidate in result.candidate_fields:
                 approved_groups.append(
                     (
-                        next_pair_id,
-                        replace(speaker, set_id=next_pair_id),
+                        next_set_id,
+                        replace(speaker, set_id=next_set_id),
                         replace(
                             candidate,
-                            set_id=next_pair_id,
+                            set_id=next_set_id,
                             slot_key=SET_SLOT_TEXT,
                         ),
                     )
                 )
-                next_pair_id += 1
+                next_set_id += 1
     return replace(
         result,
         groups=approved_groups,
@@ -95,13 +124,39 @@ def include_supplement_candidates(
     )
 
 
-def detect_complete_dialogue_pairs(
+def dialogue_detection_to_set_result(
+    result: DialogueSetDetectionResult,
+) -> SetDetectionResult:
+    """Adapt the Megido dialogue detector to the generic set exporter."""
+    return SetDetectionResult(
+        groups=[
+            (
+                set_id,
+                {
+                    SET_SLOT_SPEAKER: speaker,
+                    SET_SLOT_TEXT: text,
+                },
+            )
+            for set_id, speaker, text in result.groups
+        ],
+        allow_empty_slots={
+            *([SET_SLOT_SPEAKER] if result.allow_empty_speaker else []),
+            *([SET_SLOT_TEXT] if result.allow_empty_dialogue else []),
+        },
+        notices=result.notices,
+        review_reason=result.review_reason,
+        layout=result.layout,
+        candidate_fields=result.candidate_fields,
+    )
+
+
+def detect_dialogue_sets(
     image: Image.Image,
     fields: list[TemplateField],
     coordinate_settings: CoordinateSettings,
     config: DialogueLogDetectionConfig,
-) -> DialoguePairDetectionResult:
-    prototypes = set_groups(fields, set_definition_for_preset("conversation"))
+) -> DialogueSetDetectionResult:
+    prototypes = set_groups(fields, CONVERSATION_SET_DEFINITION)
     if prototypes:
         _set_id, slots = prototypes[0]
         speaker_prototype = slots[SET_SLOT_SPEAKER]
@@ -120,14 +175,14 @@ def detect_complete_dialogue_pairs(
             (field for field in fields if field is not dialogue_prototype), None
         )
     if speaker_prototype is None or dialogue_prototype is None:
-        return DialoguePairDetectionResult([])
+        return DialogueSetDetectionResult([])
 
     content_rect = _target_content_rect(image, fields, coordinate_settings)
     left, top, right, bottom = content_rect
     content_width = right - left
     content_height = bottom - top
     if content_height <= 0 or content_width / content_height > config.max_auto_detection_aspect_ratio:
-        return DialoguePairDetectionResult(
+        return DialogueSetDetectionResult(
             [],
             layout="unknown",
             review_reason=(
@@ -186,9 +241,9 @@ def detect_complete_dialogue_pairs(
     speaker_padding = max(
         2, round(content_height * config.speaker_vertical_padding_ratio)
     )
-    for pair_id, (anchor_top, anchor_bottom) in enumerate(complete, start=1):
+    for set_id, (anchor_top, anchor_bottom) in enumerate(complete, start=1):
         pair_bottom = min(image.height, anchor_top + pair_height)
-        is_last_complete_pair = pair_id == len(complete)
+        is_last_complete_set = set_id == len(complete)
         speaker = replace(
             speaker_base,
             x1=round(left + content_width * config.log_speaker_x1_ratio),
@@ -197,7 +252,7 @@ def detect_complete_dialogue_pairs(
             y2=min(image.height, anchor_bottom + 1 + speaker_padding),
             source_width=0,
             source_height=0,
-            set_id=pair_id,
+            set_id=set_id,
             slot_key=SET_SLOT_SPEAKER,
         )
         dialogue = replace(
@@ -208,16 +263,16 @@ def detect_complete_dialogue_pairs(
             y2=pair_bottom,
             source_width=0,
             source_height=0,
-            set_id=pair_id,
+            set_id=set_id,
             slot_key=SET_SLOT_TEXT,
             ocr_preprocess=(
                 "threshold"
-                if is_last_complete_pair
+                if is_last_complete_set
                 else dialogue_base.ocr_preprocess
             ),
         )
-        groups.append((pair_id, speaker, dialogue))
-    return DialoguePairDetectionResult(
+        groups.append((set_id, speaker, dialogue))
+    return DialogueSetDetectionResult(
         groups,
         skipped_leading,
         skipped_trailing,
@@ -269,7 +324,7 @@ def _detect_single_screen(
     content_rect: tuple[int, int, int, int],
     coordinate_settings: CoordinateSettings,
     config: DialogueLogDetectionConfig,
-) -> DialoguePairDetectionResult:
+) -> DialogueSetDetectionResult:
     left, top, right, bottom = content_rect
     width = right - left
     height = bottom - top
@@ -350,7 +405,7 @@ def _detect_single_screen(
                     ocr_line_split="detected",
                 )
             )
-        return DialoguePairDetectionResult(
+        return DialogueSetDetectionResult(
             [(1, speaker, dialogue)],
             candidate_fields=candidate_fields,
             layout="supplement_candidate" if supplement_candidate else ("speakerless" if speakerless else "normal"),
@@ -388,12 +443,12 @@ def _detect_single_screen(
             slot_key=SET_SLOT_TEXT,
             ocr_line_split="detected",
         )
-        return DialoguePairDetectionResult(
+        return DialogueSetDetectionResult(
             [(1, speaker, dialogue)],
             layout="narration",
             allow_empty_speaker=True,
         )
-    return DialoguePairDetectionResult([])
+    return DialogueSetDetectionResult([])
 
 
 def _target_content_rect(

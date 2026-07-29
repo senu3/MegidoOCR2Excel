@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ocr_accuracy_common import run_accuracy
-from megido_ocr_excel.config import APP_PROFILE
+from megido_ocr_excel.apps.megido import PROFILE as APP_PROFILE
 
 
 if __name__ == "__main__":

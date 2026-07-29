@@ -14,11 +14,11 @@ from megido_ocr_excel.export.excel import (
     ImageExportRecord,
     OcrCallback,
     SetResolver,
+    resolve_export_set_definition,
 )
 from megido_ocr_excel.models import (
     SetDefinition,
     TemplateField,
-    set_definition_for_preset,
 )
 from megido_ocr_excel.operations import CancelCheck, raise_if_cancelled
 from megido_ocr_excel.persistence import atomic_write_text
@@ -43,9 +43,7 @@ class CsvExporter:
         cancel_check: CancelCheck | None = None,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
-        definition = (
-            set_definition or set_definition_for_preset("conversation")
-        ).normalized()
+        definition = resolve_export_set_definition(settings, set_definition)
         first_data_row = 2 if settings.include_header else 1
         rows, result = self.row_exporter.recognize_rows(
             image_files,
@@ -95,9 +93,7 @@ class CsvExporter:
         with output_path.open("r", encoding="utf-8-sig", newline="") as handle:
             output_rows = list(csv.reader(handle))
 
-        definition = (
-            set_definition or set_definition_for_preset("conversation")
-        ).normalized()
+        definition = resolve_export_set_definition(settings, set_definition)
         if settings.include_header:
             expected_headers = self.row_exporter.headers(
                 fields,

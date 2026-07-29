@@ -55,6 +55,7 @@ class OcrEnvironmentManager:
         self,
         *,
         settings_path: Path | None = None,
+        app_directory_name: str = "MegidoOCR2Excel",
         home: Path | None = None,
         environ: MutableMapping[str, str] | None = None,
         dependency_checker: Callable[[str], bool] | None = None,
@@ -63,7 +64,7 @@ class OcrEnvironmentManager:
         self.home = Path(home) if home is not None else Path.home()
         self.environ = environ if environ is not None else os.environ
         self.settings_path = settings_path or self._default_settings_path(
-            self.environ, self.home
+            self.environ, self.home, app_directory_name
         )
         self._dependency_checker = dependency_checker or self._has_package
         self._version_provider = version_provider or self._package_version
@@ -71,11 +72,13 @@ class OcrEnvironmentManager:
 
     @staticmethod
     def _default_settings_path(
-        environ: Mapping[str, str], home: Path
+        environ: Mapping[str, str],
+        home: Path,
+        app_directory_name: str = "MegidoOCR2Excel",
     ) -> Path:
         local_app_data = environ.get("LOCALAPPDATA", "").strip()
         base = Path(local_app_data) if local_app_data else home / "AppData" / "Local"
-        return base / "MegidoOCR2Excel" / "settings.json"
+        return base / app_directory_name / "settings.json"
 
     @staticmethod
     def _has_package(name: str) -> bool:

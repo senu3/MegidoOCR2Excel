@@ -30,19 +30,21 @@ _package_logger.propagate = False
 def default_app_data_dir(
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
+    app_directory_name: str = "MegidoOCR2Excel",
 ) -> Path:
     values = os.environ if environ is None else environ
     user_home = Path.home() if home is None else Path(home)
     local_app_data = values.get("LOCALAPPDATA", "").strip()
     base = Path(local_app_data) if local_app_data else user_home / "AppData" / "Local"
-    return base / "MegidoOCR2Excel"
+    return base / app_directory_name
 
 
 def default_log_dir(
     environ: Mapping[str, str] | None = None,
     home: Path | None = None,
+    app_directory_name: str = "MegidoOCR2Excel",
 ) -> Path:
-    return default_app_data_dir(environ, home) / "logs"
+    return default_app_data_dir(environ, home, app_directory_name) / "logs"
 
 
 def current_log_path() -> Path:
@@ -58,13 +60,18 @@ def ensure_log_directory() -> Path:
 def configure_logging(
     log_dir: Path | None = None,
     *,
+    app_directory_name: str = "MegidoOCR2Excel",
     max_bytes: int = DEFAULT_MAX_BYTES,
     backup_count: int = DEFAULT_BACKUP_COUNT,
 ) -> Path:
     """Configure the application logger without making startup depend on AppData."""
 
     global _active_log_path
-    requested_dir = Path(log_dir) if log_dir is not None else default_log_dir()
+    requested_dir = (
+        Path(log_dir)
+        if log_dir is not None
+        else default_log_dir(app_directory_name=app_directory_name)
+    )
 
     def create_handler(directory: Path) -> tuple[Path, RotatingFileHandler]:
         directory.mkdir(parents=True, exist_ok=True)
@@ -80,7 +87,9 @@ def configure_logging(
     try:
         log_path, file_handler = create_handler(requested_dir)
     except OSError:
-        requested_dir = Path(tempfile.gettempdir()) / "MegidoOCR2Excel" / "logs"
+        requested_dir = (
+            Path(tempfile.gettempdir()) / app_directory_name / "logs"
+        )
         log_path, file_handler = create_handler(requested_dir)
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.INFO)

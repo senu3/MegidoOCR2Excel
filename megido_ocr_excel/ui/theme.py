@@ -56,10 +56,10 @@ class Palette:
     inactive_line_region: str = "#2e7f8c"
     line_guide: str = "#8ff8ff"
     line_badge: str = "#145467"
-    pair_outline: str = "#8a769f"
-    pair_outline_selected: str = "#b77af5"
-    pair_handle: str = "#6b3aa3"
-    pair_handle_hover: str = "#7d45c2"
+    set_outline: str = "#8a769f"
+    set_outline_selected: str = "#b77af5"
+    set_handle: str = "#6b3aa3"
+    set_handle_hover: str = "#7d45c2"
     empty_title: str = "#f3eff8"
     empty_note: str = "#bfb4cb"
     modal_backdrop: str = "#050407"
@@ -88,10 +88,6 @@ class Layout:
 @dataclass(frozen=True)
 class Copy:
     initial_status: str = "開始方法を選び、画像フォルダを選択してください。"
-    workflow_choice_note: str = (
-        "会話画面は自動検出できます。\n"
-        "その他の画面は、新規テンプレートで範囲を指定します。"
-    )
     set_layout_note: str = (
         "関連する項目を「セット」にまとめ、セットごとにExcelの1行として出力します。"
         "1画像に複数のセットを設定できます。"
@@ -108,7 +104,6 @@ class Copy:
     empty_canvas_title: str = "画像フォルダが選択されていません"
     empty_canvas_note: str = "上部のボタンから、スクリーンショットのフォルダを選択します。"
     new_template_label: str = "新規テンプレート（未保存）"
-    default_template_name: str = "megido-novel-template.json"
 
 
 @dataclass(frozen=True)

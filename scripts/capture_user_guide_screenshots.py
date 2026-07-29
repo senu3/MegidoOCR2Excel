@@ -19,6 +19,7 @@ from megido_ocr_excel.application import (
     MODE_TEMPLATE,
     ImageOcrExcelApp,
 )
+from megido_ocr_excel.apps.megido import CONFIG, PROFILE
 from megido_ocr_excel.models import (
     COORDINATE_SPACE_IMAGE,
     CoordinateSettings,
@@ -186,7 +187,7 @@ def capture_all(output_dir: Path) -> None:
     image_paths = _build_sample_images(sample_dir)
 
     root = ctk.CTk()
-    app = ImageOcrExcelApp(root)
+    app = ImageOcrExcelApp(root, PROFILE, CONFIG)
     root.update()
     app._show_workflow_choice()
     root.update()

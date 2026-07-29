@@ -1,20 +1,33 @@
 from __future__ import annotations
 
+from importlib import import_module
+
 from megido_ocr_excel.profiles.base import OcrProfile
-from megido_ocr_excel.profiles.megido_novel import PROFILE as MEGIDO_NOVEL_PROFILE
 
 
-_PROFILES = {
-    MEGIDO_NOVEL_PROFILE.profile_id: MEGIDO_NOVEL_PROFILE,
+_PROFILE_LOADERS = {
+    "megido_novel": (
+        "megido_ocr_excel.profiles.megido_novel",
+        "PROFILE",
+    ),
 }
+_PROFILE_CACHE: dict[str, OcrProfile] = {}
 
 
 def get_profile(profile_id: str) -> OcrProfile:
     try:
-        return _PROFILES[profile_id]
+        module_name, attribute = _PROFILE_LOADERS[profile_id]
     except KeyError as exc:
         raise ValueError(f"未登録のOCRプロファイルです: {profile_id}") from exc
+    if profile_id not in _PROFILE_CACHE:
+        profile = getattr(import_module(module_name), attribute)
+        if not isinstance(profile, OcrProfile):
+            raise TypeError(
+                f"OCRプロファイル '{profile_id}' の形式が不正です。"
+            )
+        _PROFILE_CACHE[profile_id] = profile
+    return _PROFILE_CACHE[profile_id]
 
 
 def registered_profiles() -> tuple[OcrProfile, ...]:
-    return tuple(_PROFILES.values())
+    return tuple(get_profile(profile_id) for profile_id in _PROFILE_LOADERS)

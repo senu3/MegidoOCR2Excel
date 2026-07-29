@@ -46,10 +46,6 @@ from megido_ocr_excel.export.queue import (
     ImageQueueItem,
 )
 from megido_ocr_excel.export.csv import CsvExporter
-from megido_ocr_excel.ocr.dialogue_detector import (
-    detect_complete_dialogue_pairs,
-    include_supplement_candidates,
-)
 from megido_ocr_excel.export.excel import (
     ExcelExporter,
     ExportResult,
@@ -57,9 +53,8 @@ from megido_ocr_excel.export.excel import (
     SetResolver,
     validate_export_settings,
 )
+from megido_ocr_excel.app_config import ApplicationConfig
 from megido_ocr_excel.config import (
-    APP_PROFILE,
-    APP_TITLE as _APP_TITLE,
     IMAGE_EXTENSIONS,
     natural_image_sort_key,
 )
@@ -94,23 +89,17 @@ from megido_ocr_excel.models import (
     COORDINATE_SPACE_CONTENT,
     COORDINATE_SPACE_IMAGE,
     CORRECTION_ALL_TARGET,
-    DIALOGUE_ROLE_SUPPLEMENT,
-    EXPORT_LAYOUT_DIALOGUE_PAIR,
     EXPORT_LAYOUT_IMAGE_ROW,
     EXPORT_LAYOUT_OPTIONS,
+    EXPORT_LAYOUT_SET,
     LINE_JOIN_FULLWIDTH_SPACE,
     LINE_JOIN_NEWLINE,
     LINE_JOIN_NONE,
-    SET_PRESET_CONVERSATION,
-    SET_PRESET_DISPLAY,
-    SET_PRESET_OPTIONS,
-    SET_SLOT_SUPPLEMENT,
     CoordinateSettings,
     CorrectionRule,
-    DialogueLogDetectionConfig,
+    SetDetectionResult,
     TemplateField,
     TextFormattingSettings,
-    set_definition_for_preset,
     set_validation_error,
 )
 from megido_ocr_excel.operations import OperationCancelled, raise_if_cancelled
@@ -127,28 +116,6 @@ from megido_ocr_excel.templates import (
     text_formatting_from_template,
 )
 from megido_ocr_excel.ui.tooltip import add_tooltip
-
-
-APP_TITLE = _APP_TITLE
-
-
-def _dialogue_set_resolver(
-    coordinate_settings: CoordinateSettings,
-    config: DialogueLogDetectionConfig,
-) -> SetResolver:
-    def resolve(
-        image: Image.Image, detection_fields: list[TemplateField]
-    ):
-        return include_supplement_candidates(
-            detect_complete_dialogue_pairs(
-                image,
-                detection_fields,
-                coordinate_settings,
-                config,
-            )
-        )
-
-    return resolve
 
 
 logger = logging.getLogger(__name__)
@@ -235,7 +202,7 @@ LINE_JOIN_DISPLAY = {
 }
 EXPORT_LAYOUT_DISPLAY = {
     EXPORT_LAYOUT_IMAGE_ROW: "画像単位（1画像につき1行）",
-    EXPORT_LAYOUT_DIALOGUE_PAIR: "セット単位（1セットにつき1行）",
+    EXPORT_LAYOUT_SET: "セット単位（1セットにつき1行）",
 }
 EXPORT_LAYOUT_BY_DISPLAY = {
     display: value for value, display in EXPORT_LAYOUT_DISPLAY.items()
@@ -246,10 +213,16 @@ MODE_EXPORT = "3. Excel出力"
 
 
 class ImageOcrExcelApp:
-    def __init__(self, root: ctk.CTk, profile: OcrProfile = APP_PROFILE) -> None:
+    def __init__(
+        self,
+        root: ctk.CTk,
+        profile: OcrProfile,
+        app_config: ApplicationConfig,
+    ) -> None:
         self.root = root
         self.profile = profile
-        self.root.title(self.profile.app_title)
+        self.app_config = app_config
+        self.root.title(self.app_config.app_title)
         self.root.geometry(THEME.layout.window_size)
         self.root.minsize(*THEME.layout.min_window_size)
         self.root.option_add("*Font", f"{{{UI_FONT_FAMILY}}} 10")
@@ -270,6 +243,7 @@ class ImageOcrExcelApp:
         self.auto_detection_base_fields: list[TemplateField] = []
         self.current_detection_layout = ""
         self.current_detection_reason = ""
+        self.current_detection_count = 0
 
         self.original_image: Image.Image | None = None
         self.preview_image: ImageTk.PhotoImage | None = None
@@ -284,7 +258,7 @@ class ImageOcrExcelApp:
         self.current_content_rect: tuple[int, int, int, int] | None = None
 
         self.fields: list[TemplateField] = []
-        self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
+        self.set_definition = self.profile.default_set_definition
         self.current_results: list[str] = []
         self.current_raw_results: list[str] = []
         # Future correction-rule foundation.
@@ -297,8 +271,8 @@ class ImageOcrExcelApp:
         self.field_row_widgets: list[ctk.CTkFrame] = []
         self.field_row_by_index: dict[int, ctk.CTkFrame] = {}
         self.field_drag_handle_by_index: dict[int, ctk.CTkLabel] = {}
-        self.dialogue_drop_section_by_pair: dict[int, ctk.CTkFrame] = {}
-        self.dialogue_drag_target_pair: int | None = None
+        self.set_drop_section_by_id: dict[int, ctk.CTkFrame] = {}
+        self.set_drag_target_id: int | None = None
         self.review_order_label_by_index: dict[int, ctk.CTkLabel] = {}
         self.selected_index: int | None = None
         self.editing_name_index: int | None = None
@@ -315,11 +289,13 @@ class ImageOcrExcelApp:
         self.canvas_rects: dict[int, int] = {}
         self.canvas_labels: dict[int, int] = {}
         self.canvas_label_bgs: dict[int, int] = {}
-        self.canvas_pair_handles: dict[int, dict] = {}
+        self.canvas_set_handles: dict[int, dict] = {}
         self.empty_set_ids: set[int] = set()
-        self.pending_dialogue_pair_id: int | None = None
-        self.pending_dialogue_role: str = ""
-        self.ocr_environment = OcrEnvironmentManager()
+        self.pending_set_id: int | None = None
+        self.pending_slot_key: str = ""
+        self.ocr_environment = OcrEnvironmentManager(
+            app_directory_name=self.app_config.data_directory_name
+        )
         self.ocr_environment_active_cache_dir = (
             self.ocr_environment.apply_to_process().resolve()
         )
@@ -356,7 +332,7 @@ class ImageOcrExcelApp:
         self.export_include_header_var = BooleanVar(value=True)
         self.export_layout_var = StringVar(value=EXPORT_LAYOUT_IMAGE_ROW)
         self.set_preset_var = StringVar(
-            value=SET_PRESET_DISPLAY[self.set_definition.preset]
+            value=self.profile.set_preset_display[self.set_definition.preset]
         )
         self.review_raw_preview_var = StringVar(value="未OCR")
         self.review_processed_preview_var = StringVar(value="未OCR")
@@ -923,7 +899,7 @@ class ImageOcrExcelApp:
         add_tooltip(close_button, "開始方法を選ばずに進む")
         ctk.CTkLabel(
             overlay,
-            text=THEME.copy.workflow_choice_note,
+            text=self.app_config.copy.workflow_choice_note,
             justify="center",
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
@@ -931,7 +907,7 @@ class ImageOcrExcelApp:
         ).grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 20))
         primary_button = ctk.CTkButton(
             overlay,
-            text="会話を自動検出",
+            text=self.app_config.copy.auto_detection_action,
             image=ICONS.get("scan", 18, THEME.palette.on_color),
             compound="left",
             command=self.start_auto_detection_workflow,
@@ -1381,7 +1357,7 @@ class ImageOcrExcelApp:
 
     def _update_dirty_indicators(self) -> None:
         suffix = " *" if self.dirty else ""
-        self.root.title(f"{self.profile.app_title}{suffix}")
+        self.root.title(f"{self.app_config.app_title}{suffix}")
         template_name = (
             self.template_path.name
             if self.template_path
@@ -1476,8 +1452,8 @@ class ImageOcrExcelApp:
         self.side_body = replacement_body
         self.field_row_by_index = {}
         self.field_drag_handle_by_index = {}
-        self.dialogue_drop_section_by_pair = {}
-        self.dialogue_drag_target_pair = None
+        self.set_drop_section_by_id = {}
+        self.set_drag_target_id = None
         self.review_order_label_by_index = {}
         self.review_detail_host = None
         self.review_result_scroller = None
@@ -1515,7 +1491,7 @@ class ImageOcrExcelApp:
         self.field_row_widgets = []
         self.field_row_by_index = {}
         self.field_drag_handle_by_index = {}
-        self.dialogue_drop_section_by_pair = {}
+        self.set_drop_section_by_id = {}
         layout_row = ctk.CTkFrame(body, fg_color="transparent")
         layout_row.pack(fill="x", padx=16, pady=(2, 8))
         layout_row.grid_columnconfigure(1, weight=1)
@@ -1545,7 +1521,7 @@ class ImageOcrExcelApp:
         )
         layout_menu.set(EXPORT_LAYOUT_DISPLAY[self.export_layout_var.get()])
         layout_menu.grid(row=0, column=1, sticky="ew")
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
             preset_row = ctk.CTkFrame(body, fg_color="transparent")
             preset_row.pack(fill="x", padx=16, pady=(0, 8))
             preset_row.grid_columnconfigure(1, weight=1)
@@ -1558,7 +1534,7 @@ class ImageOcrExcelApp:
             ).grid(row=0, column=0, sticky="w", padx=(0, 8))
             preset_menu = ctk.CTkOptionMenu(
                 preset_row,
-                values=[SET_PRESET_DISPLAY[key] for key in SET_PRESET_OPTIONS],
+                values=list(self.profile.set_preset_display.values()),
                 height=THEME.layout.entry_height,
                 font=UI_FONT_SMALL,
                 fg_color=COLOR_SECONDARY,
@@ -1582,15 +1558,15 @@ class ImageOcrExcelApp:
                 text_color=COLOR_MUTED,
                 wraplength=350,
             ).pack(fill="x", padx=16, pady=(0, 6))
-            pair_error = (
+            set_error = (
                 set_validation_error(self._enabled_fields(), self.set_definition)
                 if self.fields
                 else None
             )
-            if pair_error:
+            if set_error:
                 ctk.CTkLabel(
                     body,
-                    text=pair_error,
+                    text=set_error,
                     image=ICONS.get("alert_circle", 16, COLOR_DANGER),
                     compound="left",
                     anchor="w",
@@ -1602,14 +1578,14 @@ class ImageOcrExcelApp:
             action = ctk.CTkFrame(body, fg_color="transparent")
             action.pack(fill="x", padx=16, pady=(0, 8))
             action.grid_columnconfigure(0, weight=1)
-            pending = self.pending_dialogue_pair_id is not None
-            button_text = self._dialogue_creation_button_text()
+            pending = self.pending_set_id is not None
+            button_text = self._set_creation_button_text()
             ctk.CTkButton(
                 action,
                 text=button_text,
                 image=ICONS.get("plus", 16, THEME.palette.on_color),
                 compound="left",
-                command=self.begin_dialogue_pair_creation,
+                command=self.begin_set_creation,
                 height=THEME.layout.entry_height,
                 corner_radius=THEME.layout.control_radius,
                 font=UI_FONT_SMALL,
@@ -1622,7 +1598,7 @@ class ImageOcrExcelApp:
                     text="中止",
                     image=ICONS.get("x", 15, COLOR_TEXT),
                     compound="left",
-                    command=self.cancel_dialogue_pair_creation,
+                    command=self.cancel_set_creation,
                     width=68,
                     height=THEME.layout.entry_height,
                     corner_radius=THEME.layout.control_radius,
@@ -1652,7 +1628,10 @@ class ImageOcrExcelApp:
         )
         scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
         self.template_fields_scroller = scroller
-        if not self.fields and self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if (
+            not self.fields
+            and self.export_layout_var.get() != EXPORT_LAYOUT_SET
+        ):
             self._empty_state(
                 scroller,
                 "項目がありません",
@@ -1660,8 +1639,8 @@ class ImageOcrExcelApp:
                 THEME.copy.saved_template_hint,
                 icon="scan",
             )
-        elif self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            self._render_dialogue_pair_fields(scroller)
+        elif self.export_layout_var.get() == EXPORT_LAYOUT_SET:
+            self._render_set_fields(scroller)
         else:
             for idx, field in enumerate(self.fields):
                 self._field_row(scroller, idx)
@@ -1682,7 +1661,7 @@ class ImageOcrExcelApp:
             return
         if current_layout != value:
             self.export_layout_var.set(value)
-        if value == EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if value == EXPORT_LAYOUT_SET:
             self.empty_set_ids.add(1)
             self._assign_fields_to_current_set_definition(reassign_all=False)
             self._prepare_initial_set_creation()
@@ -1695,8 +1674,8 @@ class ImageOcrExcelApp:
             fixed_auto_detection_ranges = self.auto_detection_enabled
             if fixed_auto_detection_ranges:
                 self._adopt_current_image_as_coordinate_source()
-            self.pending_dialogue_pair_id = None
-            self.pending_dialogue_role = ""
+            self.pending_set_id = None
+            self.pending_slot_key = ""
             self.empty_set_ids.clear()
             self.auto_detection_enabled = False
             self.auto_detection_base_fields = []
@@ -1712,7 +1691,7 @@ class ImageOcrExcelApp:
         return self.dialogs.askyesno(
             "固定範囲へ切り替え",
             f"{image_name} の検出範囲を固定範囲として引き継ぎます。\n\n"
-            "切り替え後は、画像ごとの会話自動検出を行いません。",
+            "切り替え後は、画像ごとの自動検出を行いません。",
             yes_text="固定範囲に切り替える",
             no_text="自動検出を続ける",
             kind="warning",
@@ -1797,17 +1776,21 @@ class ImageOcrExcelApp:
             "",
         )
         if missing:
-            self.pending_dialogue_pair_id = 1
-            self.pending_dialogue_role = missing
+            self.pending_set_id = 1
+            self.pending_slot_key = missing
         else:
-            self.pending_dialogue_pair_id = None
-            self.pending_dialogue_role = ""
+            self.pending_set_id = None
+            self.pending_slot_key = ""
 
     def _set_set_preset(
         self, display: str, menu: ctk.CTkOptionMenu | None = None
     ) -> None:
         preset = next(
-            (key for key, label in SET_PRESET_DISPLAY.items() if label == display),
+            (
+                key
+                for key, label in self.profile.set_preset_display.items()
+                if label == display
+            ),
             self.set_definition.preset,
         )
         if preset == self.set_definition.preset:
@@ -1819,19 +1802,22 @@ class ImageOcrExcelApp:
             yes_text="変更する",
             no_text="戻る",
         ):
-            current_display = SET_PRESET_DISPLAY[self.set_definition.preset]
+            current_display = self.profile.set_preset_display[
+                self.set_definition.preset
+            ]
             self.set_preset_var.set(current_display)
             if menu is not None:
                 menu.set(current_display)
             return
-        self.set_definition = set_definition_for_preset(preset)
-        self.set_preset_var.set(SET_PRESET_DISPLAY[preset])
+        self.set_definition = self.profile.set_definition(preset)
+        self.set_preset_var.set(self.profile.set_preset_display[preset])
         if menu is not None:
-            menu.set(SET_PRESET_DISPLAY[preset])
+            menu.set(self.profile.set_preset_display[preset])
         self.auto_detection_enabled = False
         self.auto_detection_base_fields = []
         self.current_detection_layout = ""
         self.current_detection_reason = ""
+        self.current_detection_count = 0
         if assigned:
             self._assign_fields_to_current_set_definition(reassign_all=True)
         self._prepare_initial_set_creation()
@@ -1842,29 +1828,29 @@ class ImageOcrExcelApp:
         self._schedule_side_body_render()
         self.redraw()
 
-    def _dialogue_pair_ids(self) -> list[int]:
-        pair_ids = {field.pair_id for field in self.fields if field.pair_id > 0}
-        pair_ids.update(getattr(self, "empty_set_ids", set()))
-        if self.pending_dialogue_pair_id is not None:
-            pair_ids.add(self.pending_dialogue_pair_id)
-        return sorted(pair_ids)
+    def _set_ids(self) -> list[int]:
+        set_ids = {field.set_id for field in self.fields if field.set_id > 0}
+        set_ids.update(getattr(self, "empty_set_ids", set()))
+        if self.pending_set_id is not None:
+            set_ids.add(self.pending_set_id)
+        return sorted(set_ids)
 
-    def _next_dialogue_pair_id(self) -> int:
-        pair_ids = self._dialogue_pair_ids()
-        return (pair_ids[-1] + 1) if pair_ids else 1
+    def _next_set_id(self) -> int:
+        set_ids = self._set_ids()
+        return (set_ids[-1] + 1) if set_ids else 1
 
-    def _dialogue_creation_button_text(self) -> str:
-        if self.pending_dialogue_pair_id is None:
+    def _set_creation_button_text(self) -> str:
+        if self.pending_set_id is None:
             return "セットを追加"
-        slot_label = self.set_definition.slot_label(self.pending_dialogue_role)
-        return f"セット {self.pending_dialogue_pair_id}: {slot_label}範囲をプレビュー上でドラッグ"
+        slot_label = self.set_definition.slot_label(self.pending_slot_key)
+        return f"セット {self.pending_set_id}: {slot_label}範囲をプレビュー上でドラッグ"
 
-    def begin_dialogue_pair_creation(self) -> None:
-        if self.pending_dialogue_pair_id is None:
+    def begin_set_creation(self) -> None:
+        if self.pending_set_id is None:
             incomplete = next(
                 (
                     (set_id, column.key)
-                    for set_id in self._dialogue_pair_ids()
+                    for set_id in self._set_ids()
                     for column in self.set_definition.columns
                     if not any(
                         field.set_id == set_id and field.slot_key == column.key
@@ -1874,34 +1860,34 @@ class ImageOcrExcelApp:
                 None,
             )
             if incomplete is None:
-                self.pending_dialogue_pair_id = self._next_dialogue_pair_id()
-                self.pending_dialogue_role = self.set_definition.columns[0].key
-                self.empty_set_ids.add(self.pending_dialogue_pair_id)
+                self.pending_set_id = self._next_set_id()
+                self.pending_slot_key = self.set_definition.columns[0].key
+                self.empty_set_ids.add(self.pending_set_id)
             else:
-                self.pending_dialogue_pair_id, self.pending_dialogue_role = incomplete
-        slot_label = self.set_definition.slot_label(self.pending_dialogue_role)
+                self.pending_set_id, self.pending_slot_key = incomplete
+        slot_label = self.set_definition.slot_label(self.pending_slot_key)
         self.status_var.set(
-            f"セット {self.pending_dialogue_pair_id} の{slot_label}範囲をプレビュー上でドラッグしてください。"
+            f"セット {self.pending_set_id} の{slot_label}範囲をプレビュー上でドラッグしてください。"
         )
         self._schedule_side_body_render()
 
-    def cancel_dialogue_pair_creation(self) -> None:
-        self.pending_dialogue_pair_id = None
-        self.pending_dialogue_role = ""
+    def cancel_set_creation(self) -> None:
+        self.pending_set_id = None
+        self.pending_slot_key = ""
         self.status_var.set("セットの追加を中止しました。")
         self._schedule_side_body_render()
 
-    def _render_dialogue_pair_fields(self, parent) -> None:
-        pair_ids = self._dialogue_pair_ids()
-        for position, pair_id in enumerate(pair_ids):
-            section = self._dialogue_drop_section(parent, pair_id)
+    def _render_set_fields(self, parent) -> None:
+        set_ids = self._set_ids()
+        for position, set_id in enumerate(set_ids):
+            section = self._set_drop_section(parent, set_id)
             section.pack(fill="x", padx=7, pady=(7 if position == 0 else 10, 0))
             header = ctk.CTkFrame(section, fg_color="transparent")
             header.pack(fill="x", padx=7, pady=(5, 2))
             header.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(
                 header,
-                text=f"セット {pair_id}",
+                text=f"セット {set_id}",
                 anchor="w",
                 font=UI_FONT_BOLD,
                 text_color=COLOR_TEXT,
@@ -1910,7 +1896,7 @@ class ImageOcrExcelApp:
                 header,
                 text="",
                 image=ICONS.get("arrow_up", 15, COLOR_MUTED),
-                command=lambda value=pair_id: self.move_dialogue_pair(value, -1),
+                command=lambda value=set_id: self.move_set(value, -1),
                 width=30,
                 height=28,
                 state="normal" if position > 0 else "disabled",
@@ -1925,10 +1911,10 @@ class ImageOcrExcelApp:
                 header,
                 text="",
                 image=ICONS.get("arrow_down", 15, COLOR_MUTED),
-                command=lambda value=pair_id: self.move_dialogue_pair(value, 1),
+                command=lambda value=set_id: self.move_set(value, 1),
                 width=30,
                 height=28,
-                state="normal" if position < len(pair_ids) - 1 else "disabled",
+                state="normal" if position < len(set_ids) - 1 else "disabled",
                 corner_radius=THEME.layout.control_radius,
                 fg_color="transparent",
                 hover_color=COLOR_UTILITY_HOVER,
@@ -1937,7 +1923,7 @@ class ImageOcrExcelApp:
             down_button.grid(row=0, column=2, padx=(2, 0))
             add_tooltip(down_button, "セットを下へ")
             indexes = [
-                idx for idx, field in enumerate(self.fields) if field.pair_id == pair_id
+                idx for idx, field in enumerate(self.fields) if field.set_id == set_id
             ]
             indexes.sort(
                 key=lambda idx: (
@@ -1953,7 +1939,7 @@ class ImageOcrExcelApp:
                 )
             )
             for idx in indexes:
-                self._dialogue_field_row(section, idx)
+                self._set_field_row(section, idx)
             if not indexes:
                 ctk.CTkLabel(
                     section,
@@ -1964,9 +1950,9 @@ class ImageOcrExcelApp:
                 ).pack(fill="x", padx=8, pady=(4, 10))
 
         unassigned = [
-            idx for idx, field in enumerate(self.fields) if field.pair_id <= 0
+            idx for idx, field in enumerate(self.fields) if field.set_id <= 0
         ]
-        section = self._dialogue_drop_section(parent, 0)
+        section = self._set_drop_section(parent, 0)
         section.pack(fill="x", padx=7, pady=(10, 7))
         ctk.CTkLabel(
             section,
@@ -1977,7 +1963,7 @@ class ImageOcrExcelApp:
         ).pack(fill="x", padx=7, pady=(5, 2))
         if unassigned:
             for idx in unassigned:
-                self._dialogue_field_row(section, idx)
+                self._set_field_row(section, idx)
         else:
             ctk.CTkLabel(
                 section,
@@ -1987,7 +1973,7 @@ class ImageOcrExcelApp:
                 text_color=COLOR_MUTED,
             ).pack(fill="x", padx=8, pady=(4, 10))
 
-    def _dialogue_drop_section(self, parent, pair_id: int) -> ctk.CTkFrame:
+    def _set_drop_section(self, parent, set_id: int) -> ctk.CTkFrame:
         section = ctk.CTkFrame(
             parent,
             corner_radius=THEME.layout.panel_radius,
@@ -1995,29 +1981,29 @@ class ImageOcrExcelApp:
             border_width=1,
             border_color=COLOR_SURFACE_ALT,
         )
-        self.dialogue_drop_section_by_pair[pair_id] = section
+        self.set_drop_section_by_id[set_id] = section
         return section
 
-    def move_dialogue_pair(self, pair_id: int, direction: int) -> None:
-        pair_ids = self._dialogue_pair_ids()
-        if pair_id not in pair_ids:
+    def move_set(self, set_id: int, direction: int) -> None:
+        set_ids = self._set_ids()
+        if set_id not in set_ids:
             return
-        position = pair_ids.index(pair_id)
+        position = set_ids.index(set_id)
         target_position = position + direction
-        if not (0 <= target_position < len(pair_ids)):
+        if not (0 <= target_position < len(set_ids)):
             return
-        other_id = pair_ids[target_position]
+        other_id = set_ids[target_position]
         for field in self.fields:
-            if field.pair_id == pair_id:
-                field.pair_id = other_id
-            elif field.pair_id == other_id:
-                field.pair_id = pair_id
+            if field.set_id == set_id:
+                field.set_id = other_id
+            elif field.set_id == other_id:
+                field.set_id = set_id
         remapped_empty_ids: set[int] = set()
         for value in self.empty_set_ids:
-            if value == pair_id:
+            if value == set_id:
                 remapped_empty_ids.add(other_id)
             elif value == other_id:
-                remapped_empty_ids.add(pair_id)
+                remapped_empty_ids.add(set_id)
             else:
                 remapped_empty_ids.add(value)
         self.empty_set_ids = remapped_empty_ids
@@ -2681,7 +2667,9 @@ class ImageOcrExcelApp:
         return f"テキスト整形：{'・'.join(formatting)}"
 
     def _is_review_candidate(self, field: TemplateField) -> bool:
-        return field.dialogue_role == DIALOGUE_ROLE_SUPPLEMENT
+        return field.slot_key in {
+            column.key for column in self.set_definition.extra_slots
+        }
 
     def edit_selected_field_range(self) -> None:
         if self.selected_index is None:
@@ -3269,7 +3257,7 @@ class ImageOcrExcelApp:
         ).grid(row=1, column=1, columnspan=2, sticky="ew")
         edit_button_row = (
             3
-            if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
+            if self.export_layout_var.get() == EXPORT_LAYOUT_SET
             else 2
         )
         ctk.CTkButton(
@@ -3294,7 +3282,7 @@ class ImageOcrExcelApp:
             sticky="e",
             pady=(8, 0),
         )
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
             ctk.CTkLabel(
                 summary,
                 text="項目の組み合わせ",
@@ -3304,7 +3292,7 @@ class ImageOcrExcelApp:
             ).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
             ctk.CTkLabel(
                 summary,
-                text=SET_PRESET_DISPLAY[self.set_definition.preset],
+                text=self.set_definition.name,
                 anchor="w",
                 font=UI_FONT_SMALL,
                 text_color=COLOR_TEXT,
@@ -3322,7 +3310,7 @@ class ImageOcrExcelApp:
         self._on_mode_change()
 
     def _export_column_summary(self) -> str:
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
             names = [
                 self.set_definition.order_label,
                 *(column.label for column in self.set_definition.columns),
@@ -3342,8 +3330,8 @@ class ImageOcrExcelApp:
         return f"{columns} / {header}"
 
     def _export_unit_summary(self, enabled_count: int) -> str:
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            return f"{len(self._dialogue_pair_field_indexes())}セット"
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
+            return f"{len(self._set_field_indexes())}セット"
         return f"{enabled_count}項目"
 
     def _empty_state(
@@ -3538,7 +3526,7 @@ class ImageOcrExcelApp:
                 lambda _event, i=idx: self.begin_inline_name_edit(i),
             )
 
-    def _dialogue_field_row(self, parent, idx: int) -> None:
+    def _set_field_row(self, parent, idx: int) -> None:
         field = self.fields[idx]
         selected = idx == self.selected_index
         row = ctk.CTkFrame(
@@ -3565,7 +3553,7 @@ class ImageOcrExcelApp:
             border_width=1,
             command=lambda i=idx, v=var: self.set_field_enabled(i, v.get()),
         ).grid(row=0, column=0, rowspan=2, padx=(8, 0), pady=8)
-        role_label = self._dialogue_role_display(field.dialogue_role)
+        role_label = self._slot_display(field.slot_key)
         ctk.CTkLabel(
             row,
             text=role_label,
@@ -3574,9 +3562,11 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             fg_color=(
                 THEME.palette.info
-                if field.enabled and field.dialogue_role == DIALOGUE_ROLE_SUPPLEMENT
+                if field.enabled
+                and field.slot_key
+                in {column.key for column in self.set_definition.extra_slots}
                 else COLOR_PRIMARY
-                if field.enabled and field.dialogue_role
+                if field.enabled and field.slot_key
                 else THEME.palette.disabled_fill
             ),
             text_color=THEME.palette.on_color,
@@ -3615,13 +3605,9 @@ class ImageOcrExcelApp:
             values=[
                 "未割当",
                 *(column.label for column in self.set_definition.columns),
-                *(
-                    ["補足セリフ"]
-                    if self.set_definition.preset == SET_PRESET_CONVERSATION
-                    else []
-                ),
+                *(column.label for column in self.set_definition.extra_slots),
             ],
-            command=lambda value, i=idx: self.set_field_dialogue_role(i, value),
+            command=lambda value, i=idx: self.set_field_slot(i, value),
             width=116,
             height=26,
             font=UI_FONT_SMALL,
@@ -3694,48 +3680,41 @@ class ImageOcrExcelApp:
         add_tooltip(button, tooltip)
         return button
 
-    def _dialogue_role_display(self, role: str) -> str:
+    def _slot_display(self, role: str) -> str:
         return (
             self.set_definition.slot_label(role)
             if role in self.set_definition.allowed_slot_keys()
             else "未割当"
         )
 
-    def set_field_dialogue_role(self, idx: int, display: str) -> None:
+    def set_field_slot(self, idx: int, display: str) -> None:
         if not (0 <= idx < len(self.fields)):
             return
         definition = getattr(
             self,
             "set_definition",
-            set_definition_for_preset(SET_PRESET_CONVERSATION),
+            self.profile.default_set_definition,
         )
         role = next(
             (
                 column.key
-                for column in definition.columns
+                for column in (*definition.columns, *definition.extra_slots)
                 if column.label == display
             ),
-            (
-                SET_SLOT_SUPPLEMENT
-                if display == "補足セリフ"
-                and definition.preset == SET_PRESET_CONVERSATION
-                else ""
-            ),
+            "",
         )
         field = self.fields[idx]
-        role_changed = field.dialogue_role != role
+        role_changed = field.slot_key != role
         column = definition.column_for(role)
         desired_line_split = (
-            "detected" if role == SET_SLOT_SUPPLEMENT else column.ocr_line_split
-            if column is not None
-            else field.ocr_line_split
+            column.ocr_line_split if column is not None else field.ocr_line_split
         )
         line_split_changed = (
             bool(role) and field.ocr_line_split != desired_line_split
         )
         if not role_changed and not line_split_changed:
             return
-        field.dialogue_role = role
+        field.slot_key = role
         if line_split_changed:
             field.ocr_line_split = desired_line_split
             if idx < len(self.current_results):
@@ -3809,14 +3788,14 @@ class ImageOcrExcelApp:
         self.workflow_started = True
         self.auto_detection_enabled = True
         self.empty_set_ids = set()
-        self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
+        self.set_definition = self.profile.default_set_definition
         if hasattr(self, "set_preset_var"):
-            self.set_preset_var.set(SET_PRESET_DISPLAY[SET_PRESET_CONVERSATION])
+            self.set_preset_var.set(self.set_definition.name)
         self.auto_detection_base_fields = self.profile.auto_detection_fields()
         self.fields = [replace(field) for field in self.auto_detection_base_fields]
         self.selected_index = 0
         with self._without_dirty_tracking():
-            self.export_layout_var.set(EXPORT_LAYOUT_DIALOGUE_PAIR)
+            self.export_layout_var.set(EXPORT_LAYOUT_SET)
             self.mode_var.set(MODE_REVIEW)
         self._hide_workflow_choice()
         if not self.open_image_folder():
@@ -3839,9 +3818,9 @@ class ImageOcrExcelApp:
         self.auto_detection_enabled = False
         self.auto_detection_base_fields = []
         self.empty_set_ids = set()
-        self.set_definition = set_definition_for_preset(SET_PRESET_CONVERSATION)
+        self.set_definition = self.profile.default_set_definition
         if hasattr(self, "set_preset_var"):
-            self.set_preset_var.set(SET_PRESET_DISPLAY[SET_PRESET_CONVERSATION])
+            self.set_preset_var.set(self.set_definition.name)
         self.fields = []
         self.selected_index = None
         with self._without_dirty_tracking():
@@ -4390,16 +4369,17 @@ class ImageOcrExcelApp:
         else:
             if self.auto_detection_enabled:
                 labels = {
-                    "normal": "通常会話を1件検出しました。",
-                    "speakerless": "話者なし会話を1件検出しました。",
-                    "narration": "中央ナレーションを1件検出しました。",
-                    "log": f"会話ログを {len(self.fields) // 2} 件検出しました。",
+                    **self.app_config.copy.detection_statuses,
+                    "log": (
+                        f"{self.set_definition.name}を "
+                        f"{self.current_detection_count} 件検出しました。"
+                    ),
                     "supplement_candidate": self.current_detection_reason,
-                    "unknown": "会話を自動検出できませんでした。読み取り範囲を確認してください。",
+                    "unknown": self.app_config.copy.detection_failure_status,
                 }
                 status = labels.get(
                     self.current_detection_layout,
-                    "自動検出を確認してください。",
+                    self.app_config.copy.detection_fallback_status,
                 )
                 if self.current_detection_layout == "unknown":
                     self._set_warning_status(status)
@@ -4421,37 +4401,35 @@ class ImageOcrExcelApp:
             self.status_label.configure(text_color=THEME.palette.warning)
 
     def _apply_auto_detection_preview(self) -> None:
-        if self.original_image is None or self.profile.dialogue_log_detection is None:
+        strategy = self.profile.auto_detection
+        if self.original_image is None or strategy is None:
             return
         prototypes = [replace(field) for field in self.auto_detection_base_fields]
-        detection = detect_complete_dialogue_pairs(
+        detection = strategy.detect(
             self.original_image,
             prototypes,
             self.coordinate_settings,
-            self.profile.dialogue_log_detection,
         )
         self.current_detection_layout = detection.layout
         self.current_detection_reason = detection.review_reason
+        self.current_detection_count = len(detection.groups)
         if not detection.groups:
             self.fields = prototypes
             self.selected_index = None
             return
         detected_fields: list[TemplateField] = []
         multiple = len(detection.groups) > 1
-        for pair_id, speaker, dialogue in detection.groups:
+        for set_id, slots in detection.groups:
             detected_fields.extend(
-                [
-                    replace(
-                        speaker,
-                        name=f"話者{pair_id}" if multiple else "話者",
-                    ),
-                    replace(
-                        dialogue,
-                        name=(
-                            f"セリフ本文{pair_id}" if multiple else "セリフ本文"
-                        ),
-                    ),
-                ]
+                replace(
+                    field,
+                    name=f"{field.name}{set_id}" if multiple else field.name,
+                )
+                for field in (
+                    slots[column.key]
+                    for column in self.set_definition.columns
+                    if column.key in slots
+                )
             )
         detected_fields.extend(replace(field) for field in detection.candidate_fields)
         self.fields = detected_fields
@@ -4578,7 +4556,7 @@ class ImageOcrExcelApp:
                 initialfile=(
                     initial_path.name
                     if initial_path is not None
-                    else THEME.copy.default_template_name
+                    else self.app_config.default_template_name
                 ),
                 defaultextension=".json",
                 filetypes=[("JSON", "*.json")],
@@ -4653,12 +4631,13 @@ class ImageOcrExcelApp:
             self.auto_detection_base_fields = []
             self.empty_set_ids = set()
             self.fields = fields
-            self.set_definition = set_definition_from_template(data)
-            self.set_preset_var.set(
-                SET_PRESET_DISPLAY[self.set_definition.preset]
+            self.set_definition = set_definition_from_template(
+                data,
+                self.profile.set_definitions,
             )
-            self.pending_dialogue_pair_id = None
-            self.pending_dialogue_role = ""
+            self.set_preset_var.set(self.set_definition.name)
+            self.pending_set_id = None
+            self.pending_slot_key = ""
             self.correction_rules = correction_rules_from_template(data)
             self.coordinate_settings = coordinate_settings_from_template(data)
             self.text_formatting = text_formatting_from_template(
@@ -5175,7 +5154,7 @@ class ImageOcrExcelApp:
         ).grid(row=0, column=0, sticky="w", padx=(14, 12), pady=(12, 4))
         ctk.CTkLabel(
             environment_details,
-            text="PaddleOCR（固定）",
+            text=self.app_config.copy.fixed_ocr_backend_label,
             anchor="e",
             font=UI_FONT_SMALL,
             text_color=COLOR_TEXT,
@@ -5769,7 +5748,7 @@ class ImageOcrExcelApp:
             return
         self.fields[idx].enabled = enabled
         self._mark_dirty()
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
             self._render_side_body()
         self.redraw()
 
@@ -5788,10 +5767,10 @@ class ImageOcrExcelApp:
         if idx is None:
             return
         if (
-            self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
-            and self.fields[idx].pair_id > 0
+            self.export_layout_var.get() == EXPORT_LAYOUT_SET
+            and self.fields[idx].set_id > 0
         ):
-            self.move_dialogue_pair(self.fields[idx].pair_id, direction)
+            self.move_set(self.fields[idx].set_id, direction)
             return
         self.move_field(idx, direction)
 
@@ -5847,8 +5826,8 @@ class ImageOcrExcelApp:
         self.dragging_field_index = idx
         self.selected_index = idx
         self._set_field_drag_visual(idx, True)
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            self._set_dialogue_drop_target(self.fields[idx].pair_id)
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
+            self._set_drop_target(self.fields[idx].set_id)
             self.status_var.set(
                 f"{self.fields[idx].name} を移動先のセットへドラッグします。"
             )
@@ -5859,10 +5838,10 @@ class ImageOcrExcelApp:
     def update_field_drag(self, event, idx: int) -> str:
         if self.dragging_field_index != idx or not (0 <= idx < len(self.fields)):
             return "break"
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            target_pair = self._dialogue_drop_pair_id(event.y_root)
-            self._set_dialogue_drop_target(target_pair)
-            destination = f"セット {target_pair}" if target_pair > 0 else "未割当"
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
+            target_set = self._set_drop_id(event.y_root)
+            self._set_drop_target(target_set)
+            destination = f"セット {target_set}" if target_set > 0 else "未割当"
             self.status_var.set(f"{self.fields[idx].name} を {destination} へ移動")
             return "break"
         target_idx = self._field_drop_index(event.y_root, idx)
@@ -5875,23 +5854,23 @@ class ImageOcrExcelApp:
             return "break"
         self._set_field_drag_visual(idx, False)
         self.dragging_field_index = None
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            target_pair = self._dialogue_drop_pair_id(event.y_root)
-            self._set_dialogue_drop_target(None)
-            self.move_field_to_dialogue_pair(idx, target_pair)
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
+            target_set = self._set_drop_id(event.y_root)
+            self._set_drop_target(None)
+            self.move_field_to_set(idx, target_set)
             return "break"
         target_idx = self._field_drop_index(event.y_root, idx)
         self.move_field_to(idx, target_idx)
         return "break"
 
-    def _dialogue_drop_pair_id(self, y_root: int) -> int:
-        if not self.dialogue_drop_section_by_pair:
+    def _set_drop_id(self, y_root: int) -> int:
+        if not self.set_drop_section_by_id:
             return 0
-        sections = list(self.dialogue_drop_section_by_pair.items())
-        for pair_id, section in sections:
+        sections = list(self.set_drop_section_by_id.items())
+        for set_id, section in sections:
             top = section.winfo_rooty()
             if top <= y_root <= top + section.winfo_height():
-                return pair_id
+                return set_id
         return min(
             sections,
             key=lambda item: abs(
@@ -5899,21 +5878,21 @@ class ImageOcrExcelApp:
             ),
         )[0]
 
-    def _set_dialogue_drop_target(self, pair_id: int | None) -> None:
-        if self.dialogue_drag_target_pair == pair_id:
+    def _set_drop_target(self, set_id: int | None) -> None:
+        if self.set_drag_target_id == set_id:
             return
-        previous_pair_id = self.dialogue_drag_target_pair
+        previous_set_id = self.set_drag_target_id
         previous = (
-            self.dialogue_drop_section_by_pair.get(previous_pair_id)
-            if previous_pair_id is not None
+            self.set_drop_section_by_id.get(previous_set_id)
+            if previous_set_id is not None
             else None
         )
         if previous is not None:
             previous.configure(fg_color="transparent", border_color=COLOR_SURFACE_ALT)
-        self.dialogue_drag_target_pair = pair_id
+        self.set_drag_target_id = set_id
         target = (
-            self.dialogue_drop_section_by_pair.get(pair_id)
-            if pair_id is not None
+            self.set_drop_section_by_id.get(set_id)
+            if set_id is not None
             else None
         )
         if target is not None:
@@ -5921,13 +5900,13 @@ class ImageOcrExcelApp:
                 fg_color=THEME.palette.selected_row, border_color=COLOR_PRIMARY
             )
 
-    def move_field_to_dialogue_pair(self, idx: int, target_pair_id: int) -> None:
+    def move_field_to_set(self, idx: int, target_set_id: int) -> None:
         if not (0 <= idx < len(self.fields)):
             return
         field = self.fields[idx]
-        source_pair_id = field.pair_id
-        target_pair_id = max(0, target_pair_id)
-        if source_pair_id == target_pair_id:
+        source_set_id = field.set_id
+        target_set_id = max(0, target_set_id)
+        if source_set_id == target_set_id:
             self.selected_index = idx
             self._render_side_body()
             self.redraw()
@@ -5938,19 +5917,19 @@ class ImageOcrExcelApp:
                 candidate
                 for candidate_idx, candidate in enumerate(self.fields)
                 if candidate_idx != idx
-                and candidate.pair_id == target_pair_id
-                and candidate.dialogue_role == field.dialogue_role
-                and field.dialogue_role
+                and candidate.set_id == target_set_id
+                and candidate.slot_key == field.slot_key
+                and field.slot_key
             ),
             None,
         )
-        field.pair_id = target_pair_id
+        field.set_id = target_set_id
         if replacement is not None:
-            replacement.pair_id = source_pair_id if source_pair_id > 0 else 0
+            replacement.set_id = source_set_id if source_set_id > 0 else 0
 
         self.selected_index = idx
         self._mark_dirty()
-        destination = f"セット {target_pair_id}" if target_pair_id > 0 else "未割当"
+        destination = f"セット {target_set_id}" if target_set_id > 0 else "未割当"
         if replacement is not None:
             self.status_var.set(
                 f"{field.name} を {destination} へ移動し、同じ種類の項目を入れ替えました。"
@@ -6241,9 +6220,9 @@ class ImageOcrExcelApp:
         source = self.fields[idx]
         duplicate = replace(source)
         duplicate.name = self._unique_field_name(f"{source.name} のコピー")
-        if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR:
-            duplicate.pair_id = 0
-            duplicate.dialogue_role = ""
+        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
+            duplicate.set_id = 0
+            duplicate.slot_key = ""
         if self.original_image is not None:
             width, height = self.original_image.size
             dx = 12 if duplicate.x2 + 12 <= width else -12 if duplicate.x1 >= 12 else 0
@@ -6268,8 +6247,8 @@ class ImageOcrExcelApp:
         )
         self._mark_dirty()
         assignment_note = (
-            "会話番号と役割は未割当です。"
-            if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
+            "セット番号とセット内項目は未割当です。"
+            if self.export_layout_var.get() == EXPORT_LAYOUT_SET
             else ""
         )
         self.status_var.set(
@@ -6362,8 +6341,8 @@ class ImageOcrExcelApp:
             self._undo_deleted_field(action)
         elif action_type == "update_rect":
             self._undo_updated_rect(action)
-        elif action_type == "update_pair_rects":
-            self._undo_updated_pair_rects(action)
+        elif action_type == "update_set_rects":
+            self._undo_updated_set_rects(action)
         else:
             self.status_var.set("取り消せる直前操作がありません。")
             self.undo_action = None
@@ -6411,8 +6390,8 @@ class ImageOcrExcelApp:
             removed_field.set_id > 0
             and removed_field.slot_key in self.set_definition.slot_keys
         ):
-            self.pending_dialogue_pair_id = removed_field.pair_id
-            self.pending_dialogue_role = removed_field.dialogue_role
+            self.pending_set_id = removed_field.set_id
+            self.pending_slot_key = removed_field.slot_key
         self.status_var.set(f"{field_name} の追加を取り消しました。")
 
     def _undo_deleted_field(self, action: dict) -> None:
@@ -6449,7 +6428,7 @@ class ImageOcrExcelApp:
         self.selected_index = idx
         self.status_var.set(f"{current.name} の範囲変更を取り消しました。")
 
-    def _undo_updated_pair_rects(self, action: dict) -> None:
+    def _undo_updated_set_rects(self, action: dict) -> None:
         fields: dict[int, TemplateField] = action.get("fields") or {}
         if not fields:
             self.status_var.set(
@@ -6503,7 +6482,7 @@ class ImageOcrExcelApp:
         self.canvas_rects.clear()
         self.canvas_labels.clear()
         self.canvas_label_bgs.clear()
-        self.canvas_pair_handles.clear()
+        self.canvas_set_handles.clear()
         if not self.original_image:
             self._draw_canvas_empty()
             return
@@ -6524,7 +6503,7 @@ class ImageOcrExcelApp:
         self._sync_canvas_scrollbars()
         for idx in self._canvas_draw_order():
             self._draw_field(idx)
-        self._draw_pair_handles()
+        self._draw_set_handles()
 
     def _canvas_draw_order(self) -> list[int]:
         indexes = list(range(len(self.fields)))
@@ -6539,30 +6518,33 @@ class ImageOcrExcelApp:
             return selected
         return None
 
-    def _dialogue_pair_field_indexes(self) -> list[tuple[int, tuple[int, ...]]]:
-        if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
+    def _set_field_indexes(self) -> list[tuple[int, tuple[int, ...]]]:
+        if self.export_layout_var.get() != EXPORT_LAYOUT_SET:
             return []
         grouped: dict[int, dict[str, int]] = {}
         for idx, field in enumerate(self.fields):
             if (
                 not field.enabled
-                or field.pair_id <= 0
+                or field.set_id <= 0
                 or field.slot_key not in self.set_definition.allowed_slot_keys()
             ):
                 continue
-            grouped.setdefault(field.pair_id, {})[field.dialogue_role] = idx
+            grouped.setdefault(field.set_id, {})[field.slot_key] = idx
         complete: list[tuple[int, tuple[int, ...]]] = []
-        for pair_id, roles in sorted(grouped.items()):
+        for set_id, roles in sorted(grouped.items()):
             if not all(key in roles for key in self.set_definition.slot_keys):
                 continue
             indexes = [roles[key] for key in self.set_definition.slot_keys]
-            if SET_SLOT_SUPPLEMENT in roles:
-                indexes.append(roles[SET_SLOT_SUPPLEMENT])
-            complete.append((pair_id, tuple(indexes)))
+            indexes.extend(
+                roles[column.key]
+                for column in self.set_definition.extra_slots
+                if column.key in roles
+            )
+            complete.append((set_id, tuple(indexes)))
         return complete
 
-    def _dialogue_pair_for_field(self, idx: int) -> tuple[int, ...] | None:
-        for _pair_id, indexes in self._dialogue_pair_field_indexes():
+    def _set_for_field(self, idx: int) -> tuple[int, ...] | None:
+        for _set_id, indexes in self._set_field_indexes():
             if idx in indexes:
                 return indexes
         return None
@@ -6574,15 +6556,15 @@ class ImageOcrExcelApp:
         return int(idx) if idx is not None else None
 
     def _should_draw_field_rect(self, idx: int) -> bool:
-        pair = self._dialogue_pair_for_field(idx)
-        if pair is None:
+        set_indexes = self._set_for_field(idx)
+        if set_indexes is None:
             return True
         editing_idx = self._canvas_editing_index()
         if editing_idx is not None:
             return editing_idx == idx
         if (
             self.canvas_edit_state is not None
-            and self.canvas_edit_state.get("mode") == "pair_move"
+            and self.canvas_edit_state.get("mode") == "set_move"
         ):
             return False
         return self.selected_index == idx
@@ -6730,23 +6712,23 @@ class ImageOcrExcelApp:
             self.canvas_label_bgs[idx] = bg
         self.canvas_labels[idx] = label
 
-    def _draw_pair_handles(self) -> None:
+    def _draw_set_handles(self) -> None:
         if self.original_image is None:
             return
-        for pair_id, indexes in self._dialogue_pair_field_indexes():
+        for set_id, indexes in self._set_field_indexes():
             rects = {}
             for idx in indexes:
                 field = self._scaled_field(self.fields[idx]).normalized()
                 rects[idx] = (field.x1, field.y1, field.x2, field.y2)
-            self._draw_pair_handle(pair_id, indexes, rects)
+            self._draw_set_handle(set_id, indexes, rects)
 
-    def _draw_pair_handle(
+    def _draw_set_handle(
         self,
-        pair_position: int,
+        set_position: int,
         indexes: tuple[int, ...],
         rects: dict[int, tuple[int, int, int, int]],
     ) -> None:
-        x1, y1, x2, y2 = self._pair_canvas_rect(rects)
+        x1, y1, x2, y2 = self._set_canvas_rect(rects)
         selected = self.selected_index in indexes
         outline = self.canvas.create_rectangle(
             x1,
@@ -6754,15 +6736,15 @@ class ImageOcrExcelApp:
             x2,
             y2,
             outline=(
-                THEME.palette.pair_outline_selected
+                THEME.palette.set_outline_selected
                 if selected
-                else THEME.palette.pair_outline
+                else THEME.palette.set_outline
             ),
             width=2 if selected else 1,
             dash=(5, 4),
         )
         if not selected:
-            self.canvas_pair_handles[pair_position] = {
+            self.canvas_set_handles[set_position] = {
                 "fields": indexes,
                 "outline": outline,
                 "handle": None,
@@ -6780,18 +6762,18 @@ class ImageOcrExcelApp:
             handle_y1,
             handle_x2,
             handle_y2,
-            fill=THEME.palette.pair_handle,
-            outline=THEME.palette.pair_outline_selected,
+            fill=THEME.palette.set_handle,
+            outline=THEME.palette.set_outline_selected,
             width=1,
         )
         label = self.canvas.create_text(
             (handle_x1 + handle_x2) / 2,
             (handle_y1 + handle_y2) / 2,
-            text=str(pair_position),
+            text=str(set_position),
             fill=THEME.palette.on_color,
             font=UI_FONT_CANVAS,
         )
-        self.canvas_pair_handles[pair_position] = {
+        self.canvas_set_handles[set_position] = {
             "fields": indexes,
             "outline": outline,
             "handle": handle,
@@ -6799,7 +6781,7 @@ class ImageOcrExcelApp:
             "selected": True,
         }
 
-    def _pair_union(
+    def _set_union(
         self, rects: dict[int, tuple[int, int, int, int]]
     ) -> tuple[int, int, int, int]:
         return (
@@ -6809,16 +6791,16 @@ class ImageOcrExcelApp:
             max(rect[3] for rect in rects.values()),
         )
 
-    def _pair_canvas_rect(
+    def _set_canvas_rect(
         self, rects: dict[int, tuple[int, int, int, int]]
     ) -> tuple[float, float, float, float]:
         padding = 7
-        x1, y1, x2, y2 = [value * self.zoom for value in self._pair_union(rects)]
+        x1, y1, x2, y2 = [value * self.zoom for value in self._set_union(rects)]
         return max(0, x1 - padding), max(0, y1 - padding), x2 + padding, y2 + padding
 
-    def _hit_test_pair_handle(self, canvas_x: float, canvas_y: float) -> int | None:
-        for pair_position in reversed(list(self.canvas_pair_handles.keys())):
-            state = self.canvas_pair_handles[pair_position]
+    def _hit_test_set_handle(self, canvas_x: float, canvas_y: float) -> int | None:
+        for set_position in reversed(list(self.canvas_set_handles.keys())):
+            state = self.canvas_set_handles[set_position]
             item = state.get("handle") or state.get("outline")
             if item is None:
                 continue
@@ -6845,16 +6827,16 @@ class ImageOcrExcelApp:
                 )
                 hit = (inside_y and near_vertical) or (inside_x and near_horizontal)
             if hit:
-                return pair_position
+                return set_position
         return None
 
-    def _set_pair_handle_preview(
-        self, pair_position: int, rects: dict[int, tuple[int, int, int, int]]
+    def _set_handle_preview(
+        self, set_position: int, rects: dict[int, tuple[int, int, int, int]]
     ) -> None:
-        handle_state = self.canvas_pair_handles.get(pair_position)
+        handle_state = self.canvas_set_handles.get(set_position)
         if not handle_state:
             return
-        x1, y1, x2, y2 = self._pair_canvas_rect(rects)
+        x1, y1, x2, y2 = self._set_canvas_rect(rects)
         outline = handle_state.get("outline")
         if outline is not None:
             self.canvas.coords(outline, x1, y1, x2, y2)
@@ -6968,7 +6950,7 @@ class ImageOcrExcelApp:
         return None, None
 
     def _cursor_for_edit_mode(self, mode: str | None) -> str:
-        if mode in {"move", "pair_move"}:
+        if mode in {"move", "set_move"}:
             return "fleur"
         if mode in {"e", "w"}:
             return "sb_h_double_arrow"
@@ -7006,9 +6988,9 @@ class ImageOcrExcelApp:
             self.canvas.configure(cursor="crosshair")
             return
         canvas_x, canvas_y = self._event_canvas_point(event)
-        pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
-        if pair_hit is not None:
-            state = self.canvas_pair_handles.get(pair_hit) or {}
+        set_hit = self._hit_test_set_handle(canvas_x, canvas_y)
+        if set_hit is not None:
+            state = self.canvas_set_handles.get(set_hit) or {}
             self.canvas.configure(cursor="fleur" if state.get("selected") else "hand2")
             return
         x, y = self._event_image_point(event)
@@ -7060,7 +7042,7 @@ class ImageOcrExcelApp:
         y1, y2 = sorted((max(0, min(h, y1)), max(0, min(h, y2))))
         return x1, y1, x2, y2
 
-    def _pair_move_rects_from_state(
+    def _set_move_rects_from_state(
         self, x: int, y: int
     ) -> dict[int, tuple[int, int, int, int]]:
         assert self.canvas_edit_state is not None
@@ -7144,10 +7126,10 @@ class ImageOcrExcelApp:
         x, y = self._event_image_point(event)
         field_hit_idx, field_mode = self._hit_test_field(x, y)
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
-        pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
-        if pair_hit is not None:
+        set_hit = self._hit_test_set_handle(canvas_x, canvas_y)
+        if set_hit is not None:
             self._adopt_current_image_as_coordinate_source()
-            handle_state = self.canvas_pair_handles.get(pair_hit) or {}
+            handle_state = self.canvas_set_handles.get(set_hit) or {}
             raw_indexes = handle_state.get("fields")
             indexes = (
                 tuple(raw_indexes)
@@ -7163,15 +7145,15 @@ class ImageOcrExcelApp:
                     field = self._scaled_field(self.fields[idx]).normalized()
                     origs[idx] = (field.x1, field.y1, field.x2, field.y2)
                 self.canvas_edit_state = {
-                    "pair_position": pair_hit,
+                    "set_position": set_hit,
                     "indexes": indexes,
-                    "mode": "pair_move",
+                    "mode": "set_move",
                     "start_x": x,
                     "start_y": y,
                     "origs": origs,
                     "selected": self.selected_index,
                 }
-                self.status_var.set(f"セット #{pair_hit} を移動中です。")
+                self.status_var.set(f"セット #{set_hit} を移動中です。")
                 self.redraw()
                 return
         if field_hit_idx is not None and field_mode and field_mode != "move":
@@ -7217,13 +7199,13 @@ class ImageOcrExcelApp:
         if self.mode_var.get() != MODE_TEMPLATE:
             return
         if self.canvas_edit_state is not None:
-            if self.canvas_edit_state.get("mode") == "pair_move":
+            if self.canvas_edit_state.get("mode") == "set_move":
                 x, y = self._event_image_point(event)
-                rects = self._pair_move_rects_from_state(x, y)
+                rects = self._set_move_rects_from_state(x, y)
                 for idx, rect in rects.items():
                     self._set_canvas_edit_preview(idx, rect)
-                self._set_pair_handle_preview(
-                    int(self.canvas_edit_state["pair_position"]), rects
+                self._set_handle_preview(
+                    int(self.canvas_edit_state["set_position"]), rects
                 )
                 return
             idx = int(self.canvas_edit_state["idx"])
@@ -7252,11 +7234,11 @@ class ImageOcrExcelApp:
             self._clear_canvas_pointer_interaction()
             return
         if self.canvas_edit_state is not None:
-            if self.canvas_edit_state.get("mode") == "pair_move":
+            if self.canvas_edit_state.get("mode") == "set_move":
                 x, y = self._event_image_point(event)
-                rects = self._pair_move_rects_from_state(x, y)
+                rects = self._set_move_rects_from_state(x, y)
                 indexes = tuple(self.canvas_edit_state["indexes"])
-                pair_position = int(self.canvas_edit_state["pair_position"])
+                set_position = int(self.canvas_edit_state["set_position"])
                 origs: dict[int, tuple[int, int, int, int]] = self.canvas_edit_state[
                     "origs"
                 ]
@@ -7298,7 +7280,7 @@ class ImageOcrExcelApp:
                         self.current_raw_results[idx] = ""
                 self.selected_index = previous_selected
                 self._set_undo(
-                    "update_pair_rects",
+                    "update_set_rects",
                     fields=before_fields,
                     results=before_results,
                     raw_results=before_raw_results,
@@ -7306,7 +7288,7 @@ class ImageOcrExcelApp:
                 )
                 self._mark_dirty()
                 self.status_var.set(
-                    f"セット {pair_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。"
+                    f"セット {set_position} の範囲を移動しました。Esc / Ctrl+Z で戻せます。"
                 )
                 self._schedule_side_body_render()
                 self.redraw()
@@ -7367,15 +7349,15 @@ class ImageOcrExcelApp:
         if (x2 - x1) < 8 or (y2 - y1) < 8:
             return
 
-        pair_id = (
-            self.pending_dialogue_pair_id
-            if self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
+        set_id = (
+            self.pending_set_id
+            if self.export_layout_var.get() == EXPORT_LAYOUT_SET
             else None
         )
-        dialogue_role = self.pending_dialogue_role if pair_id is not None else ""
-        if pair_id is not None:
-            slot_label = self.set_definition.slot_label(dialogue_role)
-            name = self._unique_field_name(f"{slot_label}{pair_id}")
+        slot_key = self.pending_slot_key if set_id is not None else ""
+        if set_id is not None:
+            slot_label = self.set_definition.slot_label(slot_key)
+            name = self._unique_field_name(f"{slot_label}{set_id}")
         else:
             name = self._next_field_name()
         source_width, source_height = self.original_image.size
@@ -7388,18 +7370,18 @@ class ImageOcrExcelApp:
             True,
             source_width,
             source_height,
-            set_id=pair_id or 0,
-            slot_key=dialogue_role,
+            set_id=set_id or 0,
+            slot_key=slot_key,
         )
         if self.profile.has_field_ocr_preset(name):
             for key, value in self.profile.field_ocr_preset(name).items():
                 setattr(field, key, value)
-        slot_column = self.set_definition.column_for(dialogue_role)
+        slot_column = self.set_definition.column_for(slot_key)
         if slot_column is not None:
             field.ocr_line_split = slot_column.ocr_line_split
         self.fields.append(field)
-        if pair_id is not None:
-            self.empty_set_ids.discard(pair_id)
+        if set_id is not None:
+            self.empty_set_ids.discard(set_id)
         self.current_results.append("")
         self.current_raw_results.append("")
         self.selected_index = len(self.fields) - 1
@@ -7412,23 +7394,23 @@ class ImageOcrExcelApp:
             result="",
         )
         self._mark_dirty()
-        if pair_id is not None:
+        if set_id is not None:
             slot_keys = list(self.set_definition.slot_keys)
-            current_position = slot_keys.index(dialogue_role)
+            current_position = slot_keys.index(slot_key)
             has_next = current_position + 1 < len(slot_keys)
         else:
             has_next = False
-        if pair_id is not None and has_next:
-            self.pending_dialogue_role = slot_keys[current_position + 1]
-            next_label = self.set_definition.slot_label(self.pending_dialogue_role)
+        if set_id is not None and has_next:
+            self.pending_slot_key = slot_keys[current_position + 1]
+            next_label = self.set_definition.slot_label(self.pending_slot_key)
             self.status_var.set(
-                f"{name} を追加しました。続けてセット {pair_id} の{next_label}範囲をドラッグしてください。"
+                f"{name} を追加しました。続けてセット {set_id} の{next_label}範囲をドラッグしてください。"
             )
-        elif pair_id is not None:
-            self.pending_dialogue_pair_id = None
-            self.pending_dialogue_role = ""
+        elif set_id is not None:
+            self.pending_set_id = None
+            self.pending_slot_key = ""
             self.status_var.set(
-                f"セット {pair_id} を追加しました。Esc / Ctrl+Z で戻せます。"
+                f"セット {set_id} を追加しました。Esc / Ctrl+Z で戻せます。"
             )
         else:
             self.editing_name_index = self.selected_index
@@ -7442,10 +7424,10 @@ class ImageOcrExcelApp:
 
     def _canvas_selection_hit(self, event) -> int | None:
         canvas_x, canvas_y = self._event_canvas_point(event)
-        pair_hit = self._hit_test_pair_handle(canvas_x, canvas_y)
-        if pair_hit is not None:
+        set_hit = self._hit_test_set_handle(canvas_x, canvas_y)
+        if set_hit is not None:
             indexes = tuple(
-                (self.canvas_pair_handles.get(pair_hit) or {}).get("fields") or ()
+                (self.canvas_set_handles.get(set_hit) or {}).get("fields") or ()
             )
             if indexes:
                 return int(indexes[0])
@@ -7688,9 +7670,9 @@ class ImageOcrExcelApp:
         if not fields:
             self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
             return
-        pair_error = self._validate_dialogue_pair_export(fields)
-        if pair_error:
-            self.dialogs.showerror("セット設定エラー", pair_error)
+        set_error = self._validate_set_export(fields)
+        if set_error:
+            self.dialogs.showerror("セット設定エラー", set_error)
             return
         if not self.image_files:
             self.dialogs.showerror("画像なし", "画像フォルダを選択してください。")
@@ -7733,19 +7715,23 @@ class ImageOcrExcelApp:
         tesseract_path = ""
         backend = self.profile.default_backend
         correction_rules = [replace(rule) for rule in self.correction_rules]
-        dialogue_detection = self.profile.dialogue_log_detection
+        auto_detection = self.profile.auto_detection
         text_formatting = self.text_formatting
         export_definition = self.set_definition
         set_resolver = None
         if (
-            dialogue_detection is not None
-            and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+            auto_detection is not None
+            and settings.output_layout == EXPORT_LAYOUT_SET
             and self.auto_detection_enabled
-            and export_definition.preset == SET_PRESET_CONVERSATION
+            and export_definition.preset == self.profile.default_set_preset
         ):
-            set_resolver = _dialogue_set_resolver(
-                coordinate_settings,
-                dialogue_detection,
+            set_resolver = lambda image, detection_fields: cast(
+                SetDetectionResult,
+                auto_detection.resolve_sets(
+                    image,
+                    detection_fields,
+                    coordinate_settings,
+                ),
             )
 
         export_signature = self._export_structure_signature(export_fields, settings)
@@ -7873,9 +7859,9 @@ class ImageOcrExcelApp:
         if not fields:
             self.dialogs.showerror("項目なし", "有効な読み取り項目がありません。")
             return
-        pair_error = self._validate_dialogue_pair_export(fields)
-        if pair_error:
-            self.dialogs.showerror("セット設定エラー", pair_error)
+        set_error = self._validate_set_export(fields)
+        if set_error:
+            self.dialogs.showerror("セット設定エラー", set_error)
             return
         if not self.image_files:
             self.dialogs.showerror("画像なし", "画像フォルダを選択してください。")
@@ -7922,19 +7908,23 @@ class ImageOcrExcelApp:
         tesseract_path = ""
         backend = self.profile.default_backend
         correction_rules = [replace(rule) for rule in self.correction_rules]
-        dialogue_detection = self.profile.dialogue_log_detection
+        auto_detection = self.profile.auto_detection
         text_formatting = self.text_formatting
         export_definition = self.set_definition
         set_resolver = None
         if (
-            dialogue_detection is not None
-            and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+            auto_detection is not None
+            and settings.output_layout == EXPORT_LAYOUT_SET
             and self.auto_detection_enabled
-            and export_definition.preset == SET_PRESET_CONVERSATION
+            and export_definition.preset == self.profile.default_set_preset
         ):
-            set_resolver = _dialogue_set_resolver(
-                coordinate_settings,
-                dialogue_detection,
+            set_resolver = lambda image, detection_fields: cast(
+                SetDetectionResult,
+                auto_detection.resolve_sets(
+                    image,
+                    detection_fields,
+                    coordinate_settings,
+                ),
             )
         export_signature = self._export_structure_signature(export_fields, settings)
         self._clear_retry_context()
@@ -8061,9 +8051,9 @@ class ImageOcrExcelApp:
             self.dialogs.showinfo("再実行対象なし", "再実行が必要な画像はありません。")
             return
         fields = self._enabled_fields()
-        pair_error = self._validate_dialogue_pair_export(fields)
-        if pair_error:
-            self.dialogs.showerror("セット設定エラー", pair_error)
+        set_error = self._validate_set_export(fields)
+        if set_error:
+            self.dialogs.showerror("セット設定エラー", set_error)
             return
         export_format = getattr(self, "last_export_format", "excel") or "excel"
         if export_format == "csv":
@@ -8107,19 +8097,23 @@ class ImageOcrExcelApp:
         tesseract_path = ""
         backend = self.profile.default_backend
         correction_rules = [replace(rule) for rule in self.correction_rules]
-        dialogue_detection = self.profile.dialogue_log_detection
+        auto_detection = self.profile.auto_detection
         text_formatting = self.text_formatting
         export_definition = self.set_definition
         set_resolver = None
         if (
-            dialogue_detection is not None
-            and settings.output_layout == EXPORT_LAYOUT_DIALOGUE_PAIR
+            auto_detection is not None
+            and settings.output_layout == EXPORT_LAYOUT_SET
             and self.auto_detection_enabled
-            and export_definition.preset == SET_PRESET_CONVERSATION
+            and export_definition.preset == self.profile.default_set_preset
         ):
-            set_resolver = _dialogue_set_resolver(
-                coordinate_settings,
-                dialogue_detection,
+            set_resolver = lambda image, detection_fields: cast(
+                SetDetectionResult,
+                auto_detection.resolve_sets(
+                    image,
+                    detection_fields,
+                    coordinate_settings,
+                ),
             )
         total = len(retry_files)
         self.progress_var.set(f"0 / {total}")
@@ -8224,13 +8218,13 @@ class ImageOcrExcelApp:
             loading_progress=0.0,
         )
 
-    def _validate_dialogue_pair_export(self, fields: list[TemplateField]) -> str | None:
-        if self.export_layout_var.get() != EXPORT_LAYOUT_DIALOGUE_PAIR:
+    def _validate_set_export(self, fields: list[TemplateField]) -> str | None:
+        if self.export_layout_var.get() != EXPORT_LAYOUT_SET:
             return None
         if (
             self.auto_detection_enabled
-            and self.set_definition.preset == SET_PRESET_CONVERSATION
-            and self.profile.dialogue_log_detection is not None
+            and self.set_definition.preset == self.profile.default_set_preset
+            and self.profile.auto_detection is not None
             and len(fields) >= 2
         ):
             return None
@@ -8279,7 +8273,7 @@ class ImageOcrExcelApp:
 
     def _field_order_label(self, idx: int) -> str:
         if (
-            self.export_layout_var.get() == EXPORT_LAYOUT_DIALOGUE_PAIR
+            self.export_layout_var.get() == EXPORT_LAYOUT_SET
             and 0 <= idx < len(self.fields)
             and self.fields[idx].enabled
         ):
@@ -8346,17 +8340,13 @@ class ImageOcrExcelApp:
         return values.get(display, display or self.profile.default_lang)
 
 
-def main() -> None:
-    configure_logging()
+def main(profile: OcrProfile, app_config: ApplicationConfig) -> None:
+    configure_logging(app_directory_name=app_config.data_directory_name)
     install_exception_hooks()
     root = ctk.CTk()
-    ImageOcrExcelApp(root)
+    ImageOcrExcelApp(root, profile, app_config)
     try:
         root.mainloop()
     finally:
         logger.info("Application stopped")
         shutdown_logging()
-
-
-if __name__ == "__main__":
-    main()

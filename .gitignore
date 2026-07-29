@@ -15,6 +15,7 @@ wheels/
 
 # Keep generated documentation screenshots, but ignore other untracked docs.
 docs/*
+!docs/FOUNDATION_ARCHITECTURE.md
 !docs/images/
 docs/images/*
 !docs/images/user-guide/

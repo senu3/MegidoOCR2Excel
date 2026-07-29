@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping, Protocol, TypedDict
+from typing import Callable, Mapping, Protocol, TypedDict
 
 from PIL import Image
 
-from megido_ocr_excel.models import CoordinateSettings, DialogueLogDetectionConfig, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField, TextFormattingSettings, text_formatting_settings_from_dict
+from megido_ocr_excel.models import (
+    CoordinateSettings,
+    SetDefinition,
+    SetDetectionResult,
+    TemplateField,
+    TextFormattingSettings,
+    find_set_definition,
+    text_formatting_settings_from_dict,
+)
 
 
 class ImageTextCorrector(Protocol):
@@ -39,17 +47,40 @@ class FieldPreset:
 
 
 @dataclass(frozen=True)
+class AutoDetectionField:
+    name: str
+    slot_key: str
+    ocr_line_split: str = "none"
+
+
+@dataclass(frozen=True)
+class AutoDetectionStrategy:
+    detect: Callable[
+        [Image.Image, list[TemplateField], CoordinateSettings],
+        SetDetectionResult,
+    ]
+    resolve_sets: Callable[
+        [Image.Image, list[TemplateField], CoordinateSettings],
+        SetDetectionResult,
+    ]
+
+
+@dataclass(frozen=True)
 class OcrProfile:
     profile_id: str
     name: str
-    app_title: str
     default_backend: str
     default_lang: str
     coordinate_defaults: CoordinateSettingsValues
     default_field_ocr: Mapping[str, object]
     text_format_defaults: Mapping[str, object] = field(default_factory=dict)
     field_presets: tuple[FieldPreset, ...] = field(default_factory=tuple)
-    dialogue_log_detection: DialogueLogDetectionConfig | None = None
+    set_definitions: tuple[SetDefinition, ...] = field(default_factory=tuple)
+    default_set_preset: str = ""
+    auto_detection_field_specs: tuple[AutoDetectionField, ...] = field(
+        default_factory=tuple
+    )
+    auto_detection: AutoDetectionStrategy | None = None
     image_text_fallback: ImageTextCorrector | None = None
     image_text_corrector: ImageTextCorrector | None = None
 
@@ -76,23 +107,46 @@ class OcrProfile:
     def auto_detection_fields(self) -> list[TemplateField]:
         fields = [
             TemplateField(
-                "話者", 0, 0, 1, 1, set_id=1, slot_key=SET_SLOT_SPEAKER
-            ),
-            TemplateField(
-                "セリフ本文",
+                spec.name,
                 0,
                 0,
                 1,
                 1,
                 set_id=1,
-                slot_key=SET_SLOT_TEXT,
-                ocr_line_split="detected",
-            ),
+                slot_key=spec.slot_key,
+                ocr_line_split=spec.ocr_line_split,
+            )
+            for spec in self.auto_detection_field_specs
         ]
         for field in fields:
             for key, value in self.field_ocr_preset(field.name).items():
                 setattr(field, key, value)
         return fields
 
+    @property
+    def default_set_definition(self) -> SetDefinition:
+        if not self.default_set_preset:
+            raise ValueError(
+                f"OCRプロファイル '{self.profile_id}' に既定のセット定義がありません。"
+            )
+        return self.set_definition(self.default_set_preset)
+
+    def set_definition(self, preset: str) -> SetDefinition:
+        return find_set_definition(self.set_definitions, preset)
+
+    @property
+    def set_preset_display(self) -> dict[str, str]:
+        return {
+            definition.preset: definition.name
+            for definition in self.set_definitions
+        }
+
     def _matching_preset(self, field_name: str) -> FieldPreset | None:
-        return next((preset for preset in self.field_presets if preset.matches(field_name)), None)
+        return next(
+            (
+                preset
+                for preset in self.field_presets
+                if preset.matches(field_name)
+            ),
+            None,
+        )

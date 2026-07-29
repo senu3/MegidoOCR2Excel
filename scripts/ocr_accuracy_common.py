@@ -15,10 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from megido_ocr_excel.config import APP_PROFILE
-from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs, include_supplement_candidates
+from megido_ocr_excel.apps.megido import PROFILE as APP_PROFILE
+from megido_ocr_excel.profiles.megido_novel import DIALOGUE_DETECTION
+from megido_ocr_excel.ocr.dialogue_detector import detect_dialogue_sets, include_supplement_candidates
 from megido_ocr_excel.ocr.engine import OcrEngine, apply_correction_rules, apply_postprocess, clean_text, detect_tesseract, format_ocr_text, prepare_for_ocr, scaled_field
-from megido_ocr_excel.models import CoordinateSettings, OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, SET_SLOT_SPEAKER, SET_SLOT_TEXT, TemplateField
+from megido_ocr_excel.models import CoordinateSettings, OCR_PREPROCESS_OPTIONS, OCR_SCALE_OPTIONS, TemplateField
+from megido_ocr_excel.set_definitions import SET_SLOT_SPEAKER, SET_SLOT_TEXT
 from megido_ocr_excel.templates import coordinate_settings_from_template, correction_rules_from_template, fields_from_template, load_template, text_formatting_from_template
 
 try:
@@ -271,14 +273,14 @@ def measurement_fields(
     requested_field: TemplateField,
     coordinate_settings: CoordinateSettings,
 ) -> tuple[list[TemplateField], str]:
-    config = APP_PROFILE.dialogue_log_detection
+    config = DIALOGUE_DETECTION
     if config is None or requested_field.slot_key not in {
         SET_SLOT_SPEAKER,
         SET_SLOT_TEXT,
     }:
         return [requested_field], ""
     detection = include_supplement_candidates(
-        detect_complete_dialogue_pairs(
+        detect_dialogue_sets(
             image,
             template_fields,
             coordinate_settings,

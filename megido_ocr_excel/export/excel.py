@@ -11,8 +11,17 @@ from openpyxl.worksheet.worksheet import Worksheet
 from PIL import Image
 
 from megido_ocr_excel.persistence import atomic_save_workbook
-from megido_ocr_excel.ocr.dialogue_detector import DialoguePairDetectionResult
-from megido_ocr_excel.models import EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_OPTIONS, EXPORT_LAYOUT_SET, SET_SLOT_SPEAKER, SET_SLOT_TEXT, SetDefinition, TemplateField, set_definition_for_preset, set_groups, set_validation_error
+from megido_ocr_excel.models import (
+    DEFAULT_SET_DEFINITION,
+    EXPORT_LAYOUT_IMAGE_ROW,
+    EXPORT_LAYOUT_OPTIONS,
+    EXPORT_LAYOUT_SET,
+    SetDetectionResult,
+    SetDefinition,
+    TemplateField,
+    set_groups,
+    set_validation_error,
+)
 from megido_ocr_excel.operations import CancelCheck, raise_if_cancelled
 
 
@@ -63,8 +72,19 @@ class ExportNotice:
 
 OcrCallback = Callable[[Image.Image, TemplateField], tuple[str | None, str | None]]
 SetResolver = Callable[
-    [Image.Image, list[TemplateField]], DialoguePairDetectionResult
+    [Image.Image, list[TemplateField]], SetDetectionResult
 ]
+
+
+def resolve_export_set_definition(
+    settings: ExportSettings,
+    set_definition: SetDefinition | None,
+) -> SetDefinition:
+    if settings.output_layout == EXPORT_LAYOUT_SET and set_definition is None:
+        raise ValueError(
+            "セット単位で出力するには、セット定義を指定してください。"
+        )
+    return (set_definition or DEFAULT_SET_DEFINITION).normalized()
 
 
 def validate_export_settings(
@@ -116,11 +136,9 @@ class ExcelExporter:
         set_definition: SetDefinition | None = None,
         set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
-        dialogue_pair_resolver: SetResolver | None = None,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
-        set_resolver = set_resolver or dialogue_pair_resolver
-        definition = (set_definition or set_definition_for_preset("conversation")).normalized()
+        definition = resolve_export_set_definition(settings, set_definition)
         workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
         headers = self.headers(fields, settings, definition)
         if settings.include_header and row_cursor == settings.start_row:
@@ -166,9 +184,7 @@ class ExcelExporter:
     ) -> tuple[list[list[str]], ExportResult]:
         """Recognize images into format-neutral rows for spreadsheet exporters."""
         raise_if_cancelled(cancel_check)
-        definition = (
-            set_definition or set_definition_for_preset("conversation")
-        ).normalized()
+        definition = resolve_export_set_definition(settings, set_definition)
         if settings.output_layout == EXPORT_LAYOUT_SET and set_resolver is None:
             set_error = set_validation_error(fields, definition)
             if set_error:
@@ -223,11 +239,9 @@ class ExcelExporter:
         set_definition: SetDefinition | None = None,
         set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
-        dialogue_pair_resolver: SetResolver | None = None,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
-        set_resolver = set_resolver or dialogue_pair_resolver
-        definition = (set_definition or set_definition_for_preset("conversation")).normalized()
+        definition = resolve_export_set_definition(settings, set_definition)
         if settings.output_layout == EXPORT_LAYOUT_SET and set_resolver is None:
             set_error = set_validation_error(fields, definition)
             if set_error:
@@ -309,7 +323,7 @@ class ExcelExporter:
                 image_path,
                 fields,
                 settings,
-                set_definition or set_definition_for_preset("conversation"),
+                set_definition or DEFAULT_SET_DEFINITION,
             ), [error], []
 
         if settings.output_layout == EXPORT_LAYOUT_SET:
@@ -319,7 +333,7 @@ class ExcelExporter:
                 fields,
                 settings,
                 ocr_callback,
-                set_definition or set_definition_for_preset("conversation"),
+                set_definition or DEFAULT_SET_DEFINITION,
                 set_resolver,
                 cancel_check,
             )
@@ -360,20 +374,8 @@ class ExcelExporter:
             raise_if_cancelled(cancel_check)
             detection = set_resolver(image, fields)
             raise_if_cancelled(cancel_check)
-            groups = [
-                (
-                    order,
-                    {
-                        SET_SLOT_SPEAKER: speaker,
-                        SET_SLOT_TEXT: text,
-                    },
-                )
-                for order, speaker, text in detection.groups
-            ]
-            if detection.allow_empty_speaker:
-                allow_empty_slots.add(SET_SLOT_SPEAKER)
-            if detection.allow_empty_dialogue:
-                allow_empty_slots.add(SET_SLOT_TEXT)
+            groups = detection.groups
+            allow_empty_slots.update(detection.allow_empty_slots)
             notices.extend(
                 ExportNotice(image_path.name, message)
                 for message in detection.notices
@@ -393,6 +395,25 @@ class ExcelExporter:
                     )
                 )
         for order, slots in groups:
+            missing_keys = [
+                column.key
+                for column in set_definition.columns
+                if column.key not in slots
+            ]
+            if missing_keys:
+                labels = [
+                    set_definition.slot_label(key)
+                    for key in missing_keys
+                ]
+                errors.append(
+                    ExportError(
+                        image_path.name,
+                        "セット検出",
+                        "自動検出結果に必要な項目がありません: "
+                        + "、".join(labels),
+                    )
+                )
+                continue
             values: list[str] = []
             for column in set_definition.columns:
                 raise_if_cancelled(cancel_check)

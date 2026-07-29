@@ -7,10 +7,11 @@ from unittest.mock import patch
 
 from PIL import Image, ImageDraw
 
-from megido_ocr_excel.ocr.dialogue_detector import detect_complete_dialogue_pairs
-from megido_ocr_excel.models import SET_SLOT_SUPPLEMENT, TemplateField
+from megido_ocr_excel.ocr.dialogue_detector import detect_dialogue_sets
+from megido_ocr_excel.models import TemplateField
+from megido_ocr_excel.set_definitions import SET_SLOT_SUPPLEMENT
 from megido_ocr_excel.ocr.engine import OcrEngine
-from megido_ocr_excel.profiles.megido_novel import PROFILE
+from megido_ocr_excel.profiles.megido_novel import DIALOGUE_DETECTION, PROFILE
 from tests.private_samples import private_sample_test
 
 
@@ -50,11 +51,11 @@ def jpeg_copy(image: Image.Image, quality: int) -> Image.Image:
 
 
 def detected_dialogue(image: Image.Image):
-    result = detect_complete_dialogue_pairs(
+    result = detect_dialogue_sets(
         image,
         PROFILE.auto_detection_fields(),
         PROFILE.coordinate_settings(),
-        PROFILE.dialogue_log_detection,
+        DIALOGUE_DETECTION,
     )
     return result.groups[0][2]
 
@@ -71,11 +72,11 @@ class HorizontalGlyphCorrectionTests(unittest.TestCase):
     @private_sample_test
     def test_repeated_dots_are_recovered_for_all_dialogue_preprocessing(self) -> None:
         image = Image.open(".samples/b3.png").convert("RGB")
-        result = detect_complete_dialogue_pairs(
+        result = detect_dialogue_sets(
             image,
             PROFILE.auto_detection_fields(),
             PROFILE.coordinate_settings(),
-            PROFILE.dialogue_log_detection,
+            DIALOGUE_DETECTION,
         )
         field = result.groups[-1][2]
         crop = image.crop((field.x1, field.y1, field.x2, field.y2))

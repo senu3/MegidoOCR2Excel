@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
+from megido_ocr_excel.app_config import ApplicationConfig
 from megido_ocr_excel.launcher.core import (
     LauncherBusy,
     LauncherCancelled,
@@ -47,6 +48,7 @@ class LauncherWindow:
         root: tk.Tk,
         service: LauncherService,
         status: LauncherStatus,
+        app_config: ApplicationConfig,
         *,
         force_repair: bool = False,
         from_app: bool = False,
@@ -54,6 +56,7 @@ class LauncherWindow:
         self.root = root
         self.service = service
         self.status = status
+        self.app_config = app_config
         self.force_repair = force_repair
         self.from_app = from_app
         self.running = False
@@ -63,7 +66,7 @@ class LauncherWindow:
         self._auto_start_job: str | None = None
         self._default_action_button: tk.Button | None = None
 
-        self.root.title("Megido OCR to Excel — ランチャー")
+        self.root.title(f"{self.app_config.app_title} — ランチャー")
         self.root.geometry("600x420")
         self.root.minsize(560, 400)
         self.root.configure(background=PALETTE.app_bg)
@@ -124,7 +127,7 @@ class LauncherWindow:
         heading.pack(side="left", fill="x", expand=True)
         tk.Label(
             heading,
-            text="Megido OCR to Excel",
+            text=self.app_config.app_title,
             background=PALETTE.app_bg,
             foreground=PALETTE.text,
             anchor="w",
@@ -132,7 +135,7 @@ class LauncherWindow:
         ).pack(fill="x")
         tk.Label(
             heading,
-            text="実行環境ランチャー",
+            text=self.app_config.launcher_subtitle,
             background=PALETTE.app_bg,
             foreground=PALETTE.muted,
             anchor="w",
@@ -494,7 +497,9 @@ class LauncherWindow:
             text=f"{operation}が完了しました",
             foreground=PALETTE.success,
         )
-        self.status_note.configure(text="Megido OCR to Excelを起動します。")
+        self.status_note.configure(
+            text=f"{self.app_config.app_title}を起動します。"
+        )
         self.root.after(450, self.launch_application)
 
     def launch_application(self) -> None:
@@ -537,6 +542,7 @@ class LauncherWindow:
 def run_gui(
     service: LauncherService,
     status: LauncherStatus,
+    app_config: ApplicationConfig,
     *,
     force_repair: bool,
     from_app: bool = False,
@@ -546,6 +552,7 @@ def run_gui(
         root,
         service,
         status,
+        app_config,
         force_repair=force_repair,
         from_app=from_app,
     )
@@ -553,8 +560,15 @@ def run_gui(
     return window.exit_code
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Megido OCR to Excel launcher")
+def build_parser(
+    app_config: ApplicationConfig | None = None,
+) -> argparse.ArgumentParser:
+    description = (
+        f"{app_config.app_title} launcher"
+        if app_config is not None
+        else "OCR application launcher"
+    )
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--repair", action="store_true", help="実行環境を再同期する")
     parser.add_argument("--from-app", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--check", action="store_true", help="準備状態をJSONで表示する")
@@ -566,14 +580,22 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None, *, project_root: Path | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def main(
+    argv: list[str] | None = None,
+    *,
+    project_root: Path | None = None,
+    app_config: ApplicationConfig,
+) -> int:
+    args = build_parser(app_config).parse_args(argv)
     root_path = (
         args.project_root.resolve()
         if args.project_root is not None
         else (project_root or Path(__file__).resolve().parents[2]).resolve()
     )
-    paths = launcher_paths(root_path)
+    paths = launcher_paths(
+        root_path,
+        app_directory_name=app_config.data_directory_name,
+    )
     service = LauncherService(paths)
     force_repair = args.repair or args.from_app
     status = service.status(force_repair=force_repair)
@@ -611,10 +633,7 @@ def main(argv: list[str] | None = None, *, project_root: Path | None = None) -> 
             status,
             force_repair=force_repair,
             from_app=args.from_app,
+            app_config=app_config,
         )
     finally:
         lock.release()
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

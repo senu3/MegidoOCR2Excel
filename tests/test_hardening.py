@@ -14,9 +14,9 @@ from PIL import Image
 from megido_ocr_excel import __version__
 from tests.private_samples import private_sample_test
 from megido_ocr_excel.persistence import atomic_save_workbook, atomic_write_text
-from megido_ocr_excel.config import APP_PROFILE
+from megido_ocr_excel.apps.megido import CONFIG as APP_CONFIG
+from megido_ocr_excel.apps.megido import PROFILE as APP_PROFILE
 from megido_ocr_excel.application import (
-    APP_TITLE,
     EXPORT_LAYOUT_DISPLAY,
     MODE_EXPORT,
     MODE_REVIEW,
@@ -41,13 +41,14 @@ from megido_ocr_excel.models import (
     EXPORT_LAYOUT_OPTIONS,
     EXPORT_LAYOUT_SET,
     LINE_JOIN_NEWLINE,
-    SET_PRESET_HEADING_TEXT,
+    TemplateField,
+)
+from megido_ocr_excel.set_definitions import (
+    HEADING_TEXT_SET_DEFINITION,
     SET_SLOT_HEADING,
     SET_SLOT_SPEAKER,
     SET_SLOT_SUPPLEMENT,
     SET_SLOT_TEXT,
-    TemplateField,
-    set_definition_for_preset,
 )
 from tests.tk_test_utils import destroy_tk_root
 
@@ -260,7 +261,7 @@ class WorkflowChoiceTests(unittest.TestCase):
     def test_workflow_choice_uses_a_translucent_modal_layer(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             if app.ocr_setup_modal is not None and app.ocr_setup_modal.visible:
                 app.defer_ocr_setup()
@@ -310,14 +311,14 @@ class WorkflowChoiceTests(unittest.TestCase):
         with patch.object(
             ImageOcrExcelApp, "continue_without_workflow_choice"
         ) as continue_without_selection:
-            app = ImageOcrExcelApp(root)
+            app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             if app.ocr_setup_modal is not None and app.ocr_setup_modal.visible:
                 app.defer_ocr_setup()
             root.update()
 
             app.workflow_choice_modal.window.event_generate(
-                "<Escape>", when="tail"
+                "<Escape>", when="now"
             )
             root.update()
 
@@ -342,7 +343,7 @@ class WorkflowChoiceTests(unittest.TestCase):
     def test_empty_field_state_points_to_the_template_overflow_menu(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             labels = []
             pending = list(app.side_body.winfo_children())
@@ -391,7 +392,7 @@ class WorkflowChoiceTests(unittest.TestCase):
     def test_supplement_candidate_panel_renders_and_does_not_dirty_the_app(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app.original_image = Image.open(".samples/e.png").convert("RGB")
             app.fields = [
@@ -460,7 +461,7 @@ class WorkflowChoiceTests(unittest.TestCase):
     def test_recognition_test_hides_raw_ocr(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app._hide_workflow_choice()
             app.original_image = Image.open(".samples/1.png").convert("RGB")
@@ -502,7 +503,7 @@ class WorkflowChoiceTests(unittest.TestCase):
     def test_recognition_test_uses_concise_copy_and_actions(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app._hide_workflow_choice()
             app.original_image = Image.open(".samples/1.png").convert("RGB")
@@ -589,7 +590,7 @@ class OcrSetupOnboardingTests(unittest.TestCase):
             manager = manager_type.return_value
             manager.apply_to_process.return_value = status.cache_dir
             manager.quick_status.return_value = status
-            app = ImageOcrExcelApp(root)
+            app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         return app, manager
 
     @staticmethod
@@ -968,7 +969,7 @@ class DirtyStateTests(unittest.TestCase):
     def test_dirty_indicators_unsaved_cancel_and_busy_close_cancellation(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             self.assertFalse(app.dirty)
 
@@ -997,7 +998,7 @@ class DirtyStateTests(unittest.TestCase):
             app.export_sheet_var.set("Changed")
 
             self.assertTrue(app.dirty)
-            self.assertEqual(root.title(), f"{APP_TITLE} *")
+            self.assertEqual(root.title(), f"{APP_CONFIG.app_title} *")
             self.assertEqual(
                 app.template_var.get(), "新規テンプレート（未保存） *"
             )
@@ -1038,7 +1039,7 @@ class DirtyStateTests(unittest.TestCase):
 
             app._mark_clean()
             self.assertFalse(app.dirty)
-            self.assertEqual(root.title(), APP_TITLE)
+            self.assertEqual(root.title(), APP_CONFIG.app_title)
             self.assertEqual(
                 app.template_var.get(), "新規テンプレート（未保存）"
             )
@@ -1098,7 +1099,7 @@ class DirtyStateTests(unittest.TestCase):
     def test_basic_settings_toggle_profile_image_correction(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             self.assertTrue(app.image_text_correction_enabled)
             self.assertIsNotNone(app.ocr_engine.image_text_corrector)
@@ -1142,7 +1143,7 @@ class DirtyStateTests(unittest.TestCase):
     def test_basic_settings_status_reflects_template_save_state(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             settings_args = (
                 app._lang_display(app.lang_var.get()),
@@ -1325,7 +1326,7 @@ class PaddleBackendPolicyTests(unittest.TestCase):
     def test_template_save_uses_profile_backend_and_no_executable_path(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app.fields = [
                 TemplateField(
@@ -1371,7 +1372,7 @@ class OcrEnvironmentUiPolicyTests(unittest.TestCase):
         ) as manager_type:
             manager = manager_type.return_value
             manager.apply_to_process.return_value = Path("C:/models")
-            app = ImageOcrExcelApp(root)
+            app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             manager.apply_to_process.assert_called_once_with()
             self.assertEqual(
@@ -1388,7 +1389,7 @@ class TemplateToolbarTests(unittest.TestCase):
     def test_toolbar_is_persistent_and_save_emphasizes_pending_changes(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             toolbar = app.template_toolbar
             self.assertIsNotNone(toolbar)
@@ -1421,7 +1422,7 @@ class ModalConsistencyTests(unittest.TestCase):
     def test_fixed_range_confirmation_uses_the_themed_warning_dialog(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app.image_path = Path("sample.png")
             with patch.object(
@@ -1445,7 +1446,7 @@ class ModalConsistencyTests(unittest.TestCase):
     def test_settings_uses_the_shared_borderless_modal(self) -> None:
         root = ctk.CTk()
         root.geometry("900x700+10000+10000")
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app._hide_workflow_choice()
             root.update()
@@ -1592,7 +1593,7 @@ class ModalConsistencyTests(unittest.TestCase):
         root = ctk.CTk()
         root.geometry("900x700+10000+10000")
         profile = replace(APP_PROFILE, image_text_corrector=None)
-        app = ImageOcrExcelApp(root, profile=profile)
+        app = ImageOcrExcelApp(root, profile=profile, app_config=APP_CONFIG)
         try:
             app._hide_workflow_choice()
             app.open_settings_modal()
@@ -1619,7 +1620,7 @@ class ModalConsistencyTests(unittest.TestCase):
     def test_processing_modal_blocks_background_input_until_hidden(self) -> None:
         root = ctk.CTk()
         root.geometry("900x700+10000+10000")
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app._hide_workflow_choice()
             root.update()
@@ -1663,7 +1664,7 @@ class ModalConsistencyTests(unittest.TestCase):
     def test_excel_progress_modal_shows_count_file_and_determinate_progress(self) -> None:
         root = ctk.CTk()
         root.geometry("900x700+10000+10000")
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app._hide_workflow_choice()
             root.update()
@@ -1886,7 +1887,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_export_settings_exclude_layout_and_preflight_links_to_editor(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         host = ctk.CTkFrame(root)
         try:
             app._render_excel_output_settings(host)
@@ -1937,7 +1938,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_csv_export_is_presented_as_a_secondary_action(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app._hide_workflow_choice()
             app.mode_var.set(MODE_EXPORT)
@@ -1982,7 +1983,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_set_preflight_repeats_item_combination(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         host = ctk.CTkFrame(root)
         try:
             app.export_layout_var.set(EXPORT_LAYOUT_SET)
@@ -2027,7 +2028,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_range_panel_uses_excel_row_unit_labels_and_explanations(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app._hide_workflow_choice()
             app.mode_var.set(MODE_TEMPLATE)
@@ -2108,7 +2109,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.current_results = ["recognized"]
         app.current_raw_results = ["raw"]
 
-        app.set_field_dialogue_role(0, "セリフ")
+        app.set_field_slot(0, "セリフ")
 
         self.assertEqual(app.fields[0].slot_key, SET_SLOT_TEXT)
         self.assertEqual(app.fields[0].ocr_line_split, "detected")
@@ -2122,7 +2123,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.current_results = ["recognized"]
         app.current_raw_results = ["raw"]
 
-        app.set_field_dialogue_role(0, "補足セリフ")
+        app.set_field_slot(0, "補足セリフ")
 
         self.assertEqual(app.fields[0].slot_key, SET_SLOT_SUPPLEMENT)
         self.assertEqual(app.fields[0].ocr_line_split, "detected")
@@ -2130,7 +2131,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_field_rows_show_only_the_setting_used_by_the_output_layout(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             field = TemplateField(
                 "本文",
@@ -2173,7 +2174,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             )
             self.assertEqual(field.slot_key, SET_SLOT_SPEAKER)
 
-            app.set_definition = set_definition_for_preset(SET_PRESET_HEADING_TEXT)
+            app.set_definition = HEADING_TEXT_SET_DEFINITION
             app._render_side_body()
             heading_row_menus = [
                 widget
@@ -2190,7 +2191,7 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_switching_to_set_layout_creates_set_one_and_assigns_existing_fields(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app.fields = [
                 TemplateField("話者", 0, 0, 10, 10),
@@ -2207,8 +2208,8 @@ class FieldNameInteractionTests(unittest.TestCase):
                 [field.slot_key for field in app.fields],
                 [SET_SLOT_SPEAKER, SET_SLOT_TEXT],
             )
-            self.assertEqual(app._dialogue_pair_ids(), [1])
-            self.assertIsNone(app.pending_dialogue_pair_id)
+            self.assertEqual(app._set_ids(), [1])
+            self.assertIsNone(app.pending_set_id)
             self.assertEqual(app.current_results, ["", ""])
             root.update_idletasks()
         finally:
@@ -2225,8 +2226,8 @@ class FieldNameInteractionTests(unittest.TestCase):
         app.fields = [TemplateField("話者", 55, 1523, 697, 1620)]
         app.auto_detection_enabled = True
         app.auto_detection_base_fields = [replace(app.fields[0])]
-        app.pending_dialogue_pair_id = None
-        app.pending_dialogue_role = ""
+        app.pending_set_id = None
+        app.pending_slot_key = ""
         app.empty_set_ids = set()
         app.status_var = MagicMock()
         app._mark_dirty = MagicMock()
@@ -2285,17 +2286,17 @@ class FieldNameInteractionTests(unittest.TestCase):
     def test_empty_set_one_remains_available_and_preset_change_reassigns_fields(self) -> None:
         root = ctk.CTk()
         root.withdraw()
-        app = ImageOcrExcelApp(root)
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
         try:
             app.export_layout_var.set(EXPORT_LAYOUT_SET)
             app._set_export_layout(EXPORT_LAYOUT_SET)
-            self.assertEqual(app._dialogue_pair_ids(), [1])
-            self.assertEqual(app.pending_dialogue_pair_id, 1)
-            self.assertEqual(app.pending_dialogue_role, SET_SLOT_SPEAKER)
+            self.assertEqual(app._set_ids(), [1])
+            self.assertEqual(app.pending_set_id, 1)
+            self.assertEqual(app.pending_slot_key, SET_SLOT_SPEAKER)
 
-            app.cancel_dialogue_pair_creation()
-            app.begin_dialogue_pair_creation()
-            self.assertEqual(app.pending_dialogue_pair_id, 1)
+            app.cancel_set_creation()
+            app.begin_set_creation()
+            self.assertEqual(app.pending_set_id, 1)
 
             app.fields = [
                 TemplateField("見出し", 0, 0, 10, 10, set_id=1, slot_key=SET_SLOT_SPEAKER),
@@ -2313,23 +2314,23 @@ class FieldNameInteractionTests(unittest.TestCase):
         finally:
             destroy_tk_root(root)
 
-    def test_unselected_dialogue_pair_draws_only_the_outer_outline(self) -> None:
+    def test_unselected_set_draws_only_the_outer_outline(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
         app.canvas = MagicMock()
         app.canvas.create_rectangle.side_effect = [10, 11]
         app.canvas.create_text.return_value = 12
         app.zoom = 1.0
         app.selected_index = None
-        app.canvas_pair_handles = {}
+        app.canvas_set_handles = {}
 
-        app._draw_pair_handle(1, (0, 1), {0: (10, 10, 30, 20), 1: (10, 22, 80, 50)})
+        app._draw_set_handle(1, (0, 1), {0: (10, 10, 30, 20), 1: (10, 22, 80, 50)})
 
         app.canvas.create_rectangle.assert_called_once()
-        self.assertEqual(app.canvas_pair_handles[1]["outline"], 10)
-        self.assertIsNone(app.canvas_pair_handles[1]["handle"])
+        self.assertEqual(app.canvas_set_handles[1]["outline"], 10)
+        self.assertIsNone(app.canvas_set_handles[1]["handle"])
         app.canvas.create_text.assert_not_called()
 
-    def test_dragging_to_another_dialogue_pair_swaps_the_same_role(self) -> None:
+    def test_dragging_to_another_set_swaps_the_same_role(self) -> None:
         app = self._logic_only_app()
         app.fields = [
             TemplateField(
@@ -2340,7 +2341,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             ),
         ]
 
-        app.move_field_to_dialogue_pair(0, 2)
+        app.move_field_to_set(0, 2)
 
         self.assertEqual(app.fields[0].set_id, 2)
         self.assertEqual(app.fields[1].set_id, 1)
@@ -2355,7 +2356,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             )
         ]
 
-        app.move_field_to_dialogue_pair(0, 0)
+        app.move_field_to_set(0, 0)
 
         self.assertEqual(app.fields[0].set_id, 0)
         self.assertEqual(app.fields[0].slot_key, SET_SLOT_TEXT)

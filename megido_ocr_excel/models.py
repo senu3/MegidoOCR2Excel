@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 
 TEMPLATE_VERSION = 1
@@ -20,28 +20,6 @@ EXPORT_LAYOUT_OPTIONS = [EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_SET]
 COORDINATE_SPACE_IMAGE = "image"
 COORDINATE_SPACE_CONTENT = "content"
 COORDINATE_SPACE_OPTIONS = [COORDINATE_SPACE_IMAGE, COORDINATE_SPACE_CONTENT]
-SET_PRESET_CONVERSATION = "conversation"
-SET_PRESET_HEADING_TEXT = "heading_text"
-SET_PRESET_OPTIONS = [
-    SET_PRESET_CONVERSATION,
-    SET_PRESET_HEADING_TEXT,
-]
-SET_PRESET_DISPLAY = {
-    SET_PRESET_CONVERSATION: "話者＋セリフ",
-    SET_PRESET_HEADING_TEXT: "見出し＋本文",
-}
-SET_SLOT_SPEAKER = "speaker"
-SET_SLOT_TEXT = "text"
-SET_SLOT_HEADING = "heading"
-SET_SLOT_SUPPLEMENT = "supplement"
-
-# Internal migration aliases. Templates are still serialized exclusively with
-# set_id / slot_key; these names only keep the specialized conversation detector
-# and its callers readable while the generic set model is introduced.
-DIALOGUE_ROLE_SPEAKER = SET_SLOT_SPEAKER
-DIALOGUE_ROLE_TEXT = SET_SLOT_TEXT
-DIALOGUE_ROLE_SUPPLEMENT = SET_SLOT_SUPPLEMENT
-EXPORT_LAYOUT_DIALOGUE_PAIR = EXPORT_LAYOUT_SET
 
 
 @dataclass(frozen=True)
@@ -73,18 +51,26 @@ class SetDefinition:
     name: str
     order_label: str
     columns: tuple[SetColumn, ...]
+    extra_slots: tuple[SetColumn, ...] = ()
+    additional_rows: tuple[tuple[str, ...], ...] = ()
 
     def normalized(self) -> "SetDefinition":
         columns = tuple(column.normalized() for column in self.columns)
+        extra_slots = tuple(column.normalized() for column in self.extra_slots)
+        valid_keys = {column.key for column in (*columns, *extra_slots)}
+        additional_rows = tuple(
+            tuple(key.strip() for key in row)
+            for row in self.additional_rows
+            if len(row) == len(columns)
+            and all(key.strip() in valid_keys for key in row)
+        )
         return SetDefinition(
-            preset=(
-                self.preset
-                if self.preset in SET_PRESET_OPTIONS
-                else SET_PRESET_CONVERSATION
-            ),
+            preset=self.preset.strip() or "default",
             name=self.name.strip() or "セット",
             order_label=self.order_label.strip() or "順序",
             columns=columns,
+            extra_slots=extra_slots,
+            additional_rows=additional_rows,
         )
 
     @property
@@ -92,20 +78,27 @@ class SetDefinition:
         return tuple(column.key for column in self.columns)
 
     def slot_label(self, key: str) -> str:
-        if key == SET_SLOT_SUPPLEMENT and self.preset == SET_PRESET_CONVERSATION:
-            return "補足セリフ"
         return next(
-            (column.label for column in self.columns if column.key == key),
+            (
+                column.label
+                for column in (*self.columns, *self.extra_slots)
+                if column.key == key
+            ),
             "未割当",
         )
 
     def column_for(self, key: str) -> SetColumn | None:
-        return next((column for column in self.columns if column.key == key), None)
+        return next(
+            (
+                column
+                for column in (*self.columns, *self.extra_slots)
+                if column.key == key
+            ),
+            None,
+        )
 
     def allowed_slot_keys(self) -> tuple[str, ...]:
-        if self.preset == SET_PRESET_CONVERSATION:
-            return (*self.slot_keys, SET_SLOT_SUPPLEMENT)
-        return self.slot_keys
+        return tuple(column.key for column in (*self.columns, *self.extra_slots))
 
     def to_dict(self) -> dict:
         normalized = self.normalized()
@@ -114,38 +107,47 @@ class SetDefinition:
             "name": normalized.name,
             "order_label": normalized.order_label,
             "columns": [column.to_dict() for column in normalized.columns],
+            "extra_slots": [
+                column.to_dict() for column in normalized.extra_slots
+            ],
+            "additional_rows": [
+                list(row) for row in normalized.additional_rows
+            ],
         }
 
 
-def set_definition_for_preset(preset: str) -> SetDefinition:
-    if preset == SET_PRESET_HEADING_TEXT:
-        return SetDefinition(
-            preset,
-            "見出し＋本文",
-            "順序",
-            (
-                SetColumn(SET_SLOT_HEADING, "見出し", "none"),
-                SetColumn(SET_SLOT_TEXT, "本文", "detected"),
-            ),
+DEFAULT_SET_DEFINITION = SetDefinition(
+    "default",
+    "項目セット",
+    "順序",
+    (SetColumn("value", "項目"),),
+)
+
+
+def find_set_definition(
+    definitions: tuple[SetDefinition, ...],
+    preset: str,
+) -> SetDefinition:
+    try:
+        return next(
+            definition.normalized()
+            for definition in definitions
+            if definition.preset == preset
         )
-    return SetDefinition(
-        SET_PRESET_CONVERSATION,
-        "話者＋セリフ",
-        "順序",
-        (
-            SetColumn(SET_SLOT_SPEAKER, "話者", "none"),
-            SetColumn(SET_SLOT_TEXT, "セリフ", "detected"),
-        ),
-    )
+    except StopIteration as exc:
+        raise ValueError(f"未登録のセット定義です: {preset}") from exc
 
 
-def set_definition_from_dict(item: dict | None) -> SetDefinition:
+def set_definition_from_dict(
+    item: dict | None,
+    fallback: SetDefinition | None = None,
+) -> SetDefinition:
     data = item or {}
-    preset = str(data.get("preset") or SET_PRESET_CONVERSATION)
-    fallback = set_definition_for_preset(preset)
+    default = (fallback or DEFAULT_SET_DEFINITION).normalized()
+    preset = str(data.get("preset") or default.preset)
     columns_data = data.get("columns")
     if not isinstance(columns_data, list) or not columns_data:
-        return fallback
+        return default
     columns = tuple(
         SetColumn(
             str(column.get("key") or ""),
@@ -155,39 +157,32 @@ def set_definition_from_dict(item: dict | None) -> SetDefinition:
         for column in columns_data
         if isinstance(column, dict)
     )
+    extra_slots_data = data.get("extra_slots", [])
+    extra_slots = tuple(
+        SetColumn(
+            str(column.get("key") or ""),
+            str(column.get("label") or ""),
+            str(column.get("ocr_line_split") or "none"),
+        )
+        for column in extra_slots_data
+        if isinstance(column, dict)
+    ) if isinstance(extra_slots_data, list) else ()
+    additional_rows_data = data.get("additional_rows", [])
+    additional_rows = tuple(
+        tuple(str(key) for key in row)
+        for row in additional_rows_data
+        if isinstance(row, list)
+    ) if isinstance(additional_rows_data, list) else ()
     return SetDefinition(
         preset,
-        str(data.get("name") or fallback.name),
-        str(data.get("order_label") or fallback.order_label),
-        columns or fallback.columns,
+        str(data.get("name") or default.name),
+        str(data.get("order_label") or default.order_label),
+        columns or default.columns,
+        extra_slots if "extra_slots" in data else default.extra_slots,
+        additional_rows
+        if "additional_rows" in data
+        else default.additional_rows,
     ).normalized()
-
-
-@dataclass(frozen=True)
-class DialogueLogDetectionConfig:
-    """Profile-specific visual rules for locating repeated dialogue cards."""
-
-    anchor_x1_ratio: float
-    anchor_x2_ratio: float
-    log_top_ratio: float
-    log_bottom_ratio: float
-    pair_height_ratio: float
-    min_bar_height_ratio: float = 0.015
-    max_bar_height_ratio: float = 0.03
-    row_match_ratio: float = 0.5
-    max_band_gap: int = 4
-    normal_anchor_top_ratio: float = 0.62
-    normal_anchor_bottom_ratio: float = 0.82
-    normal_speaker_x1_ratio: float = 0.05
-    normal_speaker_x2_ratio: float = 0.72
-    normal_dialogue_x1_ratio: float = 0.04
-    normal_dialogue_x2_ratio: float = 0.96
-    log_speaker_x1_ratio: float = 0.10
-    log_speaker_x2_ratio: float = 0.38
-    log_dialogue_x1_ratio: float = 0.10
-    log_dialogue_x2_ratio: float = 0.86
-    speaker_vertical_padding_ratio: float = 0.006
-    max_auto_detection_aspect_ratio: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -354,17 +349,7 @@ class TemplateField:
         set_id: int = 0,
         slot_key: str = "",
         known_empty: bool = False,
-        **migration_aliases,
     ) -> None:
-        # Accepted only by Python callers during the internal migration. JSON
-        # templates still require set_id / slot_key and reject the old schema.
-        if "pair_id" in migration_aliases:
-            set_id = migration_aliases.pop("pair_id")
-        if "dialogue_role" in migration_aliases:
-            slot_key = migration_aliases.pop("dialogue_role")
-        if migration_aliases:
-            unexpected = next(iter(migration_aliases))
-            raise TypeError(f"TemplateField.__init__() got an unexpected keyword argument '{unexpected}'")
         self.name = name
         self.x1 = x1
         self.y1 = y1
@@ -391,22 +376,6 @@ class TemplateField:
         self.set_id = set_id
         self.slot_key = slot_key
         self.known_empty = known_empty
-
-    @property
-    def pair_id(self) -> int:
-        return self.set_id
-
-    @pair_id.setter
-    def pair_id(self, value: int) -> None:
-        self.set_id = value
-
-    @property
-    def dialogue_role(self) -> str:
-        return self.slot_key
-
-    @dialogue_role.setter
-    def dialogue_role(self, value: str) -> None:
-        self.slot_key = value
 
     def normalized(self) -> "TemplateField":
         x1, x2 = sorted((self.x1, self.x2))
@@ -442,6 +411,16 @@ class TemplateField:
 
     def to_dict(self) -> dict:
         return asdict(self.normalized())
+
+
+@dataclass(frozen=True)
+class SetDetectionResult:
+    groups: list[tuple[int, dict[str, TemplateField]]]
+    allow_empty_slots: set[str] = field(default_factory=set)
+    notices: list[str] = field(default_factory=list)
+    review_reason: str = ""
+    layout: str = "unknown"
+    candidate_fields: list[TemplateField] = field(default_factory=list)
 
 
 def field_from_dict(item: dict) -> TemplateField:
@@ -505,22 +484,16 @@ def set_groups(
     output: list[tuple[int, dict[str, TemplateField]]] = []
     output_order = 1
     for _set_id, slots in sorted(grouped.items()):
-        if all(key in slots for key in definition.slot_keys):
-            output.append(
-                (output_order, {key: slots[key] for key in definition.slot_keys})
-            )
-            output_order += 1
-        if (
-            definition.preset == SET_PRESET_CONVERSATION
-            and SET_SLOT_SPEAKER in slots
-            and SET_SLOT_SUPPLEMENT in slots
-        ):
+        row_keys = (definition.slot_keys, *definition.additional_rows)
+        for keys in row_keys:
+            if not all(key in slots for key in keys):
+                continue
             output.append(
                 (
                     output_order,
                     {
-                        SET_SLOT_SPEAKER: slots[SET_SLOT_SPEAKER],
-                        SET_SLOT_TEXT: slots[SET_SLOT_SUPPLEMENT],
+                        column.key: slots[source_key]
+                        for column, source_key in zip(definition.columns, keys)
                     },
                 )
             )
@@ -553,16 +526,14 @@ def set_validation_error(
                 return f"セット {set_id} に{column.label}の範囲がありません。"
             if len(names) > 1:
                 return f"セット {set_id} に{column.label}の範囲が複数あります: {', '.join(names)}"
-        supplement_names = slots.get(SET_SLOT_SUPPLEMENT, [])
-        if len(supplement_names) > 1:
-            return f"セット {set_id} に補足セリフの範囲が複数あります: {', '.join(supplement_names)}"
+        for column in definition.extra_slots:
+            names = slots.get(column.key, [])
+            if len(names) > 1:
+                return (
+                    f"セット {set_id} に{column.label}の範囲が複数あります: "
+                    f"{', '.join(names)}"
+                )
     return None
-
-
-def dialogue_pair_validation_error(fields: list[TemplateField]) -> str | None:
-    """Compatibility wrapper for the conversation detector adapter."""
-
-    return set_validation_error(fields, set_definition_for_preset(SET_PRESET_CONVERSATION))
 
 
 def correction_rule_from_dict(item: dict) -> CorrectionRule:

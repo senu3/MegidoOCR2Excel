@@ -13,7 +13,7 @@ from typing import Callable
 from megido_ocr_excel.operations import OperationCancelled
 
 
-EVENT_PREFIX = "MEGIDO_OCR_SETUP "
+EVENT_PREFIX = "OCR_SETUP "
 
 
 @dataclass(frozen=True)
