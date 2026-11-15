@@ -7,7 +7,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import cast
+from typing import cast, Sequence
 from tkinter import (
     BOTH,
     BOTTOM,
@@ -28,6 +28,7 @@ import customtkinter as ctk
 from PIL import Image, ImageTk
 
 from megido_ocr_excel import __version__
+from megido_ocr_excel.editing import EditorState, ResultValues
 from megido_ocr_excel.ui.dialogs import AppDialogs
 from megido_ocr_excel.diagnostics import (
     configure_logging,
@@ -121,98 +122,52 @@ from megido_ocr_excel.ui.tooltip import add_tooltip
 logger = logging.getLogger(__name__)
 
 
-class AutoHideScrollableFrame(ctk.CTkScrollableFrame):
-    """Show the scrollbar only while the frame content exceeds its viewport."""
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._scrollbar_visibility_job: str | None = None
-        self._scrollbar_is_visible = True
-        self.bind("<Configure>", self._schedule_scrollbar_visibility_update, add="+")
-        self._parent_canvas.bind(
-            "<Configure>", self._schedule_scrollbar_visibility_update, add="+"
-        )
-        self._schedule_scrollbar_visibility_update()
-
-    def _schedule_scrollbar_visibility_update(self, _event=None) -> None:
-        if self._scrollbar_visibility_job is not None:
-            self.after_cancel(self._scrollbar_visibility_job)
-        self._scrollbar_visibility_job = self.after_idle(
-            self._update_scrollbar_visibility
-        )
-
-    def _update_scrollbar_visibility(self) -> None:
-        self._scrollbar_visibility_job = None
-        bbox = self._parent_canvas.bbox("all")
-        if self._orientation == "vertical":
-            content_size = 0 if bbox is None else bbox[3] - bbox[1]
-            viewport_size = self._parent_canvas.winfo_height()
-        else:
-            content_size = 0 if bbox is None else bbox[2] - bbox[0]
-            viewport_size = self._parent_canvas.winfo_width()
-
-        should_show = viewport_size > 1 and content_size > viewport_size + 1
-        if should_show == self._scrollbar_is_visible:
-            return
-        if should_show:
-            self._scrollbar.grid()
-        else:
-            self._scrollbar.grid_remove()
-        self._scrollbar_is_visible = should_show
-
-    def destroy(self) -> None:
-        if self._scrollbar_visibility_job is not None:
-            self.after_cancel(self._scrollbar_visibility_job)
-            self._scrollbar_visibility_job = None
-        super().destroy()
-
-
-UI_FONT_FAMILY = THEME.fonts.family
-UI_FONT = THEME.fonts.normal
-UI_FONT_SMALL = THEME.fonts.small
-UI_FONT_BOLD = THEME.fonts.bold
-UI_FONT_TITLE = THEME.fonts.title
-UI_FONT_CANVAS = THEME.fonts.canvas
-
-COLOR_BG = THEME.palette.app_bg
-COLOR_SURFACE = THEME.palette.surface
-COLOR_SURFACE_ALT = THEME.palette.surface_alt
-COLOR_INPUT = THEME.palette.input_bg
-COLOR_BORDER = THEME.palette.border
-COLOR_TEXT = THEME.palette.text
-COLOR_MUTED = THEME.palette.muted
-COLOR_PRIMARY = THEME.palette.primary
-COLOR_PRIMARY_HOVER = THEME.palette.primary_hover
-COLOR_SECONDARY = THEME.palette.secondary
-COLOR_SECONDARY_HOVER = THEME.palette.secondary_hover
-COLOR_UTILITY_HOVER = THEME.palette.utility_hover
-COLOR_DANGER = THEME.palette.danger
-COLOR_DANGER_HOVER = THEME.palette.danger_hover
-COLOR_CTA = THEME.palette.cta
-COLOR_CTA_HOVER = THEME.palette.cta_hover
-COLOR_CANVAS_BG = THEME.palette.canvas_bg
-COLOR_CANVAS_PANEL = THEME.palette.canvas_panel
-COLOR_CANVAS_TOOLBAR = THEME.palette.canvas_toolbar
-
-OCR_MODE_OPTIONS = ["範囲全体", "行切り出し"]
-LINE_JOIN_DISPLAY = {
-    LINE_JOIN_NONE: "スペースなし",
-    LINE_JOIN_FULLWIDTH_SPACE: "全角スペース",
-    LINE_JOIN_NEWLINE: "改行",
-}
-EXPORT_LAYOUT_DISPLAY = {
-    EXPORT_LAYOUT_IMAGE_ROW: "画像単位（1画像につき1行）",
-    EXPORT_LAYOUT_SET: "セット単位（1セットにつき1行）",
-}
-EXPORT_LAYOUT_BY_DISPLAY = {
-    display: value for value, display in EXPORT_LAYOUT_DISPLAY.items()
-}
-MODE_TEMPLATE = "1. 範囲・列"
-MODE_REVIEW = "2. 認識テスト"
-MODE_EXPORT = "3. Excel出力"
+from megido_ocr_excel.ui import template_view, review_view, export_view
+from megido_ocr_excel.ui.scrollable import AutoHideScrollableFrame
+from megido_ocr_excel.ui.workflow_style import (
+    UI_FONT_FAMILY, UI_FONT, UI_FONT_SMALL, UI_FONT_BOLD, UI_FONT_TITLE, UI_FONT_CANVAS, COLOR_BG, COLOR_SURFACE, COLOR_SURFACE_ALT, COLOR_INPUT, COLOR_BORDER, COLOR_TEXT, COLOR_MUTED, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, COLOR_UTILITY_HOVER, COLOR_DANGER, COLOR_DANGER_HOVER, COLOR_CTA, COLOR_CTA_HOVER, COLOR_CANVAS_BG, COLOR_CANVAS_PANEL, COLOR_CANVAS_TOOLBAR, OCR_MODE_OPTIONS, LINE_JOIN_DISPLAY, EXPORT_LAYOUT_DISPLAY, EXPORT_LAYOUT_BY_DISPLAY, MODE_TEMPLATE, MODE_REVIEW, MODE_EXPORT
+)
 
 
 class ImageOcrExcelApp:
+    @property
+    def editor(self) -> EditorState:
+        if not hasattr(self, "_editor"):
+            self._editor = EditorState()
+        return self._editor
+
+    @property
+    def fields(self) -> list[TemplateField]:
+        return self.editor.fields
+
+    @fields.setter
+    def fields(self, values: list[TemplateField]) -> None:
+        self.editor.reset(values)
+
+    @property
+    def current_results(self) -> ResultValues:
+        return self.editor.results
+
+    @current_results.setter
+    def current_results(self, values: Sequence[str]) -> None:
+        self.editor.results.assign(values)
+
+    @property
+    def current_raw_results(self) -> ResultValues:
+        return self.editor.raw_results
+
+    @current_raw_results.setter
+    def current_raw_results(self, values: Sequence[str]) -> None:
+        self.editor.raw_results.assign(values)
+
+    @property
+    def selected_index(self) -> int | None:
+        return self.editor.selected_index
+
+    @selected_index.setter
+    def selected_index(self, value: int | None) -> None:
+        self.editor.selected_index = value
+
     def __init__(
         self,
         root: ctk.CTk,
@@ -257,10 +212,10 @@ class ImageOcrExcelApp:
         )
         self.current_content_rect: tuple[int, int, int, int] | None = None
 
-        self.fields: list[TemplateField] = []
+        self.fields = []
         self.set_definition = self.profile.default_set_definition
-        self.current_results: list[str] = []
-        self.current_raw_results: list[str] = []
+        self.editor.results.assign([])
+        self.editor.raw_results.assign([])
         # Future correction-rule foundation.
         # Keep this data path even while the editor UI is hidden; template loading/saving
         # and OCR application already support it and will be reused when rules are redesigned.
@@ -274,7 +229,7 @@ class ImageOcrExcelApp:
         self.set_drop_section_by_id: dict[int, ctk.CTkFrame] = {}
         self.set_drag_target_id: int | None = None
         self.review_order_label_by_index: dict[int, ctk.CTkLabel] = {}
-        self.selected_index: int | None = None
+        self.selected_index = None
         self.editing_name_index: int | None = None
         self.editing_name_value: str = ""
         self.editing_name_error: str = ""
@@ -1445,6 +1400,13 @@ class ImageOcrExcelApp:
         self._side_render_job = None
         if self.side_body is None:
             return
+        scroll_positions = {}
+        mode = self.mode_var.get()
+        if getattr(self, "_rendered_mode", None) == mode:
+            for name in ("template_fields_scroller", "review_result_scroller"):
+                widget = getattr(self, name, None)
+                if widget is not None and widget.winfo_exists():
+                    scroll_positions[name] = widget._parent_canvas.yview()[0]
         previous_body = self.side_body
         replacement_body = ctk.CTkFrame(
             previous_body.master, corner_radius=0, fg_color=COLOR_SURFACE
@@ -1474,6 +1436,14 @@ class ImageOcrExcelApp:
         previous_body.pack_forget()
         replacement_body.pack(side=TOP, fill=BOTH, expand=True)
         previous_body.destroy()
+        self._rendered_mode = mode
+        for name, fraction in scroll_positions.items():
+            widget = getattr(self, name, None)
+            if widget is not None:
+                def restore(target, position):
+                    if target.winfo_exists():
+                        target._parent_canvas.yview_moveto(position)
+                self.root.after_idle(restore, widget, fraction)
         self._update_coordinate_status_display()
 
     def _schedule_side_body_render(self) -> None:
@@ -1485,165 +1455,7 @@ class ImageOcrExcelApp:
         self._side_render_job = self.root.after_idle(self._render_side_body)
 
     def _render_template_mode(self) -> None:
-        body = self.side_body
-        assert body is not None
-        self.field_check_vars = []
-        self.field_row_widgets = []
-        self.field_row_by_index = {}
-        self.field_drag_handle_by_index = {}
-        self.set_drop_section_by_id = {}
-        layout_row = ctk.CTkFrame(body, fg_color="transparent")
-        layout_row.pack(fill="x", padx=16, pady=(2, 8))
-        layout_row.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(
-            layout_row,
-            text="Excelの行単位",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
-        layout_menu = ctk.CTkOptionMenu(
-            layout_row,
-            values=list(EXPORT_LAYOUT_DISPLAY.values()),
-            height=THEME.layout.entry_height,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            button_color=COLOR_PRIMARY,
-            button_hover_color=COLOR_PRIMARY_HOVER,
-            dropdown_fg_color=COLOR_SURFACE_ALT,
-            dropdown_hover_color=COLOR_SECONDARY_HOVER,
-            text_color=COLOR_TEXT,
-        )
-        layout_menu.configure(
-            command=lambda display: self._set_export_layout(
-                EXPORT_LAYOUT_BY_DISPLAY[display], layout_menu
-            )
-        )
-        layout_menu.set(EXPORT_LAYOUT_DISPLAY[self.export_layout_var.get()])
-        layout_menu.grid(row=0, column=1, sticky="ew")
-        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
-            preset_row = ctk.CTkFrame(body, fg_color="transparent")
-            preset_row.pack(fill="x", padx=16, pady=(0, 8))
-            preset_row.grid_columnconfigure(1, weight=1)
-            ctk.CTkLabel(
-                preset_row,
-                text="項目の組み合わせ",
-                anchor="w",
-                font=UI_FONT_SMALL,
-                text_color=COLOR_MUTED,
-            ).grid(row=0, column=0, sticky="w", padx=(0, 8))
-            preset_menu = ctk.CTkOptionMenu(
-                preset_row,
-                values=list(self.profile.set_preset_display.values()),
-                height=THEME.layout.entry_height,
-                font=UI_FONT_SMALL,
-                fg_color=COLOR_SECONDARY,
-                button_color=COLOR_PRIMARY,
-                button_hover_color=COLOR_PRIMARY_HOVER,
-                dropdown_fg_color=COLOR_SURFACE_ALT,
-                dropdown_hover_color=COLOR_SECONDARY_HOVER,
-                text_color=COLOR_TEXT,
-            )
-            preset_menu.configure(
-                command=lambda value: self._set_set_preset(value, preset_menu)
-            )
-            preset_menu.set(self.set_preset_var.get())
-            preset_menu.grid(row=0, column=1, sticky="ew")
-            ctk.CTkLabel(
-                body,
-                text=THEME.copy.set_layout_note,
-                anchor="w",
-                justify="left",
-                font=UI_FONT_SMALL,
-                text_color=COLOR_MUTED,
-                wraplength=350,
-            ).pack(fill="x", padx=16, pady=(0, 6))
-            set_error = (
-                set_validation_error(self._enabled_fields(), self.set_definition)
-                if self.fields
-                else None
-            )
-            if set_error:
-                ctk.CTkLabel(
-                    body,
-                    text=set_error,
-                    image=ICONS.get("alert_circle", 16, COLOR_DANGER),
-                    compound="left",
-                    anchor="w",
-                    justify="left",
-                    font=UI_FONT_SMALL,
-                    text_color=COLOR_DANGER,
-                    wraplength=320,
-                ).pack(fill="x", padx=16, pady=(0, 6))
-            action = ctk.CTkFrame(body, fg_color="transparent")
-            action.pack(fill="x", padx=16, pady=(0, 8))
-            action.grid_columnconfigure(0, weight=1)
-            pending = self.pending_set_id is not None
-            button_text = self._set_creation_button_text()
-            ctk.CTkButton(
-                action,
-                text=button_text,
-                image=ICONS.get("plus", 16, THEME.palette.on_color),
-                compound="left",
-                command=self.begin_set_creation,
-                height=THEME.layout.entry_height,
-                corner_radius=THEME.layout.control_radius,
-                font=UI_FONT_SMALL,
-                fg_color=COLOR_PRIMARY,
-                hover_color=COLOR_PRIMARY_HOVER,
-            ).grid(row=0, column=0, sticky="ew")
-            if pending:
-                ctk.CTkButton(
-                    action,
-                    text="中止",
-                    image=ICONS.get("x", 15, COLOR_TEXT),
-                    compound="left",
-                    command=self.cancel_set_creation,
-                    width=68,
-                    height=THEME.layout.entry_height,
-                    corner_radius=THEME.layout.control_radius,
-                    font=UI_FONT_SMALL,
-                    fg_color=COLOR_SECONDARY,
-                    hover_color=COLOR_SECONDARY_HOVER,
-                    border_width=1,
-                    border_color=COLOR_BORDER,
-                ).grid(row=0, column=1, padx=(6, 0))
-        else:
-            ctk.CTkLabel(
-                body,
-                text=THEME.copy.image_layout_note,
-                anchor="w",
-                justify="left",
-                font=UI_FONT_SMALL,
-                text_color=COLOR_MUTED,
-                wraplength=350,
-            ).pack(fill="x", padx=16, pady=(0, 6))
-
-        scroller = AutoHideScrollableFrame(
-            body,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE_ALT,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(0, 10))
-        self.template_fields_scroller = scroller
-        if (
-            not self.fields
-            and self.export_layout_var.get() != EXPORT_LAYOUT_SET
-        ):
-            self._empty_state(
-                scroller,
-                "項目がありません",
-                "画像上で範囲をドラッグ",
-                THEME.copy.saved_template_hint,
-                icon="scan",
-            )
-        elif self.export_layout_var.get() == EXPORT_LAYOUT_SET:
-            self._render_set_fields(scroller)
-        else:
-            for idx, field in enumerate(self.fields):
-                self._field_row(scroller, idx)
+        template_view.render(self)
 
     def _set_export_layout(
         self, value: str, menu: ctk.CTkOptionMenu | None = None
@@ -1751,8 +1563,8 @@ class ImageOcrExcelApp:
         assigned_ids = {field.set_id for field in self.fields if field.set_id > 0}
         self.empty_set_ids.difference_update(assigned_ids)
         if changed:
-            self.current_results = [""] * len(self.fields)
-            self.current_raw_results = [""] * len(self.fields)
+            self.editor.results.assign([])
+            self.editor.raw_results.assign([])
         return changed
 
     def _prepare_initial_set_creation(self) -> None:
@@ -2013,84 +1825,7 @@ class ImageOcrExcelApp:
         self.redraw()
 
     def _render_review_mode(self) -> None:
-        side_body = self.side_body
-        assert side_body is not None
-        body = ctk.CTkFrame(side_body, corner_radius=0, fg_color=COLOR_SURFACE)
-        body.pack(fill=BOTH, expand=True)
-
-        scroller = AutoHideScrollableFrame(
-            body,
-            height=220,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE_ALT,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        self.review_result_scroller = scroller
-        scroller.pack(side=TOP, fill=BOTH, expand=True, padx=16, pady=(2, 10))
-        if not self.fields:
-            self._empty_state(
-                scroller,
-                "読み取り項目がありません",
-                "「範囲・列」で読み取り範囲を作成してください。",
-                icon="table",
-            )
-            return
-        if not self.original_image:
-            self._empty_state(
-                scroller,
-                "画像がありません",
-                "上部から画像フォルダを選択してください。",
-                icon="folder",
-            )
-            return
-
-        ctk.CTkLabel(
-            body,
-            text=THEME.copy.recognition_test_note,
-            anchor="w",
-            justify="left",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=350,
-        ).pack(fill="x", padx=18, pady=(0, 8), before=scroller._parent_frame)
-
-        toolbar = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
-        toolbar.pack(fill="x", padx=16, pady=(0, 10), before=scroller._parent_frame)
-        toolbar.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            toolbar,
-            text=self._text_formatting_summary(),
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=0, column=0, sticky="ew", padx=(2, 8))
-        ctk.CTkButton(
-            toolbar,
-            text="全項目をテスト",
-            image=ICONS.get("scan", 16, THEME.palette.on_color),
-            compound="left",
-            command=self.ocr_current_image,
-            width=138,
-            height=THEME.layout.entry_height,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_PRIMARY,
-            hover_color=COLOR_PRIMARY_HOVER,
-        ).grid(row=0, column=1, sticky="e")
-
-        self._ensure_result_buffers()
-        self._ensure_review_selection()
-        self.result_vars = []
-        for idx, field in enumerate(self.fields):
-            if not field.enabled:
-                continue
-            self._review_result_row(scroller, idx)
-
-        self.review_detail_host = ctk.CTkFrame(
-            body, corner_radius=0, fg_color=COLOR_SURFACE
-        )
-        self.review_detail_host.pack(side=BOTTOM, fill="x")
-        self._render_postprocess_panel(self.review_detail_host)
+        review_view.render(self)
 
     def _coordinate_status_presentation(self) -> tuple[str, str]:
         if self.coordinate_settings.coordinate_space == COORDINATE_SPACE_CONTENT:
@@ -2729,165 +2464,7 @@ class ImageOcrExcelApp:
         self.redraw()
 
     def _render_export_mode(self) -> None:
-        body = self.side_body
-        assert body is not None
-
-        content = ctk.CTkScrollableFrame(
-            body,
-            corner_radius=0,
-            fg_color=COLOR_SURFACE,
-            scrollbar_button_color=COLOR_SECONDARY,
-            scrollbar_button_hover_color=COLOR_SECONDARY_HOVER,
-        )
-        content.pack(side=TOP, fill=BOTH, expand=True)
-
-        panel = ctk.CTkFrame(
-            content,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE_ALT,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        panel.pack(fill="x", padx=16, pady=(0, 10))
-        panel.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            panel,
-            text="画像フォルダ",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew", padx=(12, 8), pady=(12, 2))
-        ctk.CTkLabel(
-            panel,
-            textvariable=self.folder_var,
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=210,
-        ).grid(row=1, column=0, sticky="ew", padx=(12, 8), pady=(0, 8))
-        ctk.CTkButton(
-            panel,
-            text="変更",
-            image=ICONS.get("folder", 16, COLOR_TEXT),
-            compound="left",
-            command=self.open_image_folder,
-            width=104,
-            height=THEME.layout.entry_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        ).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(12, 8))
-        ctk.CTkLabel(
-            panel,
-            text="出力ファイル",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_TEXT,
-        ).grid(row=2, column=0, sticky="ew", padx=(12, 8), pady=(2, 2))
-        ctk.CTkLabel(
-            panel,
-            textvariable=self.output_var,
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=210,
-        ).grid(row=3, column=0, sticky="ew", padx=(12, 8), pady=(0, 12))
-        ctk.CTkButton(
-            panel,
-            text="選択",
-            image=ICONS.get("table", 16, COLOR_TEXT),
-            compound="left",
-            command=self.select_output_file,
-            width=104,
-            height=THEME.layout.entry_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        ).grid(row=2, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(2, 12))
-
-        self._render_image_queue(content)
-        self._render_excel_output_settings(content)
-
-        enabled_count = len(self._enabled_fields())
-        image_count = len(self.image_queue.included_files())
-        self._render_export_structure_summary(content, image_count, enabled_count)
-
-        actions = ctk.CTkFrame(body, fg_color=COLOR_SURFACE)
-        actions.pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
-        actions.grid_columnconfigure(0, weight=1)
-        retry_count = (
-            len(self.image_queue.failed_files()) if self.last_export_result else 0
-        )
-        self.retry_button = ctk.CTkButton(
-            actions,
-            text=f"失敗分を再実行（{retry_count}）",
-            image=ICONS.get("refresh", 17, COLOR_TEXT),
-            compound="left",
-            command=self.retry_failed_images,
-            state="normal" if retry_count else "disabled",
-            height=THEME.layout.primary_button_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_SECONDARY,
-            hover_color=COLOR_SECONDARY_HOVER,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        self.retry_button.grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            sticky="ew",
-            pady=(0, 6),
-        )
-        ctk.CTkButton(
-            actions,
-            text="Excel出力",
-            image=ICONS.get("table", 18, THEME.palette.on_color),
-            compound="left",
-            command=self.export_to_excel,
-            height=THEME.layout.export_button_height,
-            corner_radius=THEME.layout.control_radius,
-            font=UI_FONT_BOLD,
-            fg_color=COLOR_CTA,
-            hover_color=COLOR_CTA_HOVER,
-        ).grid(row=1, column=0, sticky="ew", padx=(0, 4))
-        self.export_more_button = ctk.CTkButton(
-            actions,
-            text="",
-            image=ICONS.get("more", 18, COLOR_MUTED),
-            command=lambda: None,
-            width=40,
-            height=THEME.layout.export_button_height,
-            corner_radius=THEME.layout.control_radius,
-            fg_color="transparent",
-            hover_color=COLOR_UTILITY_HOVER,
-            border_width=0,
-        )
-        self.export_more_button.configure(
-            command=lambda button=self.export_more_button: (
-                self.show_export_actions_menu(button)
-            )
-        )
-        self.export_more_button.grid(row=1, column=1)
-        add_tooltip(
-            self.export_more_button,
-            "その他の出力",
-        )
-        ctk.CTkLabel(
-            actions,
-            text="Excelがない場合は、右のメニューからCSVで保存できます。",
-            anchor="e",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=2, column=0, columnspan=2, sticky="e", pady=(3, 0))
+        export_view.render(self)
 
     def _render_image_queue(self, parent) -> None:
         panel = ctk.CTkFrame(
@@ -4338,8 +3915,8 @@ class ImageOcrExcelApp:
         else:
             fill_missing_field_source_size(self.fields, self.original_image.size)
         self.zoom = self._initial_zoom()
-        self.current_results = [""] * len(self.fields)
-        self.current_raw_results = [""] * len(self.fields)
+        self.editor.results.assign([])
+        self.editor.raw_results.assign([])
         self.image_var.set(self._image_status_text())
         self.image_count_var.set(
             f"{self.current_image_index + 1} / {len(self.image_files)}"
@@ -4651,8 +4228,8 @@ class ImageOcrExcelApp:
                 else None
             )
             self._refresh_content_mapping()
-            self.current_results = [""] * len(self.fields)
-            self.current_raw_results = [""] * len(self.fields)
+            self.editor.results.assign([])
+            self.editor.raw_results.assign([])
             self.selected_index = 0
             self.undo_action = None
             self.template_path = path
@@ -5625,8 +5202,8 @@ class ImageOcrExcelApp:
                 else None
             )
         if changed:
-            self.current_results = [""] * len(self.fields)
-            self.current_raw_results = [""] * len(self.fields)
+            self.editor.results.assign([])
+            self.editor.raw_results.assign([])
             self._mark_dirty()
         self.status_var.set(self._basic_settings_status_message(changed))
         window.destroy()
@@ -5667,6 +5244,15 @@ class ImageOcrExcelApp:
                 self._refresh_review_row(idx)
             except Exception:
                 continue
+
+    def _refresh_recognition_results(self) -> None:
+        if self.mode_var.get() != MODE_REVIEW:
+            self._render_side_body()
+            return
+        for idx in range(len(self.fields)):
+            self._refresh_review_row(idx)
+        self._update_review_detail_values()
+        self.redraw()
 
     def _refresh_review_row(self, idx: int) -> None:
         row = self.field_row_by_index.get(idx)
@@ -5776,15 +5362,7 @@ class ImageOcrExcelApp:
         if not (0 <= new_idx < len(self.fields)):
             return
         self._ensure_current_results()
-        self.fields[idx], self.fields[new_idx] = self.fields[new_idx], self.fields[idx]
-        self.current_results[idx], self.current_results[new_idx] = (
-            self.current_results[new_idx],
-            self.current_results[idx],
-        )
-        self.current_raw_results[idx], self.current_raw_results[new_idx] = (
-            self.current_raw_results[new_idx],
-            self.current_raw_results[idx],
-        )
+        self.editor.move(idx, new_idx)
         self.selected_index = new_idx
         self._mark_dirty()
         self.status_var.set("項目順を変更しました。Excel出力の列順にも反映されます。")
@@ -5801,12 +5379,7 @@ class ImageOcrExcelApp:
             self.redraw()
             return
         self._ensure_current_results()
-        field = self.fields.pop(source_idx)
-        result = self.current_results.pop(source_idx)
-        raw_result = self.current_raw_results.pop(source_idx)
-        self.fields.insert(target_idx, field)
-        self.current_results.insert(target_idx, result)
-        self.current_raw_results.insert(target_idx, raw_result)
+        self.editor.move(source_idx, target_idx)
         self.selected_index = target_idx
         self._mark_dirty()
         self.status_var.set("項目順を変更しました。Excel出力の列順にも反映されます。")
@@ -6227,9 +5800,7 @@ class ImageOcrExcelApp:
             duplicate.y2 += dy
         insert_idx = idx + 1
         self._ensure_current_results()
-        self.fields.insert(insert_idx, duplicate)
-        self.current_results.insert(insert_idx, "")
-        self.current_raw_results.insert(insert_idx, "")
+        self.editor.insert(insert_idx, duplicate)
         self.selected_index = insert_idx
         self.editing_name_index = None
         self._set_undo(
@@ -6275,12 +5846,8 @@ class ImageOcrExcelApp:
                 else ""
             ),
         )
-        del self.fields[idx]
+        self.editor.remove(idx)
         self._mark_dirty()
-        if idx < len(self.current_results):
-            del self.current_results[idx]
-        if idx < len(self.current_raw_results):
-            del self.current_raw_results[idx]
         self.selected_index = min(idx, len(self.fields) - 1) if self.fields else None
         self.status_var.set(f"{field_name} を削除しました。Esc / Ctrl+Z で戻せます。")
         self._render_side_body()
@@ -6295,6 +5862,11 @@ class ImageOcrExcelApp:
         return self.selected_index
 
     def _set_undo(self, action_type: str, **payload) -> None:
+        idx = payload.get("idx")
+        if idx is not None and 0 <= idx < len(self.editor.entries):
+            payload["field_id"] = self.editor.entries[idx].id
+        if "fields" in payload:
+            payload["field_ids"] = {i: self.editor.entries[i].id for i in payload["fields"]}
         self.undo_action = {"type": action_type, **payload}
 
     def _focus_is_text_entry(self) -> bool:
@@ -6349,22 +5921,7 @@ class ImageOcrExcelApp:
         return "break"
 
     def _undo_added_field(self, action: dict) -> None:
-        idx = int(action["idx"])
-        field = action["field"]
-        field_ref = action.get("field_ref")
-        remove_idx = (
-            idx if 0 <= idx < len(self.fields) and self.fields[idx] == field else None
-        )
-        if field_ref is not None:
-            for candidate_idx, candidate in enumerate(self.fields):
-                if candidate is field_ref:
-                    remove_idx = candidate_idx
-                    break
-        if remove_idx is None:
-            for candidate_idx, candidate in enumerate(self.fields):
-                if candidate == field:
-                    remove_idx = candidate_idx
-                    break
+        remove_idx = self.editor.index_of(action.get("field_id"))
         if remove_idx is None:
             self.status_var.set(
                 "追加した項目が見つからないため、取り消せませんでした。"
@@ -6372,11 +5929,7 @@ class ImageOcrExcelApp:
             return
         removed_field = self.fields[remove_idx]
         field_name = removed_field.name
-        del self.fields[remove_idx]
-        if remove_idx < len(self.current_results):
-            del self.current_results[remove_idx]
-        if remove_idx < len(self.current_raw_results):
-            del self.current_raw_results[remove_idx]
+        self.editor.remove(remove_idx)
         self.selected_index = (
             min(remove_idx, len(self.fields) - 1) if self.fields else None
         )
@@ -6391,15 +5944,14 @@ class ImageOcrExcelApp:
     def _undo_deleted_field(self, action: dict) -> None:
         idx = max(0, min(int(action["idx"]), len(self.fields)))
         field = replace(action["field"])
-        self.fields.insert(idx, field)
-        self.current_results.insert(idx, str(action.get("result") or ""))
-        self.current_raw_results.insert(idx, str(action.get("raw_result") or ""))
+        self.editor.insert(idx, field, entry_id=action.get("field_id"),
+                           text=str(action.get("result") or ""), raw_text=str(action.get("raw_result") or ""))
         self.selected_index = idx
         self.status_var.set(f"{field.name} の削除を取り消しました。")
 
     def _undo_updated_rect(self, action: dict) -> None:
-        idx = int(action["idx"])
-        if not (0 <= idx < len(self.fields)):
+        idx = self.editor.index_of(action.get("field_id"))
+        if idx is None:
             self.status_var.set(
                 "更新前の項目が見つからないため、取り消せませんでした。"
             )
@@ -6429,6 +5981,12 @@ class ImageOcrExcelApp:
                 "更新前のセットが見つからないため、取り消せませんでした。"
             )
             return
+        index_map = {old: self.editor.index_of(entry_id) for old, entry_id in action.get("field_ids", {}).items()}
+        fields = {cast(int, index_map.get(old, old)): field for old, field in fields.items() if index_map.get(old, old) is not None}
+        action = dict(action)
+        for key in ("results", "raw_results"):
+            values: dict[int, object] = action.get(key) or {}
+            action[key] = {index_map.get(old, old): value for old, value in values.items() if index_map.get(old, old) is not None}
         restored_indexes: list[int] = []
         for idx, field in fields.items():
             if not (0 <= idx < len(self.fields)):
@@ -7373,11 +6931,9 @@ class ImageOcrExcelApp:
         slot_column = self.set_definition.column_for(slot_key)
         if slot_column is not None:
             field.ocr_line_split = slot_column.ocr_line_split
-        self.fields.append(field)
+        self.editor.insert(len(self.fields), field)
         if set_id is not None:
             self.empty_set_ids.discard(set_id)
-        self.current_results.append("")
-        self.current_raw_results.append("")
         self.selected_index = len(self.fields) - 1
         self.mode_var.set(MODE_TEMPLATE)
         self._set_undo(
@@ -7470,7 +7026,11 @@ class ImageOcrExcelApp:
             return
         if not self._require_ocr_ready(self.ocr_current_image):
             return
-        image = self.original_image.copy()
+        source_image = self.original_image
+        image = source_image.copy()
+        coordinate_settings = replace(self.coordinate_settings)
+        text_formatting = replace(self.text_formatting)
+        field_ids = [entry.id for entry in self.editor.entries]
         fields = [
             (idx, self._field_for_ocr(field))
             for idx, field in enumerate(self.fields)
@@ -7494,8 +7054,8 @@ class ImageOcrExcelApp:
                     tesseract_path,
                     backend,
                     correction_rules,
-                    self.coordinate_settings,
-                    self.text_formatting,
+                    coordinate_settings,
+                    text_formatting,
                 )
                 if error or text is None:
                     raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
@@ -7505,9 +7065,15 @@ class ImageOcrExcelApp:
             return raw_results, results
 
         def on_success(result: tuple[list[str], list[str]]) -> None:
-            self.current_raw_results, self.current_results = result
+            if self.original_image is not source_image:
+                return
+            for entry_id, raw, text in zip(field_ids, result[0], result[1]):
+                result_index = self.editor.index_of(entry_id)
+                if result_index is not None:
+                    self.current_raw_results[result_index] = raw
+                    self.current_results[result_index] = text
             self.status_var.set("全項目をテストしました。")
-            self._render_side_body()
+            self._refresh_recognition_results()
 
         def on_error(error: Exception) -> None:
             self.status_var.set("OCRに失敗しました。")
@@ -7532,7 +7098,11 @@ class ImageOcrExcelApp:
             lambda field_index=idx: self.ocr_field_at(field_index)
         ):
             return
-        image = self.original_image.copy()
+        source_image = self.original_image
+        image = source_image.copy()
+        coordinate_settings = replace(self.coordinate_settings)
+        text_formatting = replace(self.text_formatting)
+        entry_id = self.editor.entries[idx].id
         field = self._field_for_ocr(self.fields[idx])
         lang = self.lang_var.get()
         tesseract_path = ""
@@ -7548,8 +7118,8 @@ class ImageOcrExcelApp:
                 tesseract_path,
                 backend,
                 correction_rules,
-                self.coordinate_settings,
-                self.text_formatting,
+                coordinate_settings,
+                text_formatting,
             )
             if error or text is None:
                 raise RuntimeError(error or f"{field.name} のOCRに失敗しました。")
@@ -7557,8 +7127,9 @@ class ImageOcrExcelApp:
             return idx, raw_text or "", text
 
         def on_success(result: tuple[int, str, str]) -> None:
-            result_idx, raw_text, text = result
-            if not (0 <= result_idx < len(self.fields)):
+            _original_index, raw_text, text = result
+            result_idx = self.editor.index_of(entry_id)
+            if self.original_image is not source_image or result_idx is None:
                 return
             self._ensure_result_buffers()
             self.current_raw_results[result_idx] = raw_text
@@ -7567,7 +7138,7 @@ class ImageOcrExcelApp:
             self.status_var.set(
                 f"{self.fields[result_idx].name} を認識テストしました。"
             )
-            self._render_side_body()
+            self._refresh_recognition_results()
 
         def on_error(error: Exception) -> None:
             self.status_var.set("OCRに失敗しました。")
@@ -7896,18 +7467,8 @@ class ImageOcrExcelApp:
         self._ensure_result_buffers()
 
     def _ensure_result_buffers(self) -> None:
-        if len(self.current_results) < len(self.fields):
-            self.current_results.extend(
-                [""] * (len(self.fields) - len(self.current_results))
-            )
-        elif len(self.current_results) > len(self.fields):
-            self.current_results = self.current_results[: len(self.fields)]
-        if len(self.current_raw_results) < len(self.fields):
-            self.current_raw_results.extend(
-                [""] * (len(self.fields) - len(self.current_raw_results))
-            )
-        elif len(self.current_raw_results) > len(self.fields):
-            self.current_raw_results = self.current_raw_results[: len(self.fields)]
+        # Result views always have exactly one value per editor entry.
+        pass
 
     def _ensure_review_selection(self) -> None:
         if (

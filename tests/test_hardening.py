@@ -2088,6 +2088,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
         row = MagicMock()
         handle = MagicMock()
+        app.fields = [TemplateField("field", 0, 0, 10, 10)]
         app.selected_index = 0
         app.field_row_by_index = {0: row}
         app.field_drag_handle_by_index = {0: handle}
