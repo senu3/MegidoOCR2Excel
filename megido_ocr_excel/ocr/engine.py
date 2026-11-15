@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 import tempfile
@@ -10,6 +9,8 @@ import warnings
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, cast
+
+from megido_ocr_excel.ocr.text import (RecognitionResult, process_text, clean_text, fullwidth_ascii, format_ocr_text, apply_postprocess, apply_correction_rules)
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
@@ -240,38 +241,6 @@ def crop_black_content(image: Image.Image, margin: int) -> Image.Image:
     return image.crop(box)
 
 
-def clean_text(text: str) -> str:
-    lines = [line.strip() for line in text.splitlines()]
-    return " ".join(line for line in lines if line).strip()
-
-
-def fullwidth_ascii(text: str) -> str:
-    converted: list[str] = []
-    for char in text:
-        codepoint = ord(char)
-        if char == " ":
-            converted.append("　")
-        elif 0x21 <= codepoint <= 0x7E:
-            converted.append(chr(codepoint + 0xFEE0))
-        else:
-            converted.append(char)
-    return "".join(converted)
-
-
-def format_ocr_text(
-    text: str,
-    settings: TextFormattingSettings | None,
-) -> str:
-    normalized = (settings or TextFormattingSettings()).normalized()
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    separator = {
-        LINE_JOIN_FULLWIDTH_SPACE: "　",
-        LINE_JOIN_NEWLINE: "\n",
-    }.get(normalized.line_join, "")
-    value = separator.join(lines)
-    return fullwidth_ascii(value) if normalized.fullwidth_ascii else value
-
-
 def detect_line_bands(
     image: Image.Image,
     threshold: int = 90,
@@ -311,40 +280,6 @@ def add_detected_band(bands: list[tuple[int, int]], height: int, start: int, end
     if end - start <= 8:
         return
     bands.append((max(0, start - padding), min(height, end + padding)))
-
-
-def apply_postprocess(
-    text: str,
-    field: TemplateField,
-    preserve_whitespace: bool = False,
-) -> str:
-    value = text
-    if field.replace_from:
-        value = value.replace(field.replace_from, field.replace_to)
-    for token in [part.strip() for part in field.remove_text.split(",") if part.strip()]:
-        value = value.replace(token, "")
-    value = value.strip() if preserve_whitespace else " ".join(value.split()).strip()
-
-    if field.postprocess == "数字のみ":
-        return re.sub(r"\D+", "", value)
-    if field.postprocess == "数値抽出":
-        match = re.search(r"[-+]?\d+(?:[.,]\d+)?", value)
-        return match.group(0).replace(",", ".") if match else ""
-    if field.postprocess == "英数字のみ":
-        return re.sub(r"[^0-9A-Za-z]+", "", value)
-    return value
-
-
-def apply_correction_rules(text: str, field: TemplateField, correction_rules: list[CorrectionRule] | None = None) -> str:
-    value = text
-    for rule in correction_rules or []:
-        pattern = rule.pattern
-        if not rule.enabled or not pattern:
-            continue
-        if rule.target not in {CORRECTION_ALL_TARGET, field.name}:
-            continue
-        value = value.replace(pattern, rule.replacement)
-    return value
 
 
 def resolve_backend(field: TemplateField, backend: str = FALLBACK_BACKEND) -> str:
@@ -645,15 +580,8 @@ class OcrEngine:
                 reference_width,
             )
 
-        cleaned = clean_text(raw_text)
-        formatted = format_ocr_text(raw_text, text_formatting)
-        corrected = apply_correction_rules(formatted, field, correction_rules)
-        raw_display = raw_text.strip() if field.ocr_line_split == "detected" else cleaned
-        return raw_display, apply_postprocess(
-            corrected,
-            field,
-            preserve_whitespace=True,
-        ), None
+        result = RecognitionResult(raw_text, process_text(raw_text, field, text_formatting, correction_rules))
+        return result.raw_text, result.text, result.error
 
     def recognize_prepared(self, image: Image.Image, lang: str, config: str, backend: str) -> str:
         if backend == "paddle":

@@ -259,7 +259,7 @@ class BatchWorkflowTests(unittest.TestCase):
                 LINE_JOIN_FULLWIDTH_SPACE, True
             ),
         )
-        self.assertEqual(raw, "ABC!? () 次の行")
+        self.assertEqual(raw, "ABC!? ()\n次の行")
         self.assertEqual(value, "ＡＢＣ！？　（）　次の行")
         self.assertIsNone(error)
 

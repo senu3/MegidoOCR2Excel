@@ -63,8 +63,7 @@ from megido_ocr_excel.ui.theme import THEME
 from megido_ocr_excel.ui.modal import ModalOverlay
 from megido_ocr_excel.ocr.engine import (
     OcrEngine,
-    apply_correction_rules,
-    apply_postprocess,
+    process_text,
     detect_content_rect,
     detect_line_bands,
     fill_missing_field_source_size,
@@ -2631,15 +2630,9 @@ class ImageOcrExcelApp:
                 if idx < len(self.current_raw_results)
                 else ""
             )
-            if raw_text:
-                corrected = apply_correction_rules(
-                    raw_text, field, self.correction_rules
-                )
-                self.current_results[idx] = apply_postprocess(
-                    corrected,
-                    field,
-                    preserve_whitespace=field.ocr_line_split == "detected",
-                )
+            self.current_results[idx] = process_text(
+                raw_text, field, self.text_formatting, self.correction_rules
+            )
             self._refresh_review_row(idx)
         self._update_review_detail_values()
 
