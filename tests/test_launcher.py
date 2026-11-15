@@ -217,7 +217,7 @@ class LauncherCoreTests(unittest.TestCase):
         self.assertIn("--no-project", command)
         self.assertIn("--repair", command)
         self.assertIn("--from-app", command)
-        self.assertEqual(command[-3], str(self.root / "launcher.py"))
+        self.assertEqual(Path(command[-3]).resolve(), (self.root / "launcher.py").resolve())
 
     def test_app_restart_handoff_uses_launcher_without_repair(self) -> None:
         (self.root / "launcher.py").write_text("# launcher\n")
@@ -228,7 +228,7 @@ class LauncherCoreTests(unittest.TestCase):
             environ={"PATH": ""},
         )
 
-        self.assertEqual(command[-1], str(self.root / "launcher.py"))
+        self.assertEqual(Path(command[-1]).resolve(), (self.root / "launcher.py").resolve())
         self.assertNotIn("--repair", command)
         self.assertNotIn("--from-app", command)
 

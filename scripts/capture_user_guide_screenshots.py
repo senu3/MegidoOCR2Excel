@@ -151,7 +151,7 @@ def _prepare_sample_state(
     ]
     app.selected_index = 0
     app.export_layout_var.set(EXPORT_LAYOUT_IMAGE_ROW)
-    app._load_current_image(auto_ocr=False)
+    app._load_current_image()
     app.folder_var.set(app._folder_status_text())
     app.output_path = sample_dir / "sample-output.xlsx"
     app.output_var.set(app.output_path.name)

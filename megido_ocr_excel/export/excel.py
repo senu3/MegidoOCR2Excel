@@ -10,17 +10,12 @@ from openpyxl.utils.cell import coordinate_to_tuple
 from openpyxl.worksheet.worksheet import Worksheet
 
 from megido_ocr_excel.persistence import atomic_save_workbook
-from megido_ocr_excel.export.session import (file_digest, assert_unchanged, structure_signature, seal_result, validate_retry, recognize_retry)
+from megido_ocr_excel.export.session import (file_digest, verify_commit, structure_signature, seal_result, validate_retry, recognize_retry)
 from megido_ocr_excel.models import (
-    DEFAULT_SET_DEFINITION,
     EXPORT_LAYOUT_IMAGE_ROW,
     EXPORT_LAYOUT_OPTIONS,
-    EXPORT_LAYOUT_SET,
-    SetDetectionResult,
     SetDefinition,
     TemplateField,
-    set_groups,
-    set_validation_error,
 )
 from megido_ocr_excel.operations import CancelCheck, raise_if_cancelled
 
@@ -113,11 +108,12 @@ class ExcelExporter(RowRecognizer):
             row_cursor += 1
 
         raise_if_cancelled(cancel_check)
-        self._fit_output_columns(sheet)
+        if settings.write_mode != "追記" or not original_digest:
+            self._fit_output_columns(sheet, settings.start_col, len(headers), settings.start_row)
         result.report_sheets = self._write_reports(workbook, result)
 
         raise_if_cancelled(cancel_check)
-        atomic_save_workbook(workbook, output_path, before_replace=lambda: assert_unchanged(output_path, original_digest))
+        atomic_save_workbook(workbook, output_path, before_replace=lambda: verify_commit(output_path, original_digest, cancel_check))
         return seal_result(result, output_path, signature)
 
 
@@ -163,7 +159,7 @@ class ExcelExporter(RowRecognizer):
         result.report_sheets = self._write_reports(workbook, result)
         raise_if_cancelled(cancel_check)
         atomic_save_workbook(workbook, output_path,
-                             before_replace=lambda: assert_unchanged(output_path, previous_result.output_digest))
+                             before_replace=lambda: verify_commit(output_path, previous_result.output_digest, cancel_check))
         return seal_result(result, output_path, signature)
 
     @staticmethod
@@ -212,9 +208,10 @@ class ExcelExporter(RowRecognizer):
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
         sheet.row_dimensions[row_index].height = max(15, 15 * max_lines)
 
-    def _fit_output_columns(self, sheet) -> None:
-        for column_cells in sheet.columns:
-            max_length = max(len(str(cell.value or "")) for cell in column_cells)
+    def _fit_output_columns(self, sheet, start_col: int = 1, width: int | None = None, start_row: int = 1) -> None:
+        end_col = start_col + width - 1 if width is not None else sheet.max_column
+        for column_cells in sheet.iter_cols(min_col=start_col, max_col=end_col, min_row=start_row):
+            max_length = max((len(str(cell.value or "")) for cell in column_cells), default=0)
             sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 12), 42)
 
     def _write_reports(self, workbook, result: ExportResult) -> list[str]:

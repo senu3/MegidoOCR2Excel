@@ -24,6 +24,12 @@ def assert_unchanged(path: Path, expected: str) -> None:
         raise ValueError('出力ファイルが変更されています。別の出力先へ全画像を出力してください。')
 
 
+def verify_commit(path: Path, expected: str, cancel_check=None) -> None:
+    """Last check after serialization, immediately before atomic replacement."""
+    raise_if_cancelled(cancel_check)
+    assert_unchanged(path, expected)
+
+
 def structure_signature(settings, fields, definition) -> tuple:
     return (
         tuple(asdict(settings).items()), repr(asdict(definition)),

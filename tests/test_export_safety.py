@@ -122,3 +122,36 @@ class ExportSafetyTests(unittest.TestCase):
             ExcelExporter().export(output, self.images, self.fields,
                                    ExportSettings(start_col=16384), lambda *_: ('ok', None))
         self.assertFalse(output.exists())
+
+    def test_cancel_during_excel_serialization_preserves_original(self):
+        from unittest.mock import patch
+        from megido_ocr_excel.operations import OperationCancelled
+        output = self.root / 'cancel.xlsx'
+        output.write_bytes(b'original')
+        cancelled = False
+        save = Workbook.save
+        def delayed_save(workbook, filename):
+            nonlocal cancelled
+            save(workbook, filename)
+            cancelled = True
+        with patch.object(Workbook, 'save', delayed_save):
+            with self.assertRaises(OperationCancelled):
+                ExcelExporter().export(output, self.images, self.fields, ExportSettings(),
+                                       lambda *_: ('ok', None), cancel_check=lambda: cancelled)
+        self.assertEqual(output.read_bytes(), b'original')
+        self.assertEqual(list(self.root.glob('.cancel-*.xlsx')), [])
+
+    def test_retry_error_preserves_previous_output_and_session(self):
+        for exporter, suffix in [(ExcelExporter(), '.xlsx'), (CsvExporter(), '.csv')]:
+            output = self.root / ('retry-error' + suffix)
+            settings = ExportSettings()
+            first = exporter.export(output, self.images, self.fields, settings, lambda *_: (None, 'error'))
+            before = output.read_bytes()
+            def fail(*_):
+                raise RuntimeError('recognition crashed')
+            with self.assertRaises(RuntimeError):
+                exporter.retry_failed(output, first, self.fields, settings, fail)
+            self.assertEqual(output.read_bytes(), before)
+            self.assertEqual(len(first.failed_records), 2)
+            recovered = exporter.retry_failed(output, first, self.fields, settings, lambda *_: ('ok', None))
+            self.assertFalse(recovered.errors)

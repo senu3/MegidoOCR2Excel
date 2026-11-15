@@ -22,7 +22,7 @@ from megido_ocr_excel.models import (
 )
 from megido_ocr_excel.operations import CancelCheck, raise_if_cancelled
 from megido_ocr_excel.persistence import atomic_write_text
-from megido_ocr_excel.export.session import (file_digest, assert_unchanged, structure_signature, seal_result, validate_retry, recognize_retry)
+from megido_ocr_excel.export.session import (file_digest, verify_commit, structure_signature, seal_result, validate_retry, recognize_retry)
 
 
 class CsvExporter:
@@ -73,7 +73,7 @@ class CsvExporter:
         writer.writerows(rows)
 
         raise_if_cancelled(cancel_check)
-        atomic_write_text(output_path, output.getvalue(), encoding="utf-8-sig", before_replace=lambda: assert_unchanged(output_path, original_digest))
+        atomic_write_text(output_path, output.getvalue(), encoding="utf-8-sig", before_replace=lambda: verify_commit(output_path, original_digest, cancel_check))
         return seal_result(result, output_path, signature)
 
     def retry_failed(
@@ -102,5 +102,5 @@ class CsvExporter:
         writer.writerows(row for record in result.records for row in record.rows)
         raise_if_cancelled(cancel_check)
         atomic_write_text(output_path, output.getvalue(), encoding="utf-8-sig",
-                          before_replace=lambda: assert_unchanged(output_path, previous_result.output_digest))
+                          before_replace=lambda: verify_commit(output_path, previous_result.output_digest, cancel_check))
         return seal_result(result, output_path, signature)

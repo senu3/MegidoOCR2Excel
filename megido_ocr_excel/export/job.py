@@ -48,7 +48,8 @@ class ExportJob:
         raise_if_cancelled(cancel_check)
         paths = self.image_files
         if self.previous is not None:
-            paths = [r.image_path for r in self.previous.failed_records if r.image_path in set(paths)]
+            targets = set(paths)
+            paths = [r.image_path for r in self.previous.failed_records if r.image_path in targets]
         total = len(paths)
         progress(BatchProgress('started', 0, total, paths[0] if paths else None))
 

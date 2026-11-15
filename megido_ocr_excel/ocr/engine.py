@@ -14,7 +14,7 @@ from megido_ocr_excel.ocr.text import (RecognitionResult, process_text, clean_te
 
 from PIL import Image, ImageChops, ImageEnhance, ImageFilter, ImageOps
 
-from megido_ocr_excel.models import COORDINATE_SPACE_CONTENT, CORRECTION_ALL_TARGET, LINE_JOIN_FULLWIDTH_SPACE, LINE_JOIN_NEWLINE, CoordinateSettings, CorrectionRule, TemplateField, TextFormattingSettings
+from megido_ocr_excel.models import COORDINATE_SPACE_CONTENT, CoordinateSettings, CorrectionRule, TemplateField, TextFormattingSettings
 
 try:
     import pytesseract  # type: ignore[import-not-found]

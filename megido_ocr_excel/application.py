@@ -52,7 +52,6 @@ from megido_ocr_excel.export.excel import (
     ExcelExporter,
     ExportResult,
     ExportSettings,
-    SetResolver,
     validate_export_settings,
 )
 from megido_ocr_excel.app_config import ApplicationConfig
@@ -2359,7 +2358,6 @@ class ImageOcrExcelApp:
         self.status_var.set("補正ルールを更新しました。OCR結果に反映されます。")
 
     def _apply_correction_rules_to_current_results(self) -> None:
-        self._ensure_result_buffers()
         for idx, field in enumerate(self.fields):
             raw_text = (
                 self.current_raw_results[idx]
@@ -2656,7 +2654,7 @@ class ImageOcrExcelApp:
             self.current_image_index = self.image_files.index(path)
         except ValueError:
             return
-        self._load_current_image(auto_ocr=False)
+        self._load_current_image()
         item = next(
             (
                 candidate
@@ -3874,7 +3872,7 @@ class ImageOcrExcelApp:
         self._clear_retry_context()
         self.folder_var.set(self._folder_status_text())
         self.current_image_index = 0
-        self._load_current_image(auto_ocr=False)
+        self._load_current_image()
         if self.fields and self.mode_var.get() == MODE_TEMPLATE:
             self.mode_var.set(MODE_REVIEW)
         self._hide_workflow_choice()
@@ -3887,7 +3885,7 @@ class ImageOcrExcelApp:
         self.current_image_index = (self.current_image_index - 1) % len(
             self.image_files
         )
-        self._load_current_image(auto_ocr=False)
+        self._load_current_image()
         self._render_side_body()
 
     def next_image(self, _event=None) -> None:
@@ -3896,10 +3894,10 @@ class ImageOcrExcelApp:
         self.current_image_index = (self.current_image_index + 1) % len(
             self.image_files
         )
-        self._load_current_image(auto_ocr=False)
+        self._load_current_image()
         self._render_side_body()
 
-    def _load_current_image(self, auto_ocr: bool) -> None:
+    def _load_current_image(self) -> None:
         if not (0 <= self.current_image_index < len(self.image_files)):
             return
         self.image_path = self.image_files[self.current_image_index]
@@ -3925,41 +3923,28 @@ class ImageOcrExcelApp:
         self.canvas_edit_state = None
         self.undo_action = None
         self.redraw()
-        if auto_ocr:
-            self._show_loading(
-                "OCRを準備しています。初回はモデル読み込みに時間がかかります。"
+        if self.auto_detection_enabled:
+            labels = {
+                **self.app_config.copy.detection_statuses,
+                "log": (
+                    f"{self.set_definition.name}を "
+                    f"{self.current_detection_count} 件検出しました。"
+                ),
+                "supplement_candidate": self.current_detection_reason,
+                "unknown": self.app_config.copy.detection_failure_status,
+            }
+            status = labels.get(
+                self.current_detection_layout,
+                self.app_config.copy.detection_fallback_status,
             )
-            try:
-                self._ocr_all_current(show_errors=False)
-            finally:
-                self._hide_loading()
-        if auto_ocr:
-            self.status_var.set(
-                "画像を読み込みました。認識テストの結果を確認できます。"
-            )
-        else:
-            if self.auto_detection_enabled:
-                labels = {
-                    **self.app_config.copy.detection_statuses,
-                    "log": (
-                        f"{self.set_definition.name}を "
-                        f"{self.current_detection_count} 件検出しました。"
-                    ),
-                    "supplement_candidate": self.current_detection_reason,
-                    "unknown": self.app_config.copy.detection_failure_status,
-                }
-                status = labels.get(
-                    self.current_detection_layout,
-                    self.app_config.copy.detection_fallback_status,
-                )
-                if self.current_detection_layout == "unknown":
-                    self._set_warning_status(status)
-                else:
-                    self.status_var.set(status)
+            if self.current_detection_layout == "unknown":
+                self._set_warning_status(status)
             else:
-                self.status_var.set(
-                    "画像を読み込みました。認識テストで代表画像を試せます。"
-                )
+                self.status_var.set(status)
+        else:
+            self.status_var.set(
+                "画像を読み込みました。認識テストで代表画像を試せます。"
+            )
 
     def _reset_status_text_color(self, *_args) -> None:
         label = getattr(self, "status_label", None)
@@ -5314,7 +5299,6 @@ class ImageOcrExcelApp:
             self.review_line_split_var.set(OCR_MODE_OPTIONS[0])
             return
         field = self.fields[idx]
-        self._ensure_result_buffers()
         self.review_raw_preview_var.set(
             self._compact_preview_text(self.current_raw_results[idx] or "未OCR")
         )
@@ -5361,7 +5345,6 @@ class ImageOcrExcelApp:
         new_idx = idx + direction
         if not (0 <= new_idx < len(self.fields)):
             return
-        self._ensure_current_results()
         self.editor.move(idx, new_idx)
         self.selected_index = new_idx
         self._mark_dirty()
@@ -5378,7 +5361,6 @@ class ImageOcrExcelApp:
             self._render_side_body()
             self.redraw()
             return
-        self._ensure_current_results()
         self.editor.move(source_idx, target_idx)
         self.selected_index = target_idx
         self._mark_dirty()
@@ -5799,7 +5781,6 @@ class ImageOcrExcelApp:
             duplicate.y1 += dy
             duplicate.y2 += dy
         insert_idx = idx + 1
-        self._ensure_current_results()
         self.editor.insert(insert_idx, duplicate)
         self.selected_index = insert_idx
         self.editing_name_index = None
@@ -5968,7 +5949,6 @@ class ImageOcrExcelApp:
             field.source_width,
             field.source_height,
         )
-        self._ensure_current_results()
         self.current_results[idx] = str(action.get("result") or "")
         self.current_raw_results[idx] = str(action.get("raw_result") or "")
         self.selected_index = idx
@@ -6008,7 +5988,6 @@ class ImageOcrExcelApp:
                 "更新前のセットが見つからないため、取り消せませんでした。"
             )
             return
-        self._ensure_current_results()
         results: dict[int, object] = action.get("results") or {}
         for idx, value in results.items():
             if 0 <= idx < len(self.current_results):
@@ -7131,7 +7110,6 @@ class ImageOcrExcelApp:
             result_idx = self.editor.index_of(entry_id)
             if self.original_image is not source_image or result_idx is None:
                 return
-            self._ensure_result_buffers()
             self.current_raw_results[result_idx] = raw_text
             self.current_results[result_idx] = text
             self.selected_index = result_idx
@@ -7147,39 +7125,6 @@ class ImageOcrExcelApp:
         self._run_background(
             f"{field.name} を認識テスト中です。", work, on_success, on_error
         )
-
-    def _ocr_all_current(self, show_errors: bool) -> bool:
-        if not self.original_image:
-            return False
-        self._ensure_result_buffers()
-        for idx, field in enumerate(self.fields):
-            if not field.enabled:
-                continue
-            raw_text, text = self._ocr_field_detail(
-                self.original_image, field, show_errors=show_errors
-            )
-            if text is None:
-                return False
-            self.current_raw_results[idx] = raw_text or ""
-            self.current_results[idx] = text
-        return True
-
-    def _ocr_field_detail(
-        self, image: Image.Image, field: TemplateField, show_errors: bool
-    ) -> tuple[str | None, str | None]:
-        raw_text, text, error = self.ocr_engine.recognize_field_detail(
-            image,
-            self._field_for_ocr(field),
-            self.lang_var.get(),
-            "",
-            self.profile.default_backend,
-            self.correction_rules,
-            self.coordinate_settings,
-            self.text_formatting,
-        )
-        if error and show_errors:
-            self.dialogs.showerror("OCRエラー", error)
-        return raw_text, text
 
     def _export_settings_dict(self) -> dict:
         return {
@@ -7462,13 +7407,6 @@ class ImageOcrExcelApp:
 
     def _enabled_fields(self) -> list[TemplateField]:
         return [field for field in self.fields if field.enabled]
-
-    def _ensure_current_results(self) -> None:
-        self._ensure_result_buffers()
-
-    def _ensure_result_buffers(self) -> None:
-        # Result views always have exactly one value per editor entry.
-        pass
 
     def _ensure_review_selection(self) -> None:
         if (

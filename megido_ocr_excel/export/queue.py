@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from megido_ocr_excel.export.excel import ExportResult
+    from megido_ocr_excel.export.rows import ExportResult
 
 
 STATUS_PENDING = "pending"
@@ -27,9 +27,11 @@ class ImageQueueItem:
 class ImageQueue:
     def __init__(self) -> None:
         self.items: list[ImageQueueItem] = []
+        self._by_path: dict[Path, ImageQueueItem] = {}
 
     def reset(self, paths: list[Path]) -> None:
         self.items = [ImageQueueItem(path) for path in paths]
+        self._by_path = {item.path: item for item in self.items}
 
     def included_files(self) -> list[Path]:
         return [item.path for item in self.items if item.included]
@@ -81,7 +83,4 @@ class ImageQueue:
             item.detail = record.errors[0].error if record.errors else ""
 
     def _find(self, path: Path) -> ImageQueueItem | None:
-        for item in self.items:
-            if item.path == path:
-                return item
-        return None
+        return self._by_path.get(path)

@@ -1,5 +1,47 @@
 # Python基盤とアプリ固有層
 
+## Processing and editing boundaries (2026-11-15)
+
+- `ocr/text.py` owns the text pipeline: formatting, correction rules, then
+  postprocessing. Recognition retains the original line breaks. Preview refreshes
+  and exports must call the same pipeline rather than reimplementing its stages.
+- `export/rows.py` owns image recognition, set resolution, format-neutral rows,
+  errors and notices. CSV does not depend on the Excel writer.
+- `export/job.py` snapshots request settings and emits start, image-complete,
+  saving and completion events. Excel, CSV and retries use the same execution
+  path. It does not read Tk variables or update widgets.
+- `export/session.py` owns output fingerprints, structural compatibility and
+  image-level retry planning. Each image retains its rows, including an empty
+  list on detection failure. Retrying replaces those results and recalculates
+  subsequent row offsets; it does not rerun successful images.
+- Writers own file-format behavior. Excel writes recognized values as strings,
+  validates worksheet bounds and creates uniquely named report sheets. A retry
+  removes only report sheets recorded by that export session. Append preserves
+  pre-existing report sheets and column widths.
+- Output fingerprints are checked both before retry and immediately before
+  atomic replacement. Cancellation is also checked after serialization. External
+  edits cause a refusal, not a merge based on stale row numbers. Retry metadata
+  is currently session-local, as is the existing retry UI; restarting the app
+  requires a fresh export.
+- Excel retries rewrite only the current batch's output rectangle. Adjacent
+  columns and earlier appended batches remain intact. Growth into occupied
+  cells is rejected rather than shifting unrelated workbook data or formulas.
+- `editing.py` owns field entries, stable session IDs, selection and raw/formatted
+  results together. Result values are views of entries, not parallel arrays.
+  Add, delete, reorder and undo use this state. IDs are not written into v1
+  templates. Background recognition resolves IDs again before applying results.
+- `ui/template_view.py`, `ui/review_view.py` and `ui/export_view.py` compose the
+  three workflow screens. The application still owns UI event handlers and the
+  canvas; the split is intentionally not a new generic UI framework. Recognition
+  result updates retain review widgets, and structural rebuilds preserve list
+  scroll positions.
+
+Regression coverage lives in `test_processing_foundation.py`,
+`test_export_safety.py` and `test_editing.py`, alongside the existing workflow,
+GUI, cancellation and private-sample tests. Real-model accuracy measurements are
+separate from those tests. Two speaker and two dialogue samples matched exactly
+after this refactor; this small smoke check is not a full accuracy benchmark.
+
 この文書は開発者向けです。利用方法は `README.md` と
 `docs/USER_GUIDE.md` に集約します。
 
