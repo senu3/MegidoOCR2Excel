@@ -22,6 +22,7 @@ from megido_ocr_excel.models import (
 )
 from megido_ocr_excel.operations import CancelCheck, raise_if_cancelled
 from megido_ocr_excel.persistence import atomic_write_text
+from megido_ocr_excel.export.session import (file_digest, assert_unchanged, structure_signature, seal_result, validate_retry, recognize_retry)
 
 
 class CsvExporter:
@@ -44,6 +45,8 @@ class CsvExporter:
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
         definition = resolve_export_set_definition(settings, set_definition)
+        original_digest = file_digest(output_path)
+        signature = structure_signature(settings, fields, definition)
         first_data_row = 2 if settings.include_header else 1
         rows, result = self.row_exporter.recognize_rows(
             image_files,
@@ -70,8 +73,8 @@ class CsvExporter:
         writer.writerows(rows)
 
         raise_if_cancelled(cancel_check)
-        atomic_write_text(output_path, output.getvalue(), encoding="utf-8-sig")
-        return result
+        atomic_write_text(output_path, output.getvalue(), encoding="utf-8-sig", before_replace=lambda: assert_unchanged(output_path, original_digest))
+        return seal_result(result, output_path, signature)
 
     def retry_failed(
         self,
@@ -87,91 +90,17 @@ class CsvExporter:
         cancel_check: CancelCheck | None = None,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
-        if not output_path.exists():
-            raise FileNotFoundError(f"再実行するCSVファイルがありません: {output_path}")
-
-        with output_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            output_rows = list(csv.reader(handle))
-
         definition = resolve_export_set_definition(settings, set_definition)
-        if settings.include_header:
-            expected_headers = self.row_exporter.headers(
-                fields,
-                settings,
-                definition,
-            )
-            if not output_rows or output_rows[0] != expected_headers:
-                raise ValueError(
-                    "CSVのヘッダーが前回の出力と一致しません。"
-                    "全画像を再出力してください。"
-                )
-        retry_targets = set(retry_files) if retry_files is not None else None
-        retry_records = [
-            record
-            for record in previous_result.failed_records
-            if retry_targets is None or record.image_path in retry_targets
-        ]
-        retry_paths = {record.image_path for record in retry_records}
-        errors: list[ExportError] = [
-            error
-            for record in previous_result.records
-            if record.image_path not in retry_paths
-            for error in record.errors
-        ]
-        notices: list[ExportNotice] = [
-            notice
-            for record in previous_result.records
-            if record.image_path not in retry_paths
-            for notice in record.notices
-        ]
-        updated_by_path: dict[Path, ImageExportRecord] = {}
-        total = len(retry_records)
-
-        for row_index, record in enumerate(retry_records, start=1):
-            raise_if_cancelled(cancel_check)
-            rows, image_errors, image_notices = (
-                self.row_exporter.recognize_image_rows(
-                    record.image_path,
-                    fields,
-                    settings,
-                    ocr_callback,
-                    definition,
-                    set_resolver,
-                    cancel_check,
-                )
-            )
-            if len(rows) != record.row_count:
-                raise ValueError(
-                    "出力レイアウトが前回の一括出力から変更されています。"
-                    "全画像を再出力してください。"
-                )
-            start_index = record.start_row - 1
-            end_index = start_index + record.row_count
-            if start_index < 0 or end_index > len(output_rows):
-                raise ValueError(
-                    "前回出力した行をCSV内で確認できません。"
-                    "全画像を再出力してください。"
-                )
-            output_rows[start_index:end_index] = rows
-            errors.extend(image_errors)
-            notices.extend(image_notices)
-            updated_by_path[record.image_path] = ImageExportRecord(
-                record.image_path,
-                record.start_row,
-                record.row_count,
-                image_errors,
-                image_notices,
-            )
-            if progress_callback:
-                progress_callback(row_index, total, record.image_path)
-
+        signature = structure_signature(settings, fields, definition)
+        validate_retry(previous_result, output_path, signature)
+        result = recognize_retry(self.row_exporter, previous_result, fields, settings, ocr_callback,
+                                 definition, set_resolver, retry_files, progress_callback, cancel_check)
         output = StringIO(newline="")
         writer = csv.writer(output, lineterminator="\r\n")
-        writer.writerows(output_rows)
+        if settings.include_header:
+            writer.writerow(self.row_exporter.headers(fields, settings, definition))
+        writer.writerows(row for record in result.records for row in record.rows)
         raise_if_cancelled(cancel_check)
-        atomic_write_text(output_path, output.getvalue(), encoding="utf-8-sig")
-        records = [
-            updated_by_path.get(record.image_path, record)
-            for record in previous_result.records
-        ]
-        return ExportResult(previous_result.total_images, errors, records, notices)
+        atomic_write_text(output_path, output.getvalue(), encoding="utf-8-sig",
+                          before_replace=lambda: assert_unchanged(output_path, previous_result.output_digest))
+        return seal_result(result, output_path, signature)

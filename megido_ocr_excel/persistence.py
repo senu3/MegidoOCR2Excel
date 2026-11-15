@@ -4,7 +4,7 @@ import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import Callable, Iterator, Protocol
 
 
 class WorkbookLike(Protocol):
@@ -12,7 +12,7 @@ class WorkbookLike(Protocol):
 
 
 @contextmanager
-def atomic_output_path(path: Path) -> Iterator[Path]:
+def atomic_output_path(path: Path, before_replace: Callable[[], None] | None = None) -> Iterator[Path]:
     """Yield a same-directory temporary path and replace the destination on success."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -25,21 +25,23 @@ def atomic_output_path(path: Path) -> Iterator[Path]:
     temp_path = Path(temp_name)
     try:
         yield temp_path
+        if before_replace is not None:
+            before_replace()
         os.replace(temp_path, path)
     finally:
         temp_path.unlink(missing_ok=True)
 
 
-def atomic_write_text(path: Path, value: str, encoding: str = "utf-8") -> None:
-    with atomic_output_path(path) as temp_path:
+def atomic_write_text(path: Path, value: str, encoding: str = "utf-8", *, before_replace: Callable[[], None] | None = None) -> None:
+    with atomic_output_path(path, before_replace) as temp_path:
         with temp_path.open("w", encoding=encoding, newline="") as handle:
             handle.write(value)
             handle.flush()
             os.fsync(handle.fileno())
 
 
-def atomic_save_workbook(workbook: WorkbookLike, path: Path) -> None:
-    with atomic_output_path(path) as temp_path:
+def atomic_save_workbook(workbook: WorkbookLike, path: Path, *, before_replace: Callable[[], None] | None = None) -> None:
+    with atomic_output_path(path, before_replace) as temp_path:
         workbook.save(temp_path)
         with temp_path.open("r+b") as handle:
             os.fsync(handle.fileno())

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
 from pathlib import Path
 from typing import Callable, cast
 
@@ -8,9 +8,9 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment
 from openpyxl.utils.cell import coordinate_to_tuple
 from openpyxl.worksheet.worksheet import Worksheet
-from PIL import Image
 
 from megido_ocr_excel.persistence import atomic_save_workbook
+from megido_ocr_excel.export.session import (file_digest, assert_unchanged, structure_signature, seal_result, validate_retry, recognize_retry)
 from megido_ocr_excel.models import (
     DEFAULT_SET_DEFINITION,
     EXPORT_LAYOUT_IMAGE_ROW,
@@ -44,10 +44,15 @@ def validate_export_settings(
         return None, "シート名は31文字以内で、次の文字は使えません: []:*?/\\"
 
     start_cell = start_cell.strip().upper() or "A1"
+    if not re.fullmatch(r"[A-Z]{1,3}[1-9][0-9]*", start_cell):
+        return None, "開始セルは A1 形式で入力してください。"
     try:
         start_row, start_col = coordinate_to_tuple(start_cell)
     except ValueError:
         return None, "開始セルは A1 形式で入力してください。"
+
+    if not (1 <= start_row <= 1048576 and 1 <= start_col <= 16384):
+        return None, "開始セルがExcelの有効範囲外です。"
 
     if write_mode not in {"上書き", "追記"}:
         write_mode = "上書き"
@@ -83,6 +88,9 @@ class ExcelExporter(RowRecognizer):
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
         definition = resolve_export_set_definition(settings, set_definition)
+        original_digest = file_digest(output_path)
+        signature = structure_signature(settings, fields, definition)
+        self._validate_bounds(settings.start_row, settings.start_col, len(self.headers(fields, settings, definition)))
         workbook, sheet, row_cursor = self._prepare_output_sheet(output_path, settings)
         headers = self.headers(fields, settings, definition)
         if settings.include_header and row_cursor == settings.start_row:
@@ -106,12 +114,11 @@ class ExcelExporter(RowRecognizer):
 
         raise_if_cancelled(cancel_check)
         self._fit_output_columns(sheet)
-        self._write_error_sheet(workbook, result.errors)
-        self._write_notice_sheet(workbook, result.notices)
+        result.report_sheets = self._write_reports(workbook, result)
 
         raise_if_cancelled(cancel_check)
-        atomic_save_workbook(workbook, output_path)
-        return result
+        atomic_save_workbook(workbook, output_path, before_replace=lambda: assert_unchanged(output_path, original_digest))
+        return seal_result(result, output_path, signature)
 
 
     def retry_failed(
@@ -129,77 +136,40 @@ class ExcelExporter(RowRecognizer):
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
         definition = resolve_export_set_definition(settings, set_definition)
-        if settings.output_layout == EXPORT_LAYOUT_SET and set_resolver is None:
-            set_error = set_validation_error(fields, definition)
-            if set_error:
-                raise ValueError(set_error)
-        if not output_path.exists():
-            raise FileNotFoundError(f"再実行するExcelファイルがありません: {output_path}")
+        signature = structure_signature(settings, fields, definition)
+        validate_retry(previous_result, output_path, signature)
+        result = recognize_retry(self, previous_result, fields, settings, ocr_callback,
+                                 definition, set_resolver, retry_files, progress_callback, cancel_check)
         workbook = load_workbook(output_path)
-        if settings.sheet_name not in workbook.sheetnames:
-            raise ValueError(f"再実行先のシートがありません: {settings.sheet_name}")
         sheet = workbook[settings.sheet_name]
-        retry_targets = set(retry_files) if retry_files is not None else None
-        retry_records = [
-            record for record in previous_result.failed_records
-            if retry_targets is None or record.image_path in retry_targets
-        ]
-        retry_paths = {record.image_path for record in retry_records}
-        errors = [error for record in previous_result.records if record.image_path not in retry_paths for error in record.errors]
-        notices = [notice for record in previous_result.records if record.image_path not in retry_paths for notice in record.notices]
-        updated_by_path: dict[Path, ImageExportRecord] = {}
-        total = len(retry_records)
-
-        for row_index, record in enumerate(retry_records, start=1):
-            raise_if_cancelled(cancel_check)
-            rows, image_errors, image_notices = self.recognize_image_rows(
-                record.image_path,
-                fields,
-                settings,
-                ocr_callback,
-                definition,
-                set_resolver,
-                cancel_check,
-            )
-            if len(rows) != record.row_count:
-                raise ValueError("出力レイアウトが前回の一括出力から変更されています。全画像を再出力してください。")
-            self._clear_record_rows(
-                sheet,
-                record,
-                settings.start_col,
-                len(self.headers(fields, settings, definition)),
-            )
-            for offset, row in enumerate(rows):
-                self._write_excel_row(sheet, record.start_row + offset, settings.start_col, row)
-            errors.extend(image_errors)
-            notices.extend(image_notices)
-            updated_by_path[record.image_path] = ImageExportRecord(
-                record.image_path,
-                record.start_row,
-                record.row_count,
-                image_errors,
-                image_notices,
-            )
-            if progress_callback:
-                progress_callback(row_index, total, record.image_path)
-
+        start_row = previous_result.records[0].start_row if previous_result.records else settings.start_row
+        old_count = sum(r.row_count for r in previous_result.records)
+        rows = [row for record in result.records for row in record.rows]
+        width = len(self.headers(fields, settings, definition))
+        self._validate_bounds(start_row + max(len(rows), 1) - 1, settings.start_col, width)
+        # Only our output rectangle is rewritten; adjacent user columns stay intact.
+        for row_index in range(start_row, start_row + max(old_count, len(rows))):
+            for column in range(settings.start_col, settings.start_col + width):
+                cell = sheet.cell(row_index, column)
+                if row_index >= start_row + old_count and cell.value is not None:
+                    raise ValueError("再実行結果の書き込み先に既存データがあります。別のファイルへ出力してください。")
+                cell.value = None
+        for offset, row in enumerate(rows):
+            self._write_excel_row(sheet, start_row + offset, settings.start_col, row)
+        # Names belong to this export session; the digest verifies ownership.
+        for name in previous_result.report_sheets:
+            if name in workbook.sheetnames:
+                workbook.remove(workbook[name])
+        result.report_sheets = self._write_reports(workbook, result)
         raise_if_cancelled(cancel_check)
-        self._fit_output_columns(sheet)
-        self._write_error_sheet(workbook, errors)
-        self._write_notice_sheet(workbook, notices)
-        raise_if_cancelled(cancel_check)
-        atomic_save_workbook(workbook, output_path)
-        records = [updated_by_path.get(record.image_path, record) for record in previous_result.records]
-        return ExportResult(previous_result.total_images, errors, records, notices)
+        atomic_save_workbook(workbook, output_path,
+                             before_replace=lambda: assert_unchanged(output_path, previous_result.output_digest))
+        return seal_result(result, output_path, signature)
 
-
-
-
-
-    def _clear_record_rows(self, sheet, record: ImageExportRecord, start_col: int, column_count: int) -> None:
-        for row in range(record.start_row, record.start_row + record.row_count):
-            for column in range(start_col, start_col + column_count):
-                sheet.cell(row=row, column=column).value = None
+    @staticmethod
+    def _validate_bounds(row: int, column: int, width: int) -> None:
+        if not (1 <= row <= 1048576 and 1 <= column and column + width - 1 <= 16384):
+            raise ValueError("出力範囲がExcelの有効範囲外です。")
 
     def _prepare_output_sheet(self, output_path: Path, settings: ExportSettings):
         if settings.write_mode == "追記" and output_path.exists():
@@ -230,39 +200,38 @@ class ExcelExporter(RowRecognizer):
 
 
     def _write_excel_row(self, sheet, row_index: int, start_col: int, values: list[str]) -> None:
+        self._validate_bounds(row_index, start_col, len(values))
         max_lines = 1
         for offset, value in enumerate(values):
             cell = sheet.cell(row=row_index, column=start_col + offset, value=value)
+            cell.data_type = "s"
+            cell.alignment = Alignment(wrap_text="\n" in value, vertical="top")
             line_count = str(value).count("\n") + 1
             max_lines = max(max_lines, line_count)
             if line_count > 1:
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
-        if max_lines > 1:
-            sheet.row_dimensions[row_index].height = max(15, 15 * max_lines)
+        sheet.row_dimensions[row_index].height = max(15, 15 * max_lines)
 
     def _fit_output_columns(self, sheet) -> None:
         for column_cells in sheet.columns:
             max_length = max(len(str(cell.value or "")) for cell in column_cells)
             sheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 12), 42)
 
-    def _write_error_sheet(self, workbook, errors: list[ExportError]) -> None:
-        if "Errors" in workbook.sheetnames:
-            workbook.remove(workbook["Errors"])
-        if not errors:
-            return
-        sheet = workbook.create_sheet("Errors")
-        sheet.append(["画像ファイル", "項目", "エラー"])
-        for error in errors:
-            sheet.append([error.image, error.field, error.error])
-        self._fit_output_columns(sheet)
-
-    def _write_notice_sheet(self, workbook, notices: list[ExportNotice]) -> None:
-        if "Notices" in workbook.sheetnames:
-            workbook.remove(workbook["Notices"])
-        if not notices:
-            return
-        sheet = workbook.create_sheet("Notices")
-        sheet.append(["画像ファイル", "処理通知"])
-        for notice in notices:
-            sheet.append([notice.image, notice.notice])
-        self._fit_output_columns(sheet)
+    def _write_reports(self, workbook, result: ExportResult) -> list[str]:
+        names = []
+        reports = [
+            ("Errors", ["画像ファイル", "項目", "エラー"],
+             [[e.image, e.field, e.error] for e in result.errors]),
+            ("Notices", ["画像ファイル", "処理通知"],
+             [[n.image, n.notice] for n in result.notices]),
+        ]
+        for title, headers, rows in reports:
+            if not rows:
+                continue
+            # openpyxl allocates a unique name, including case-insensitive collisions.
+            sheet = workbook.create_sheet(title)
+            names.append(sheet.title)
+            for index, row in enumerate([headers, *rows], 1):
+                self._write_excel_row(sheet, index, 1, row)
+            self._fit_output_columns(sheet)
+        return names

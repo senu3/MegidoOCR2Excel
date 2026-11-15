@@ -36,6 +36,11 @@ class ExportResult:
     records: list["ImageExportRecord"]
     notices: list["ExportNotice"] = field(default_factory=list)
 
+    output_digest: str = ""
+    output_path: str = ""
+    output_signature: tuple = ()
+    report_sheets: list[str] = field(default_factory=list)
+
     @property
     def failed_records(self) -> list["ImageExportRecord"]:
         return [record for record in self.records if record.errors]
@@ -48,6 +53,7 @@ class ImageExportRecord:
     row_count: int
     errors: list[ExportError]
     notices: list["ExportNotice"] = field(default_factory=list)
+    rows: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -122,6 +128,7 @@ class RowRecognizer:
                     len(rows),
                     image_errors,
                     image_notices,
+                    rows,
                 )
             )
             output_rows.extend(rows)
@@ -145,7 +152,8 @@ class RowRecognizer:
         cancel_check: CancelCheck | None = None,
     ) -> tuple[list[list[str]], list[ExportError], list[ExportNotice]]:
         try:
-            image = Image.open(image_path).convert("RGB")
+            with Image.open(image_path) as source:
+                image = source.convert("RGB")
         except Exception as exc:
             error = ExportError(image_path.name, "", f"画像を開けませんでした: {exc}")
             return self._blank_rows(
