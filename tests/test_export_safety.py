@@ -13,6 +13,27 @@ from megido_ocr_excel.set_definitions import CONVERSATION_SET_DEFINITION
 
 
 class ExportSafetyTests(unittest.TestCase):
+    def test_batch_job_freezes_settings_and_reports_phases(self):
+        from unittest.mock import Mock
+        from megido_ocr_excel.export.job import ExportJob
+        from megido_ocr_excel.models import CoordinateSettings, TextFormattingSettings
+        from megido_ocr_excel.operations import OperationCancelled
+        settings = ExportSettings()
+        job = ExportJob(self.root / 'job.csv', self.images, self.fields, settings,
+                        CONVERSATION_SET_DEFINITION, CoordinateSettings(), TextFormattingSettings(), [], 'eng', 'paddle')
+        self.fields[0].name = 'changed'
+        settings.include_header = False
+        engine = Mock()
+        engine.recognize_field.return_value = ('ok', None)
+        events = []
+        job.run(CsvExporter(), engine, events.append)
+        self.assertEqual([e.phase for e in events],
+                         ['started', 'image_completed', 'started', 'image_completed', 'saving', 'completed'])
+        self.assertEqual(job.fields[0].name, 'text')
+        self.assertTrue(job.settings.include_header)
+        with self.assertRaises(OperationCancelled):
+            job.run(CsvExporter(), engine, events.append, lambda: True)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

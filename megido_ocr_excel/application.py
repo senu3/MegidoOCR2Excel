@@ -46,6 +46,7 @@ from megido_ocr_excel.export.queue import (
     ImageQueueItem,
 )
 from megido_ocr_excel.export.csv import CsvExporter
+from megido_ocr_excel.export.job import ExportJob, BatchProgress
 from megido_ocr_excel.export.excel import (
     ExcelExporter,
     ExportResult,
@@ -7697,155 +7698,7 @@ class ImageOcrExcelApp:
         ):
             return
 
-        settings = self._build_csv_export_settings()
-        total = len(image_files)
-        self.progress_var.set(f"0 / {total}")
-        self.status_var.set("CSV出力を開始しました。")
-        image_files = list(image_files)
-        export_fields = [self._field_for_ocr(field) for field in fields]
-        coordinate_settings = replace(self.coordinate_settings)
-        lang = self.lang_var.get()
-        tesseract_path = ""
-        backend = self.profile.default_backend
-        correction_rules = [replace(rule) for rule in self.correction_rules]
-        auto_detection = self.profile.auto_detection
-        text_formatting = self.text_formatting
-        export_definition = self.set_definition
-        set_resolver = None
-        if (
-            auto_detection is not None
-            and settings.output_layout == EXPORT_LAYOUT_SET
-            and self.auto_detection_enabled
-            and export_definition.preset == self.profile.default_set_preset
-        ):
-            set_resolver = lambda image, detection_fields: cast(
-                SetDetectionResult,
-                auto_detection.resolve_sets(
-                    image,
-                    detection_fields,
-                    coordinate_settings,
-                ),
-            )
-
-        export_signature = self._export_structure_signature(export_fields, settings)
-        self._clear_retry_context()
-        self.image_queue.prepare(image_files)
-        for path in image_files:
-            self._refresh_queue_item_status(path)
-
-        def update_progress(
-            row_index: int, total_count: int, image_path: Path
-        ) -> None:
-            def apply_update() -> None:
-                self.image_queue.mark_processing(image_path)
-                self._refresh_queue_item_status(image_path)
-                self.progress_var.set(f"{row_index} / {total_count}")
-                self.status_var.set(f"OCR中: {image_path.name}")
-                self._update_loading(
-                    "CSVへ出力しています",
-                    note=f"{row_index} / {total_count} 画像\n{image_path.name}",
-                    progress=row_index / max(1, total_count),
-                )
-
-            self.root.after(0, apply_update)
-
-        def work():
-            return self.csv_exporter.export(
-                output_path,
-                image_files,
-                export_fields,
-                settings,
-                lambda image, field: self.ocr_engine.recognize_field(
-                    image,
-                    field,
-                    lang,
-                    tesseract_path,
-                    backend,
-                    correction_rules,
-                    coordinate_settings,
-                    text_formatting,
-                ),
-                update_progress,
-                set_definition=export_definition,
-                set_resolver=set_resolver,
-                cancel_check=self._is_operation_cancelled,
-            )
-
-        def on_success(result: ExportResult) -> None:
-            logger.info(
-                "CSV export result | images=%d | errors=%d | notices=%d",
-                result.total_images,
-                len(result.errors),
-                len(result.notices),
-            )
-            self.last_export_result = result
-            self.last_export_signature = export_signature
-            self.last_export_output_path = output_path
-            self.last_export_format = "csv"
-            self.image_queue.apply_result(result)
-            self._render_side_body()
-            if result.errors:
-                self.status_var.set(
-                    f"CSVへ出力しました（エラー {len(result.errors)} 件）: {output_path}"
-                )
-                self.dialogs.showwarning(
-                    "完了（エラーあり）",
-                    f"{result.total_images} 画像の処理が完了しました。"
-                    f"\nOCRエラー {len(result.errors)} 件はCSVで空欄になっています。"
-                    "\n該当画像は画像キューで確認できます。"
-                    + (
-                        f"\n除外通知: {len(result.notices)} 件"
-                        if result.notices
-                        else ""
-                    )
-                    + f"\n{output_path}",
-                )
-            else:
-                notice_suffix = (
-                    f"（除外通知 {len(result.notices)} 件）"
-                    if result.notices
-                    else ""
-                )
-                self.status_var.set(f"CSVへ出力しました{notice_suffix}: {output_path}")
-                self.dialogs.showinfo(
-                    "完了",
-                    f"{result.total_images} 画像をCSVへ出力しました。"
-                    + (
-                        f"\n除外通知: {len(result.notices)} 件"
-                        if result.notices
-                        else ""
-                    )
-                    + f"\n{output_path}",
-                )
-
-        def on_error(error: Exception) -> None:
-            self.image_queue.prepare(image_files)
-            self._render_side_body()
-            self.status_var.set("CSV出力に失敗しました。")
-            self.dialogs.showerror(
-                "出力エラー", f"CSVへ出力できませんでした。\n{error}"
-            )
-
-        def on_finally() -> None:
-            self.progress_var.set("")
-
-        def on_cancel() -> None:
-            self.image_queue.prepare(image_files)
-            self._render_side_body()
-            self.status_var.set(
-                "CSV出力をキャンセルしました。ファイルは変更されていません。"
-            )
-
-        self._run_background(
-            "CSVへ出力しています",
-            work,
-            on_success,
-            on_error,
-            on_finally,
-            on_cancel,
-            loading_note=f"0 / {total} 画像\n出力の準備をしています。",
-            loading_progress=0.0,
-        )
+        self._start_export("csv", output_path, image_files, fields, self._build_csv_export_settings())
 
     def export_to_excel(self, _event=None) -> None:
         fields = self._enabled_fields()
@@ -7890,147 +7743,7 @@ class ImageOcrExcelApp:
         ):
             return
 
-        total = len(image_files)
-        self.progress_var.set(f"0 / {total}")
-        self.status_var.set("Excel出力を開始しました。")
-        output_path = self.output_path
-        image_files = list(image_files)
-        export_fields = [self._field_for_ocr(field) for field in fields]
-        coordinate_settings = replace(self.coordinate_settings)
-        lang = self.lang_var.get()
-        tesseract_path = ""
-        backend = self.profile.default_backend
-        correction_rules = [replace(rule) for rule in self.correction_rules]
-        auto_detection = self.profile.auto_detection
-        text_formatting = self.text_formatting
-        export_definition = self.set_definition
-        set_resolver = None
-        if (
-            auto_detection is not None
-            and settings.output_layout == EXPORT_LAYOUT_SET
-            and self.auto_detection_enabled
-            and export_definition.preset == self.profile.default_set_preset
-        ):
-            set_resolver = lambda image, detection_fields: cast(
-                SetDetectionResult,
-                auto_detection.resolve_sets(
-                    image,
-                    detection_fields,
-                    coordinate_settings,
-                ),
-            )
-        export_signature = self._export_structure_signature(export_fields, settings)
-        self._clear_retry_context()
-        self.image_queue.prepare(image_files)
-        for path in image_files:
-            self._refresh_queue_item_status(path)
-
-        def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
-            def apply_update() -> None:
-                self.image_queue.mark_processing(image_path)
-                self._refresh_queue_item_status(image_path)
-                self.progress_var.set(f"{row_index} / {total_count}")
-                self.status_var.set(f"OCR中: {image_path.name}")
-                self._update_loading(
-                    "Excelへ出力しています",
-                    note=f"{row_index} / {total_count} 画像\n{image_path.name}",
-                    progress=row_index / max(1, total_count),
-                )
-
-            self.root.after(0, apply_update)
-
-        def work():
-            return self.excel_exporter.export(
-                output_path,
-                image_files,
-                export_fields,
-                settings,
-                lambda image, field: self.ocr_engine.recognize_field(
-                    image,
-                    field,
-                    lang,
-                    tesseract_path,
-                    backend,
-                    correction_rules,
-                    coordinate_settings,
-                    text_formatting,
-                ),
-                update_progress,
-                set_definition=export_definition,
-                set_resolver=set_resolver,
-                cancel_check=self._is_operation_cancelled,
-            )
-
-        def on_success(result: ExportResult) -> None:
-            logger.info(
-                "Excel export result | images=%d | errors=%d | notices=%d",
-                result.total_images,
-                len(result.errors),
-                len(result.notices),
-            )
-            self.last_export_result = result
-            self.last_export_signature = export_signature
-            self.last_export_output_path = output_path
-            self.last_export_format = "excel"
-            self.image_queue.apply_result(result)
-            self._render_side_body()
-            if result.errors:
-                self.status_var.set(
-                    f"Excelへ出力しました（エラー {len(result.errors)} 件）: {output_path}"
-                )
-                self.dialogs.showwarning(
-                    "完了（エラーあり）",
-                    f"{result.total_images} 画像の処理が完了しました。"
-                    f"\nエラー {len(result.errors)} 件は Errors シートに出力しました。"
-                    + (
-                        f"\n除外通知 {len(result.notices)} 件は Notices シートに出力しました。"
-                        if result.notices
-                        else ""
-                    )
-                    + f"\n{output_path}",
-                )
-            else:
-                notice_suffix = (
-                    f"（除外通知 {len(result.notices)} 件）" if result.notices else ""
-                )
-                self.status_var.set(f"Excelへ出力しました{notice_suffix}: {output_path}")
-                self.dialogs.showinfo(
-                    "完了",
-                    f"{result.total_images} 画像をExcelへ出力しました。"
-                    + (
-                        f"\n除外通知 {len(result.notices)} 件は Notices シートに出力しました。"
-                        if result.notices
-                        else ""
-                    )
-                    + f"\n{output_path}",
-                )
-
-        def on_error(error: Exception) -> None:
-            self.image_queue.prepare(image_files)
-            self._render_side_body()
-            self.status_var.set("Excel出力に失敗しました。")
-            self.dialogs.showerror(
-                "出力エラー", f"Excelへ出力できませんでした。\n{error}"
-            )
-
-        def on_finally() -> None:
-            self.progress_var.set("")
-
-        def on_cancel() -> None:
-            self.image_queue.prepare(image_files)
-            self._render_side_body()
-            self.status_var.set("Excel出力をキャンセルしました。ファイルは変更されていません。")
-
-        self._run_background(
-            "Excelへ出力しています",
-            work,
-            on_success,
-            on_error,
-            on_finally,
-            on_cancel,
-            loading_note=f"0 / {total} 画像\n出力の準備をしています。",
-            loading_progress=0.0,
-        )
+        self._start_export("excel", self.output_path, image_files, fields, settings)
 
     def retry_failed_images(self) -> None:
         if self.last_export_result is None or self.last_export_output_path is None:
@@ -8082,134 +7795,79 @@ class ImageOcrExcelApp:
         if not self._require_ocr_ready(self.retry_failed_images):
             return
 
-        output_path = self.last_export_output_path
-        previous_result = self.last_export_result
-        export_fields = [self._field_for_ocr(field) for field in fields]
-        coordinate_settings = replace(self.coordinate_settings)
-        lang = self.lang_var.get()
-        tesseract_path = ""
-        backend = self.profile.default_backend
-        correction_rules = [replace(rule) for rule in self.correction_rules]
-        auto_detection = self.profile.auto_detection
-        text_formatting = self.text_formatting
-        export_definition = self.set_definition
-        set_resolver = None
-        if (
-            auto_detection is not None
-            and settings.output_layout == EXPORT_LAYOUT_SET
-            and self.auto_detection_enabled
-            and export_definition.preset == self.profile.default_set_preset
-        ):
-            set_resolver = lambda image, detection_fields: cast(
-                SetDetectionResult,
-                auto_detection.resolve_sets(
-                    image,
-                    detection_fields,
-                    coordinate_settings,
-                ),
-            )
-        total = len(retry_files)
-        self.progress_var.set(f"0 / {total}")
-        self.status_var.set(f"失敗した {total} 画像を再実行します。")
-        self.image_queue.prepare(retry_files)
+        self._start_export(export_format, self.last_export_output_path, retry_files,
+                           fields, settings, self.last_export_result)
 
-        def update_progress(row_index: int, total_count: int, image_path: Path) -> None:
-            def apply_update() -> None:
-                self.image_queue.mark_processing(image_path)
-                self._refresh_queue_item_status(image_path)
-                self.progress_var.set(f"{row_index} / {total_count}")
-                self.status_var.set(f"再OCR中: {image_path.name}")
-                self._update_loading(
-                    "失敗した画像を再実行しています",
-                    note=f"{row_index} / {total_count} 画像\n{image_path.name}",
-                    progress=row_index / max(1, total_count),
+    def _start_export(self, export_format: str, output_path: Path, image_files: list[Path],
+                      fields: list[TemplateField], settings: ExportSettings,
+                      previous: ExportResult | None = None) -> None:
+        if self.busy:
+            return
+        detection = self.profile.auto_detection
+        if not self.auto_detection_enabled or self.set_definition.preset != self.profile.default_set_preset:
+            detection = None
+        job = ExportJob(output_path, image_files, [self._field_for_ocr(f) for f in fields],
+                        settings, self.set_definition, self.coordinate_settings,
+                        self.text_formatting, self.correction_rules, self.lang_var.get(),
+                        self.profile.default_backend, detection, previous)
+        signature = self._export_structure_signature(job.fields, job.settings)
+        exporter = self.csv_exporter if export_format == "csv" else self.excel_exporter
+        label = "CSV" if export_format == "csv" else "Excel"
+        message = "失敗した画像を再実行しています" if previous else f"{label}へ出力しています"
+        if previous is None:
+            self._clear_retry_context()
+        self.image_queue.prepare(image_files)
+
+        def progress(event: BatchProgress) -> None:
+            def update() -> None:
+                if event.phase == "started" and event.image_path is not None:
+                    self.image_queue.mark_processing(event.image_path)
+                if event.image_path is not None:
+                    self._refresh_queue_item_status(event.image_path)
+                detail = "保存しています" if event.phase == "saving" else (
+                    f"OCR中: {event.image_path.name}" if event.phase == "started" and event.image_path else "画像の認識が完了しました"
                 )
+                self.progress_var.set(f"{event.completed} / {event.total}")
+                self.status_var.set(detail)
+                self._update_loading(message, note=f"{event.completed} / {event.total} 画像\n{detail}",
+                                     progress=event.completed / max(1, event.total))
+            self.root.after(0, update)
 
-            self.root.after(0, apply_update)
-
-        def work():
-            exporter = (
-                self.csv_exporter
-                if export_format == "csv"
-                else self.excel_exporter
-            )
-            return exporter.retry_failed(
-                output_path,
-                previous_result,
-                export_fields,
-                settings,
-                lambda image, field: self.ocr_engine.recognize_field(
-                    image,
-                    field,
-                    lang,
-                    tesseract_path,
-                    backend,
-                    correction_rules,
-                    coordinate_settings,
-                    text_formatting,
-                ),
-                retry_files=retry_files,
-                progress_callback=update_progress,
-                set_definition=export_definition,
-                set_resolver=set_resolver,
-                cancel_check=self._is_operation_cancelled,
-            )
-
-        def on_success(result: ExportResult) -> None:
-            logger.info(
-                "%s retry result | retried=%d | remaining_errors=%d",
-                export_format.upper(),
-                total,
-                len(result.errors),
-            )
+        def success(result: ExportResult) -> None:
             self.last_export_result = result
+            self.last_export_signature = signature
+            self.last_export_output_path = output_path
+            self.last_export_format = export_format
             self.image_queue.apply_result(result)
             self._render_side_body()
-            remaining = len(self.image_queue.failed_files())
-            if remaining:
-                self.status_var.set(
-                    f"再実行が完了しました（要再実行 {remaining} 画像）: {output_path}"
-                )
-                self.dialogs.showwarning(
-                    "再実行完了",
-                    f"{total} 画像を再実行しました。\n要再実行: {remaining} 画像\n{output_path}",
-                )
+            self.status_var.set(f"{label}へ出力しました（エラー {len(result.errors)} 件）: {output_path}")
+            detail = f"{len(image_files)} 画像の処理が完了しました。\nエラー: {len(result.errors)} 件 / 通知: {len(result.notices)} 件"
+            if result.report_sheets:
+                detail += "\n確認用シート: " + "、".join(result.report_sheets)
+            elif result.errors:
+                detail += "\n該当画像は画像キューで確認できます。"
+            dialog = self.dialogs.showwarning if result.errors else self.dialogs.showinfo
+            dialog("完了（エラーあり）" if result.errors else "完了", detail + f"\n{output_path}")
+
+        def restore_queue() -> None:
+            if previous is not None:
+                self.image_queue.apply_result(previous)
             else:
-                self.status_var.set(f"失敗分の再実行が完了しました: {output_path}")
-                self.dialogs.showinfo(
-                    "再実行完了", f"{total} 画像の再実行が完了しました。\n{output_path}"
-                )
-
-        def on_error(error: Exception) -> None:
-            self.image_queue.apply_result(previous_result)
+                self.image_queue.prepare(image_files)
             self._render_side_body()
-            self.status_var.set("失敗分の再実行に失敗しました。")
-            self.dialogs.showerror(
-                "再実行エラー", f"失敗分を再実行できませんでした。\n{error}"
-            )
 
-        def on_finally() -> None:
-            self.progress_var.set("")
+        def error(exc: Exception) -> None:
+            restore_queue()
+            self.status_var.set(f"{label}出力に失敗しました。")
+            self.dialogs.showerror("出力エラー", str(exc))
 
-        def on_cancel() -> None:
-            self.image_queue.apply_result(previous_result)
-            self._render_side_body()
-            format_label = "CSV" if export_format == "csv" else "Excel"
-            self.status_var.set(
-                f"失敗分の再実行をキャンセルしました。"
-                f"{format_label}は変更されていません。"
-            )
+        def cancelled() -> None:
+            restore_queue()
+            self.status_var.set("出力をキャンセルしました。ファイルは変更されていません。")
 
-        self._run_background(
-            "失敗した画像を再実行しています",
-            work,
-            on_success,
-            on_error,
-            on_finally,
-            on_cancel,
-            loading_note=f"0 / {total} 画像\n再実行の準備をしています。",
-            loading_progress=0.0,
-        )
+        self._run_background(message, lambda: job.run(exporter, self.ocr_engine, progress, self._is_operation_cancelled),
+                             success, error, lambda: self.progress_var.set(""), cancelled,
+                             loading_note=f"0 / {len(image_files)} 画像\n出力の準備をしています。", loading_progress=0.0)
 
     def _validate_set_export(self, fields: list[TemplateField]) -> str | None:
         if self.export_layout_var.get() != EXPORT_LAYOUT_SET:
