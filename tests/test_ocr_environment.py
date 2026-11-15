@@ -179,7 +179,7 @@ class OcrEnvironmentProbeTests(unittest.TestCase):
             engine.verify_paddle_environment("jpn+eng")
 
         backend.recognize.assert_called_once()
-        backend.recognize_lines.assert_called_once()
+        self.assertEqual(backend.method_calls, [unittest.mock.call.recognize(unittest.mock.ANY, "jpn+eng")])
         self.assertIs(engine.paddle_backend, backend)
 
     def test_full_probe_reports_real_phases(self) -> None:
@@ -188,7 +188,7 @@ class OcrEnvironmentProbeTests(unittest.TestCase):
         with patch("megido_ocr_excel.ocr.engine.PaddleBackend", return_value=backend):
             OcrEngine().verify_paddle_environment("jpn+eng", on_phase=phases.append)
 
-        self.assertEqual(phases, ["recognize", "recognize_lines"])
+        self.assertEqual(phases, ["recognize"])
 
 
 class OcrSetupProcessRunnerTests(unittest.TestCase):

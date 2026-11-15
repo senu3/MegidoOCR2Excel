@@ -11,6 +11,19 @@ from megido_ocr_excel.ocr.text import process_text
 
 
 class TextPipelineTests(unittest.TestCase):
+    def test_missing_content_rect_is_cached_for_all_fields(self):
+        from megido_ocr_excel.models import CoordinateSettings, COORDINATE_SPACE_CONTENT
+        image = Image.new('RGB', (20, 20))
+        field = TemplateField('text', 0, 0, 10, 10, source_width=20, source_height=20)
+        settings = CoordinateSettings(coordinate_space=COORDINATE_SPACE_CONTENT,
+                                      source_content_rect=(0, 0, 20, 20))
+        engine = OcrEngine()
+        with patch('megido_ocr_excel.ocr.engine.detect_content_rect', return_value=None) as detect:
+            with patch.object(engine, 'recognize_prepared', return_value='text'):
+                for _ in range(3):
+                    engine.recognize_field_detail(image, field, backend='paddle', coordinate_settings=settings)
+        self.assertEqual(detect.call_count, 1)
+
     def test_rule_refresh_matches_export_for_every_format(self):
         field = TemplateField('text', 0, 0, 20, 20)
         for line_join in ('none', 'newline', 'fullwidth_space'):

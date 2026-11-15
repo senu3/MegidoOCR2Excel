@@ -5,8 +5,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Callable
 
-from megido_ocr_excel.export.excel import (
-    ExcelExporter,
+from megido_ocr_excel.export.rows import (
+    RowRecognizer,
     ExportError,
     ExportNotice,
     ExportResult,
@@ -27,8 +27,8 @@ from megido_ocr_excel.persistence import atomic_write_text
 class CsvExporter:
     """Write the same recognized rows as Excel export to a UTF-8 BOM CSV."""
 
-    def __init__(self, row_exporter: ExcelExporter | None = None) -> None:
-        self.row_exporter = row_exporter or ExcelExporter()
+    def __init__(self, row_exporter: RowRecognizer | None = None) -> None:
+        self.row_exporter = row_exporter or RowRecognizer()
 
     def export(
         self,

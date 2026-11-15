@@ -120,6 +120,7 @@ def scaled_field(
     image: Image.Image | None,
     coordinate_settings: CoordinateSettings | None = None,
     target_content_rect: tuple[int, int, int, int] | None = None,
+    *, content_rect_resolved: bool = False,
 ) -> TemplateField:
     region = field.normalized()
     if image is None or not region.source_width or not region.source_height:
@@ -128,7 +129,7 @@ def scaled_field(
     settings = (coordinate_settings or CoordinateSettings()).normalized()
     source_rect = settings.source_content_rect
     if settings.coordinate_space == COORDINATE_SPACE_CONTENT and source_rect:
-        target_rect = target_content_rect or detect_content_rect(image, settings)
+        target_rect = target_content_rect if content_rect_resolved else (target_content_rect or detect_content_rect(image, settings))
     else:
         target_rect = None
     if target_rect:
@@ -336,19 +337,11 @@ def extract_paddle_texts(result: Any) -> list[str]:
 class PaddleBackend:
     def __init__(self) -> None:
         self.instances: dict[str, Any] = {}
-        self.recognition_instances: dict[str, Any] = {}
 
     def recognize(self, image: Image.Image, lang: str) -> str:
         ocr = self._instance(lang)
         result = self._run_ocr(ocr, image)
         return "\n".join(extract_paddle_texts(result)).strip()
-
-    def recognize_lines(self, images: list[Image.Image], lang: str) -> str:
-        if not images:
-            return ""
-        recognition = self._recognition_instance(lang)
-        result = self._run_text_recognition(recognition, images)
-        return " ".join(text.strip() for text in extract_paddle_texts(result) if text.strip()).strip()
 
     def _instance(self, lang: str) -> Any:
         paddle_language = paddle_lang(lang)
@@ -384,34 +377,6 @@ class PaddleBackend:
             except Exception as exc:
                 last_error = exc
         raise RuntimeError(f"PaddleOCRの初期化に失敗しました: {last_error}")
-
-    def _recognition_instance(self, lang: str) -> Any:
-        key = paddle_lang(lang)
-        if key in self.recognition_instances:
-            return self.recognition_instances[key]
-        try:
-            os.environ.setdefault("PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT", "0")
-            with _quiet_paddle_import():
-                from paddleocr import TextRecognition
-        except ImportError as exc:
-            raise RuntimeError(
-                "PaddleOCRを読み込めません。アプリの再インストールまたはREADMEの実行方法を確認してください。"
-            ) from exc
-
-        candidates = [
-            {"model_name": "PP-OCRv6_medium_rec"},
-            {},
-        ]
-        last_error: Exception | None = None
-        for kwargs in candidates:
-            try:
-                with _quiet_paddle_import():
-                    instance = TextRecognition(**kwargs)
-                self.recognition_instances[key] = instance
-                return instance
-            except Exception as exc:
-                last_error = exc
-        raise RuntimeError(f"PaddleOCRの認識モデル初期化に失敗しました: {last_error}")
 
     def _run_ocr(self, ocr: Any, image: Image.Image) -> Any:
         image = image.convert("RGB")
@@ -454,17 +419,6 @@ class PaddleBackend:
                         continue
         return None
 
-    def _run_text_recognition(self, recognition: Any, images: list[Image.Image]) -> Any:
-        import numpy as np
-
-        inputs = [np.array(image.convert("RGB")) for image in images]
-        predict_method = getattr(recognition, "predict", None)
-        if not callable(predict_method):
-            raise RuntimeError("PaddleOCRの認識モデルを実行できません。")
-        try:
-            return predict_method(input=inputs, batch_size=max(1, len(inputs)))
-        except TypeError:
-            return predict_method(inputs, batch_size=max(1, len(inputs)))
 
 
 class OcrEngine:
@@ -491,15 +445,12 @@ class OcrEngine:
         lang: str = FALLBACK_LANG,
         on_phase: Callable[[str], None] | None = None,
     ) -> None:
-        """Initialize both PaddleOCR paths used by normal and line-split fields."""
+        """Verify the same PaddleOCR path used by all production fields."""
         backend = PaddleBackend()
         sample = Image.new("RGB", (320, 96), "white")
         if on_phase is not None:
             on_phase("recognize")
         backend.recognize(sample, lang)
-        if on_phase is not None:
-            on_phase("recognize_lines")
-        backend.recognize_lines([sample], lang)
         self.paddle_backend = backend
 
     def content_rect_for(self, image: Image.Image, settings: CoordinateSettings | None) -> tuple[int, int, int, int] | None:
@@ -532,7 +483,7 @@ class OcrEngine:
             pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
         target_content_rect = self.content_rect_for(image, coordinate_settings)
-        region = scaled_field(field, image, coordinate_settings, target_content_rect)
+        region = scaled_field(field, image, coordinate_settings, target_content_rect, content_rect_resolved=True)
         if (region.x2 - region.x1) < 1 or (region.y2 - region.y1) < 1:
             return None, None, "読み取り範囲が画像外、または小さすぎます。"
 

@@ -12,7 +12,6 @@ from megido_ocr_excel.ocr.setup import EVENT_PREFIX
 PHASE_MESSAGES = {
     "initialize": "モデル保存先を確認しています。",
     "recognize": "通常認識モデルを確認しています。不足している場合は取得します。",
-    "recognize_lines": "行認識モデルを確認しています。不足している場合は取得します。",
     "complete": "認識モデルの動作確認が完了しました。",
 }
 
