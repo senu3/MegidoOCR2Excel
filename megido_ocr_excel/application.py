@@ -37,6 +37,7 @@ from megido_ocr_excel.diagnostics import (
     install_exception_hooks,
     shutdown_logging,
 )
+from megido_ocr_excel.export.paths import downloads_folder, suggested_output
 from megido_ocr_excel.export.queue import (
     STATUS_EXCLUDED,
     STATUS_FAILED,
@@ -191,6 +192,7 @@ class ImageOcrExcelApp:
         self.current_image_index = -1
         self.source_folder: Path | None = None
         self.output_path: Path | None = None
+        self._automatic_output = True
         self.template_path: Path | None = None
         self.workflow_started = False
         self.auto_detection_enabled = False
@@ -2465,8 +2467,7 @@ class ImageOcrExcelApp:
         self._adopt_current_image_as_coordinate_source()
         self.image_queue.set_all(False)
         self.image_queue.set_included(path, True)
-        self.output_path = None
-        self.output_var.set("未選択")
+        self._set_default_output()
         self.export_result_filter = ""
         self._set_export_layout(EXPORT_LAYOUT_SET)
         self.mode_var.set(MODE_TEMPLATE)
@@ -3875,6 +3876,7 @@ class ImageOcrExcelApp:
             return False
         self.aspect_warnings = {}
         self.source_folder = folder
+        self._set_default_output()
         self.image_files = files
         self.image_queue.reset(files)
         logger.info("Image folder selected | images=%d", len(files))
@@ -4110,16 +4112,25 @@ class ImageOcrExcelApp:
             return "未選択"
         return f"{self.source_folder.name} / {len(self.image_files)}画像"
 
+    def _set_default_output(self) -> None:
+        self.output_path = suggested_output(self.source_folder, ".xlsx")
+        self._automatic_output = True
+        self.output_var.set(str(self.output_path))
+
     def select_output_file(self) -> None:
+        initial = self.output_path or suggested_output(self.source_folder, ".xlsx")
         file_name = filedialog.asksaveasfilename(
             title="Excel出力先を選択",
+            initialdir=str(initial.parent),
+            initialfile=initial.name,
             defaultextension=".xlsx",
             filetypes=[("Excel workbook", "*.xlsx")],
         )
         if not file_name:
             return
         self.output_path = Path(file_name)
-        self.output_var.set(self.output_path.name)
+        self._automatic_output = False
+        self.output_var.set(str(self.output_path))
         self._clear_retry_context(reset_queue=True)
         self._render_side_body()
 
@@ -4144,7 +4155,7 @@ class ImageOcrExcelApp:
                     else "テンプレートを保存"
                 ),
                 initialdir=(
-                    str(initial_path.parent) if initial_path is not None else None
+                    str(initial_path.parent if initial_path is not None else downloads_folder())
                 ),
                 initialfile=(
                     initial_path.name
@@ -4194,6 +4205,8 @@ class ImageOcrExcelApp:
     def load_template(self, _event=None) -> None:
         file_name = filedialog.askopenfilename(
             title="読み込むテンプレートを選択",
+            initialdir=str(self.template_path.parent if self.template_path else downloads_folder()),
+            initialfile=self.template_path.name if self.template_path else self.app_config.default_template_name,
             filetypes=[("JSON", "*.json"), ("すべてのファイル", "*.*")],
         )
         if not file_name:
@@ -7224,8 +7237,11 @@ class ImageOcrExcelApp:
         if not self._require_ocr_ready(self.export_to_csv):
             return
 
+        initial = suggested_output(self.source_folder, ".csv")
         file_name = filedialog.asksaveasfilename(
             title="CSV出力先を選択",
+            initialdir=str(initial.parent),
+            initialfile=initial.name,
             defaultextension=".csv",
             filetypes=[("CSV file", "*.csv")],
             confirmoverwrite=False,
@@ -7264,16 +7280,16 @@ class ImageOcrExcelApp:
             return
         if not self._require_ocr_ready(self.export_to_excel):
             return
-        if not self.output_path:
-            self.select_output_file()
-            if not self.output_path:
-                return
         settings, error = self._build_export_settings()
         if error or settings is None:
             self.dialogs.showerror(
                 "出力設定エラー", error or "Excel出力設定を確認してください。"
             )
             return
+        if self.output_path is None or (
+            self._automatic_output and settings.write_mode == "上書き" and self.output_path.exists()
+        ):
+            self._set_default_output()
         if (
             settings.write_mode == "上書き"
             and self.output_path.exists()
