@@ -189,7 +189,10 @@ def render_result(app, body) -> None:
     footer = ctk.CTkFrame(body, fg_color=COLOR_SURFACE_ALT)
     footer.pack(side=BOTTOM, fill="x", padx=10, pady=8)
     path = app.last_export_output_path
-    ctk.CTkLabel(footer, text=f"保存済み  ·  {path.name}", anchor="w",
+    saved = "保存済み"
+    if len(result.records) < result.total_images:
+        saved = f"途中保存  {len(result.records)} / {result.total_images} 枚"
+    ctk.CTkLabel(footer, text=f"{saved}  ·  {path.name}", anchor="w",
                  wraplength=300, font=UI_FONT_SMALL).pack(fill="x", padx=10, pady=4)
     ctk.CTkButton(footer, text="ブックを開く" if app.last_export_format == "excel" else "CSVを開く",
                   font=UI_FONT_SMALL, command=app.open_saved_output).pack(side="left", padx=8, pady=6)

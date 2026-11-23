@@ -8,7 +8,7 @@ from megido_ocr_excel.models import (
     DEFAULT_SET_DEFINITION, EXPORT_LAYOUT_IMAGE_ROW, EXPORT_LAYOUT_SET,
     SetDetectionResult, SetDefinition, TemplateField, set_groups, set_validation_error,
 )
-from megido_ocr_excel.operations import CancelCheck, raise_if_cancelled
+from megido_ocr_excel.operations import CancelCheck, OperationCancelled, raise_if_cancelled
 
 
 @dataclass
@@ -94,6 +94,7 @@ class RowRecognizer:
         set_definition: SetDefinition | None = None,
         set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
+        save_completed: bool = False,
     ) -> tuple[list[list[str]], ExportResult]:
         """Recognize images into format-neutral rows for spreadsheet exporters."""
         raise_if_cancelled(cancel_check)
@@ -111,16 +112,21 @@ class RowRecognizer:
         total = len(image_files)
 
         for row_index, image_path in enumerate(image_files, start=1):
-            raise_if_cancelled(cancel_check)
-            rows, image_errors, image_notices = self.recognize_image_rows(
-                image_path,
-                fields,
-                settings,
-                ocr_callback,
-                definition,
-                set_resolver,
-                cancel_check,
-            )
+            try:
+                raise_if_cancelled(cancel_check)
+                rows, image_errors, image_notices = self.recognize_image_rows(
+                    image_path,
+                    fields,
+                    settings,
+                    ocr_callback,
+                    definition,
+                    set_resolver,
+                    cancel_check,
+                )
+            except OperationCancelled:
+                if not save_completed or not records:
+                    raise
+                break
             records.append(
                 ImageExportRecord(
                     image_path,
@@ -138,7 +144,8 @@ class RowRecognizer:
             if progress_callback:
                 progress_callback(row_index, total, image_path)
 
-        raise_if_cancelled(cancel_check)
+        if not save_completed or not records:
+            raise_if_cancelled(cancel_check)
         return output_rows, ExportResult(total, errors, records, notices)
 
     def recognize_image_rows(

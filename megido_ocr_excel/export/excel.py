@@ -80,6 +80,7 @@ class ExcelExporter(RowRecognizer):
         set_definition: SetDefinition | None = None,
         set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
+        *, save_completed: bool = False,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
         definition = resolve_export_set_definition(settings, set_definition)
@@ -101,19 +102,20 @@ class ExcelExporter(RowRecognizer):
             progress_callback=progress_callback,
             set_definition=definition,
             set_resolver=set_resolver,
-            cancel_check=cancel_check,
+            cancel_check=cancel_check, save_completed=save_completed,
         )
+        commit_cancel = None if save_completed and result.records else cancel_check
         for row in rows:
             self._write_excel_row(sheet, row_cursor, settings.start_col, row)
             row_cursor += 1
 
-        raise_if_cancelled(cancel_check)
+        raise_if_cancelled(commit_cancel)
         if settings.write_mode != "追記" or not original_digest:
             self._fit_output_columns(sheet, settings.start_col, len(headers), settings.start_row)
         result.report_sheets = self._write_reports(workbook, result)
 
-        raise_if_cancelled(cancel_check)
-        atomic_save_workbook(workbook, output_path, before_replace=lambda: verify_commit(output_path, original_digest, cancel_check))
+        raise_if_cancelled(commit_cancel)
+        atomic_save_workbook(workbook, output_path, before_replace=lambda: verify_commit(output_path, original_digest, commit_cancel))
         return seal_result(result, output_path, signature)
 
 
@@ -129,13 +131,15 @@ class ExcelExporter(RowRecognizer):
         set_definition: SetDefinition | None = None,
         set_resolver: SetResolver | None = None,
         cancel_check: CancelCheck | None = None,
+        *, save_completed: bool = False,
     ) -> ExportResult:
         raise_if_cancelled(cancel_check)
         definition = resolve_export_set_definition(settings, set_definition)
         signature = structure_signature(settings, fields, definition)
         validate_retry(previous_result, output_path, signature)
         result = recognize_retry(self, previous_result, fields, settings, ocr_callback,
-                                 definition, set_resolver, retry_files, progress_callback, cancel_check)
+                                 definition, set_resolver, retry_files, progress_callback, cancel_check, save_completed)
+        commit_cancel = None if save_completed else cancel_check
         workbook = load_workbook(output_path)
         sheet = workbook[settings.sheet_name]
         start_row = previous_result.records[0].start_row if previous_result.records else settings.start_row
@@ -157,9 +161,9 @@ class ExcelExporter(RowRecognizer):
             if name in workbook.sheetnames:
                 workbook.remove(workbook[name])
         result.report_sheets = self._write_reports(workbook, result)
-        raise_if_cancelled(cancel_check)
+        raise_if_cancelled(commit_cancel)
         atomic_save_workbook(workbook, output_path,
-                             before_replace=lambda: verify_commit(output_path, previous_result.output_digest, cancel_check))
+                             before_replace=lambda: verify_commit(output_path, previous_result.output_digest, commit_cancel))
         return seal_result(result, output_path, signature)
 
     @staticmethod

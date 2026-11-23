@@ -333,6 +333,7 @@ class ImageOcrExcelApp:
         self._ocr_environment_ui_refresher = None
         self._pending_ocr_action = None
         self.ocr_setup_runner = OcrSetupProcessRunner()
+        self._saving_excel = False
         self._ocr_setup_operation = False
         self.hbar: ctk.CTkScrollbar | None = None
         self.vbar: ctk.CTkScrollbar | None = None
@@ -1063,11 +1064,6 @@ class ImageOcrExcelApp:
             self.loading_note_var.set(note)
         if progress is not None and self.loading_progress is not None:
             self.loading_progress.set(max(0.0, min(1.0, progress)))
-        if self.loading_modal is not None and self.loading_modal.visible:
-            # Keep the progress surface above the application while frequent
-            # queue/status redraws are performed during an export.
-            self.loading_modal.show(focus=self.loading_close_button)
-        self.root.update_idletasks()
 
     def _hide_loading(self) -> None:
         if self.loading_progress is not None:
@@ -1192,6 +1188,8 @@ class ImageOcrExcelApp:
                 "\nファイル出力中の場合、未完了の内容は保存されません。"
             )
         )
+        if self._saving_excel:
+            detail = "処理済みの画像を指定先のExcelに保存します。1枚も完了していない場合は保存しません。"
         if not self.dialogs.askyesno(
             "処理をキャンセル",
             f"現在の処理をキャンセルしますか？\n\n{detail}",
@@ -1214,6 +1212,8 @@ class ImageOcrExcelApp:
                 self.ocr_setup_note_label.configure(
                     text="モデル準備用プロセスを終了しています。"
                 )
+        elif self._saving_excel:
+            self.loading_note_var.set("処理を停止し、完了した画像があればExcelに保存します。")
         else:
             self.status_var.set("キャンセルを受け付けました。安全に停止しています。")
             self.loading_note_var.set("現在処理中の項目が終わるまでお待ちください。")
@@ -1351,8 +1351,8 @@ class ImageOcrExcelApp:
             if not self.dialogs.askyesno(
                 "処理中です",
                 "処理をキャンセルして終了しますか？\n\n"
-                "現在処理中の項目が終わり次第、安全に停止します。"
-                "\nファイル出力中の場合、未完了の内容は保存されません。",
+                + ("完了した画像があれば、Excelに保存して終了します。" if self._saving_excel
+                   else "現在処理中の項目が終わり次第、安全に停止します。"),
                 yes_text="キャンセルして終了",
                 no_text="戻る",
                 destructive=True,
@@ -7366,6 +7366,8 @@ class ImageOcrExcelApp:
 
         def progress(event: BatchProgress) -> None:
             def update() -> None:
+                if self._is_operation_cancelled():
+                    return
                 if event.phase == "started" and event.image_path is not None:
                     self.image_queue.mark_processing(event.image_path)
                 if event.image_path is not None:
@@ -7384,6 +7386,7 @@ class ImageOcrExcelApp:
             self.last_export_signature = signature
             self.last_export_output_path = output_path
             self.last_export_format = export_format
+            self.image_queue.prepare(image_files)
             self.image_queue.apply_result(result)
             self.mode_var.set(MODE_EXPORT)
             failed_paths = set(self.image_queue.failed_files())
@@ -7393,7 +7396,11 @@ class ImageOcrExcelApp:
             if records:
                 self.show_queue_image(records[0].image_path)
             self._render_side_body()
-            self.status_var.set(f"{label}へ保存しました: {output_path}")
+            count = len(result.records)
+            if count < result.total_images:
+                self.status_var.set(f"途中保存しました（{count} / {result.total_images} 画像）: {output_path}")
+            else:
+                self.status_var.set(f"{label}へ保存しました: {output_path}")
 
         def restore_queue() -> None:
             if previous is not None:
@@ -7411,8 +7418,13 @@ class ImageOcrExcelApp:
             restore_queue()
             self.status_var.set("出力をキャンセルしました。ファイルは変更されていません。")
 
+        def finished():
+            self._saving_excel = False
+            self.progress_var.set("")
+
+        self._saving_excel = export_format == "excel"
         self._run_background(message, lambda: job.run(exporter, self.ocr_engine, progress, self._is_operation_cancelled),
-                             success, error, lambda: self.progress_var.set(""), cancelled,
+                             success, error, finished, cancelled,
                              loading_note=f"0 / {len(image_files)} 画像\n出力の準備をしています。", loading_progress=0.0)
 
     def _validate_set_export(self, fields: list[TemplateField]) -> str | None:

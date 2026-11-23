@@ -1692,11 +1692,13 @@ class ModalConsistencyTests(unittest.TestCase):
             self.assertEqual(app.loading_progress.cget("mode"), "determinate")
             self.assertAlmostEqual(app.loading_progress.get(), 0.4)
 
-            app._update_loading(
-                "Excelへ出力しています",
-                note="3 / 5 画像\nb3.png",
-                progress=0.6,
-            )
+            with patch.object(app.loading_modal, "show") as reopen:
+                app._update_loading(
+                    "Excelへ出力しています",
+                    note="3 / 5 画像\nb3.png",
+                    progress=0.6,
+                )
+                reopen.assert_not_called()
             root.update()
 
             self.assertEqual(app.loading_note_var.get(), "3 / 5 画像\nb3.png")

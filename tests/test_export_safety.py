@@ -43,6 +43,50 @@ class ExportSafetyTests(unittest.TestCase):
             Image.new('RGB', (20, 20)).save(image)
         self.fields = [TemplateField('text', 0, 0, 10, 10)]
 
+    def test_excel_job_cancel_during_second_image_saves_only_first(self):
+        from unittest.mock import Mock
+        from megido_ocr_excel.export.job import ExportJob
+        from megido_ocr_excel.models import CoordinateSettings, TextFormattingSettings
+
+        output = self.root / "partial.xlsx"
+        workbook = Workbook()
+        workbook.active.title = "OCR"
+        workbook.active.append(["既存の行"])
+        workbook.save(output)
+        settings = ExportSettings(write_mode="追記")
+        job = ExportJob(output, self.images, self.fields, settings, CONVERSATION_SET_DEFINITION,
+                        CoordinateSettings(), TextFormattingSettings(), [], "eng", "paddle")
+        calls = 0
+        def recognize(*args):
+            nonlocal calls
+            calls += 1
+            return f"result {calls}", None
+
+        engine = Mock()
+        engine.recognize_field.side_effect = recognize
+        events = []
+        result = job.run(ExcelExporter(), engine, events.append, lambda: calls == 2)
+        self.assertEqual([r.image_path for r in result.records], self.images[:1])
+        self.assertEqual((events[-1].completed, events[-1].total), (1, 2))
+        saved = load_workbook(output)
+        self.assertEqual(list(saved.active.values), [("既存の行", None), ("a.png", "result 1")])
+        saved.close()
+
+    def test_partial_save_preserves_existing_workbook_if_no_image_completed(self):
+        from megido_ocr_excel.operations import OperationCancelled
+        output = self.root / "existing.xlsx"
+        Workbook().save(output)
+        original = output.read_bytes()
+        cancelled = False
+        def recognize(*args):
+            nonlocal cancelled
+            cancelled = True
+            return "unfinished", None
+        with self.assertRaises(OperationCancelled):
+            ExcelExporter().export(output, self.images, self.fields, ExportSettings(), recognize,
+                                  cancel_check=lambda: cancelled, save_completed=True)
+        self.assertEqual(output.read_bytes(), original)
+
     def test_existing_reports_and_formula_like_text_are_preserved(self):
         output = self.root / 'out.xlsx'
         wb = Workbook()

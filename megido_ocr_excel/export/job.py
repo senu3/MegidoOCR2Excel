@@ -53,7 +53,11 @@ class ExportJob:
         total = len(paths)
         progress(BatchProgress('started', 0, total, paths[0] if paths else None))
 
+        completed_count = 0
+
         def completed(count: int, _total: int, path: Path) -> None:
+            nonlocal completed_count
+            completed_count = count
             progress(BatchProgress('image_completed', count, total, path))
             if count < total:
                 progress(BatchProgress('started', count, total, paths[count]))
@@ -69,12 +73,13 @@ class ExportJob:
         detection = self.detection
         if detection is not None and self.settings.output_layout == EXPORT_LAYOUT_SET:
             resolver = lambda image, fields: detection.resolve_sets(image, fields, self.coordinates)
+        options = {"save_completed": True} if isinstance(exporter, ExcelExporter) else {}
         if self.previous is None:
             result = exporter.export(self.output_path, paths, self.fields, self.settings, recognize, progress_callback=completed, set_definition=self.definition,
-                                     set_resolver=resolver, cancel_check=cancel_check)
+                                     set_resolver=resolver, cancel_check=cancel_check, **options)
         else:
             result = exporter.retry_failed(self.output_path, self.previous, self.fields, self.settings,
                                            recognize, retry_files=paths, progress_callback=completed, set_definition=self.definition,
-                                           set_resolver=resolver, cancel_check=cancel_check)
-        progress(BatchProgress('completed', total, total))
+                                           set_resolver=resolver, cancel_check=cancel_check, **options)
+        progress(BatchProgress('completed', completed_count, total))
         return result

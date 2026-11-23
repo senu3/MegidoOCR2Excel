@@ -5,7 +5,7 @@ import hashlib
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from megido_ocr_excel.export.rows import ExportResult, ImageExportRecord, RowRecognizer
+from megido_ocr_excel.export.rows import ExportResult, RowRecognizer
 from megido_ocr_excel.operations import raise_if_cancelled
 
 
@@ -53,19 +53,16 @@ def validate_retry(result: ExportResult, path: Path, signature: tuple) -> None:
 
 def recognize_retry(recognizer: RowRecognizer, previous: ExportResult, fields, settings,
                     ocr_callback, definition, set_resolver=None, retry_files=None,
-                    progress_callback=None, cancel_check=None) -> ExportResult:
+                    progress_callback=None, cancel_check=None, save_completed=False) -> ExportResult:
     targets = set(retry_files) if retry_files is not None else None
     retries = [r for r in previous.failed_records if targets is None or r.image_path in targets]
-    updated = {}
-    for index, record in enumerate(retries, 1):
-        raise_if_cancelled(cancel_check)
-        rows, errors, notices = recognizer.recognize_image_rows(
-            record.image_path, fields, settings, ocr_callback, definition, set_resolver, cancel_check,
-        )
-        updated[record.image_path] = ImageExportRecord(record.image_path, 0, len(rows), errors, notices, rows)
-        if progress_callback:
-            progress_callback(index, len(retries), record.image_path)
-    raise_if_cancelled(cancel_check)
+    paths = [record.image_path for record in retries]
+    _, recognized = recognizer.recognize_rows(
+        paths, fields, settings, ocr_callback, set_definition=definition,
+        set_resolver=set_resolver, progress_callback=progress_callback,
+        cancel_check=cancel_check, save_completed=save_completed,
+    )
+    updated = {record.image_path: record for record in recognized.records}
     cursor = previous.records[0].start_row if previous.records else 1
     records = []
     for old in previous.records:
