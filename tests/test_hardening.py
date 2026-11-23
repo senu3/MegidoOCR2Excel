@@ -425,31 +425,28 @@ class WorkflowChoiceTests(unittest.TestCase):
             app._render_side_body()
             first_row = app.field_row_by_index[0]
             scroller = app.review_result_scroller
-            with (
-                patch.object(app, "_review_scroll_fraction", return_value=0.35),
-                patch.object(app, "_restore_review_scroll") as restore_scroll,
-            ):
-                app.select_review_field(1)
-                root.update_idletasks()
-
-            descendants = []
-            pending = list(app.review_detail_host.winfo_children())
-            while pending:
-                widget = pending.pop()
-                descendants.append(widget)
-                pending.extend(widget.winfo_children())
-            textboxes = [
-                widget for widget in descendants if isinstance(widget, ctk.CTkTextbox)
-            ]
-
+            app.select_review_field(1)
+            root.update_idletasks()
+            self.assertFalse(any(isinstance(w, ctk.CTkOptionMenu)
+                                 for w in descendants_of(scroller)))
+            row = app.field_row_by_index[1]
+            toggle = next(w for w in row.winfo_children() if isinstance(w, ctk.CTkButton))
+            toggle.invoke()
+            app.select_review_field(0)
+            with patch.object(app, "ocr_field_at") as test_field:
+                next(w for w in descendants_of(row) if isinstance(w, ctk.CTkButton)
+                     and w.cget("text") == "この項目をテスト").invoke()
+                test_field.assert_called_once_with(1)
+            toggle.invoke()
+            self.assertFalse(any(isinstance(w, ctk.CTkOptionMenu) for w in descendants_of(row)))
+            app.select_review_field(1)
             self.assertTrue(app.side_body.winfo_children())
             self.assertIsNot(app.side_body, previous_body)
             self.assertFalse(previous_body.winfo_exists())
             self.assertEqual(app.selected_index, 1)
             self.assertIs(app.field_row_by_index[0], first_row)
             self.assertIs(app.review_result_scroller, scroller)
-            restore_scroll.assert_called_once_with(0.35)
-            self.assertEqual(textboxes[0].get("1.0", "end-1c"), "候補結果")
+            self.assertEqual(app.review_value_labels[1].cget("text"), "候補結果")
             self.assertFalse(app.dirty)
             with patch.object(root, "destroy") as destroy:
                 app.request_close()
@@ -487,15 +484,11 @@ class WorkflowChoiceTests(unittest.TestCase):
                 for widget in descendants
                 if isinstance(widget, ctk.CTkLabel)
             ]
-            textboxes = [
-                widget for widget in descendants if isinstance(widget, ctk.CTkTextbox)
-            ]
-
             self.assertNotIn("生OCR", labels)
-            self.assertEqual(len(textboxes), 1)
-            self.assertEqual(
-                textboxes[0].get("1.0", "end-1c"), "一行目　二行目"
-            )
+            self.assertIn("一行目　二行目", labels)
+            self.assertNotIn("一行目\n二行目", labels)
+            self.assertTrue(any(isinstance(w, ctk.CTkLabel) and w.cget("image") is not None
+                                for w in descendants_of(app.field_row_by_index[0])))
         finally:
             destroy_tk_root(root)
 
@@ -533,18 +526,18 @@ class WorkflowChoiceTests(unittest.TestCase):
 
             self.assertIn(THEME.copy.recognition_test_note, labels)
             self.assertIn("テキスト整形：全角空白・全角化", labels)
-            self.assertEqual(row_labels, ["#1", "話者", "未テスト"])
+            self.assertEqual(row_labels, ["#1", "話者"])
+            self.assertEqual(app.review_value_labels[0].cget("text"), "未テスト")
             app.current_results[0] = "話者の結果"
             app._refresh_recognition_results()
-            self.assertEqual(app.review_textbox.get("1.0", "end-1c"), "話者の結果")
             self.assertEqual(app.review_value_labels[0].cget("text"), "話者の結果")
             app.current_results[0] = ""
             app.editor.entries[0].tested = True
             app._refresh_recognition_results()
-            self.assertEqual(app.review_textbox.get("1.0", "end-1c"), "文字なし")
+            self.assertEqual(app.review_value_labels[0].cget("text"), "文字なし")
             self.assertIn("全項目をテスト", [button.cget("text") for button in buttons])
-            self.assertIn(
-                "選択項目をテスト", [button.cget("text") for button in buttons]
+            self.assertNotIn(
+                "この項目をテスト", [button.cget("text") for button in buttons]
             )
             batch_button = next(
                 button for button in buttons if button.cget("text") == "全項目をテスト"

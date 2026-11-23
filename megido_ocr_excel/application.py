@@ -293,8 +293,6 @@ class ImageOcrExcelApp:
         )
         self.review_raw_preview_var = StringVar(value="未OCR")
         self.review_processed_preview_var = StringVar(value="未OCR")
-        self.review_line_split_var = StringVar(value=OCR_MODE_OPTIONS[0])
-        self.review_crop_preview: ctk.CTkImage | None = None
         self.queue_include_vars: dict[Path, BooleanVar] = {}
         self.queue_status_labels: dict[Path, ctk.CTkLabel] = {}
         self.queue_summary_var = StringVar(value="処理対象 0 / 0")
@@ -308,7 +306,6 @@ class ImageOcrExcelApp:
         self.template_toolbar: ctk.CTkFrame | None = None
         self.template_save_button: ctk.CTkButton | None = None
         self.template_more_button: ctk.CTkButton | None = None
-        self.review_detail_host: ctk.CTkFrame | None = None
         self.review_result_scroller: AutoHideScrollableFrame | None = None
         self.correction_rules_host: ctk.CTkFrame | None = None
         self.template_fields_scroller: AutoHideScrollableFrame | None = None
@@ -1403,7 +1400,6 @@ class ImageOcrExcelApp:
         self.review_value_labels = {}
         self.review_order_label_by_index = {}
         self._step_result_image = None
-        self.review_detail_host = None
         self.review_result_scroller = None
         self.correction_rules_host = None
         self.template_fields_scroller = None
@@ -1878,44 +1874,41 @@ class ImageOcrExcelApp:
             row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT
         ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
 
-        value_label = ctk.CTkLabel(
-            row, text=self._compact_preview_text(self._review_text(idx)),
-            anchor="w", justify="left", wraplength=230, font=UI_FONT_SMALL,
-        )
-        value_label.grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 5))
+        comparison = ctk.CTkFrame(row, fg_color="transparent")
+        comparison.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
+        region = self._scaled_field(field).normalized()
+        crop = None
+        if region.x2 > region.x1 and region.y2 > region.y1:
+            crop = self.original_image.crop((region.x1, region.y1, region.x2, region.y2))
+        value_label = review_view.render_comparison(comparison, crop, self._review_text(idx),
+                                                    field.ocr_line_split == "detected")
         self.review_value_labels[idx] = value_label
 
-        for widget in [row, *row.winfo_children()]:
-            widget.bind("<Button-1>", lambda _event, i=idx: self.select_review_field(i))
+        for widget in [row, *row.winfo_children(), *comparison.winfo_children()]:
+            widget.bind("<Button-1>", lambda _event: self.select_review_field(idx))
 
-    def _render_postprocess_panel(self, parent) -> None:
-        idx = self.selected_index
-        if (
-            idx is None
-            or not (0 <= idx < len(self.fields))
-            or not self.fields[idx].enabled
-        ):
-            self._empty_state(
-                parent,
-                "確認対象がありません",
-                "有効な項目を選択",
-                icon="circle",
-            )
-            return
+        settings = None
 
-        panel = ctk.CTkFrame(
-            parent,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE_ALT,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        panel.pack(fill="x", padx=16, pady=(0, 12))
+        def toggle_settings():
+            nonlocal settings
+            if settings is not None:
+                settings.destroy()
+                settings = None
+                toggle.configure(text="設定 ▾")
+                return
+            self.select_review_field(idx)
+            settings = ctk.CTkFrame(row, fg_color=COLOR_SURFACE_ALT)
+            settings.grid(row=2, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
+            self._render_review_settings(settings, idx)
+            toggle.configure(text="設定 ▴")
+
+        toggle = ctk.CTkButton(row, text="設定 ▾", width=62, height=26, font=UI_FONT_SMALL,
+                               fg_color=COLOR_SECONDARY, hover_color=COLOR_SECONDARY_HOVER,
+                               command=toggle_settings)
+        toggle.grid(row=0, column=2, padx=8, pady=4)
+
+    def _render_review_settings(self, panel, idx: int) -> None:
         panel.grid_columnconfigure(1, weight=1)
-
-        self._update_review_detail_values()
-        self._result_preview(panel)
-
         ctk.CTkLabel(
             panel,
             text="OCR方式",
@@ -1923,11 +1916,10 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
         ).grid(row=1, column=0, sticky="w", padx=(12, 8), pady=2)
-        ctk.CTkOptionMenu(
+        method = ctk.CTkOptionMenu(
             panel,
-            variable=self.review_line_split_var,
             values=OCR_MODE_OPTIONS,
-            command=self.set_selected_field_line_split,
+            command=lambda value: self.set_field_line_split(idx, value),
             height=THEME.layout.entry_height,
             font=UI_FONT_SMALL,
             fg_color=COLOR_SECONDARY,
@@ -1936,13 +1928,15 @@ class ImageOcrExcelApp:
             dropdown_fg_color=COLOR_SURFACE_ALT,
             dropdown_hover_color=COLOR_SECONDARY_HOVER,
             text_color=COLOR_TEXT,
-        ).grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=2)
+        )
+        method.set(self._line_split_display(self.fields[idx].ocr_line_split))
+        method.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=2)
         ctk.CTkButton(
             panel,
-            text="選択項目をテスト",
+            text="この項目をテスト",
             image=ICONS.get("scan", 16, COLOR_TEXT),
             compound="left",
-            command=self.ocr_selected_field,
+            command=lambda: self.ocr_field_at(idx),
             height=THEME.layout.entry_height,
             corner_radius=THEME.layout.control_radius,
             font=UI_FONT_SMALL,
@@ -1952,10 +1946,14 @@ class ImageOcrExcelApp:
             border_color=COLOR_BORDER,
         ).grid(row=2, column=0, columnspan=2, sticky="ew", padx=12, pady=(6, 12))
         if self._is_review_candidate(self.fields[idx]):
+            def edit_range():
+                self.select_review_field(idx)
+                self.edit_selected_field_range()
+
             ctk.CTkButton(
                 panel,
                 text="範囲を修正する",
-                command=self.edit_selected_field_range,
+                command=edit_range,
                 height=THEME.layout.entry_height,
                 corner_radius=THEME.layout.control_radius,
                 font=UI_FONT_SMALL,
@@ -1973,87 +1971,9 @@ class ImageOcrExcelApp:
                 pady=(0, 12),
             )
 
-    def _result_preview(self, parent) -> None:
-        preview = ctk.CTkFrame(
-            parent,
-            corner_radius=THEME.layout.panel_radius,
-            fg_color=COLOR_SURFACE,
-            border_width=1,
-            border_color=COLOR_BORDER,
-        )
-        preview.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 6))
-        preview.grid_columnconfigure(0, weight=1)
-        crop_image = self._selected_field_crop_preview()
-        if crop_image is not None:
-            ctk.CTkLabel(
-                preview,
-                text="",
-                image=crop_image,
-                height=112,
-                fg_color=COLOR_CANVAS_BG,
-                corner_radius=4,
-            ).grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 6))
-        else:
-            ctk.CTkLabel(
-                preview,
-                text="範囲プレビューを表示できません",
-                height=112,
-                font=UI_FONT_SMALL,
-                text_color=COLOR_MUTED,
-            ).grid(row=0, column=0, sticky="ew", padx=8, pady=(12, 8))
-
-        ctk.CTkLabel(
-            preview,
-            text="認識結果",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 2))
-        self.review_textbox = self._readonly_textbox(preview, self._review_text(self.selected_index), row=2, height=72)
-
     def _review_text(self, idx: int) -> str:
         entry = self.editor.entries[idx]
         return entry.text or ("文字なし" if entry.tested else "未テスト")
-
-    def _selected_field_crop_preview(self) -> ctk.CTkImage | None:
-        if (
-            self.original_image is None
-            or self.selected_index is None
-            or not (0 <= self.selected_index < len(self.fields))
-        ):
-            self.review_crop_preview = None
-            return None
-        region = self._scaled_field(self.fields[self.selected_index]).normalized()
-        if region.x2 <= region.x1 or region.y2 <= region.y1:
-            self.review_crop_preview = None
-            return None
-        crop = self.original_image.crop((region.x1, region.y1, region.x2, region.y2))
-        max_width, max_height = 320, 112
-        scale = min(max_width / crop.width, max_height / crop.height, 1.0)
-        display_size = (
-            max(1, round(crop.width * scale)),
-            max(1, round(crop.height * scale)),
-        )
-        self.review_crop_preview = ctk.CTkImage(
-            light_image=crop, dark_image=crop, size=display_size
-        )
-        return self.review_crop_preview
-
-    def _readonly_textbox(self, parent, value: str, row: int, height: int) -> ctk.CTkTextbox:
-        textbox = ctk.CTkTextbox(
-            parent,
-            height=height,
-            wrap="word",
-            font=UI_FONT_SMALL,
-            fg_color=COLOR_INPUT,
-            border_width=1,
-            border_color=COLOR_BORDER,
-            text_color=COLOR_TEXT,
-        )
-        textbox.grid(row=row, column=0, sticky="ew", padx=8, pady=(0, 8))
-        textbox.insert("1.0", value)
-        textbox.configure(state="disabled")
-        return textbox
 
     # Future correction-rule editor scaffold.
     # Intentionally not rendered from _render_review_mode while the UX is being redesigned.
@@ -5262,7 +5182,7 @@ class ImageOcrExcelApp:
                 self._refresh_review_row(previous)
             self._refresh_review_row(idx)
         if update_review_detail and self.mode_var.get() == MODE_REVIEW:
-            self._refresh_review_detail_panel()
+            self._update_review_detail_values()
         if redraw_canvas:
             self.redraw()
 
@@ -5278,7 +5198,7 @@ class ImageOcrExcelApp:
     def _refresh_review_row(self, idx: int) -> None:
         label = self.review_value_labels.get(idx)
         if label is not None and label.winfo_exists():
-            label.configure(text=self._compact_preview_text(self._review_text(idx)))
+            label.configure(text=self._review_text(idx))
         row = self.field_row_by_index.get(idx)
         if row is not None and row.winfo_exists():
             selected = idx == self.selected_index
@@ -5297,60 +5217,18 @@ class ImageOcrExcelApp:
                     else COLOR_SECONDARY
                 )
             )
-    def _refresh_review_detail_panel(self) -> None:
-        if (
-            self.review_detail_host is None
-            or not self.review_detail_host.winfo_exists()
-        ):
-            return
-        scroll_fraction = self._review_scroll_fraction()
-        for child in self.review_detail_host.winfo_children():
-            child.destroy()
-        self._render_postprocess_panel(self.review_detail_host)
-        if scroll_fraction is not None:
-            self.root.after_idle(
-                lambda fraction=scroll_fraction: self._restore_review_scroll(fraction)
-            )
-
-    def _review_scroll_fraction(self) -> float | None:
-        scroller = self.review_result_scroller
-        if scroller is None or not scroller.winfo_exists():
-            return None
-        try:
-            return float(scroller._parent_canvas.yview()[0])
-        except (AttributeError, TclError, IndexError):
-            return None
-
-    def _restore_review_scroll(self, fraction: float) -> None:
-        scroller = self.review_result_scroller
-        if scroller is None or not scroller.winfo_exists():
-            return
-        try:
-            scroller._parent_canvas.yview_moveto(fraction)
-        except (AttributeError, TclError):
-            return
-
     def _update_review_detail_values(self) -> None:
         idx = self.selected_index
         if idx is None or not (0 <= idx < len(self.fields)):
             self.review_raw_preview_var.set("未OCR")
             self.review_processed_preview_var.set("未OCR")
-            self.review_line_split_var.set(OCR_MODE_OPTIONS[0])
             return
-        field = self.fields[idx]
-        textbox = getattr(self, "review_textbox", None)
-        if textbox is not None and textbox.winfo_exists():
-            textbox.configure(state="normal")
-            textbox.delete("1.0", "end")
-            textbox.insert("1.0", self._review_text(idx))
-            textbox.configure(state="disabled")
         self.review_raw_preview_var.set(
             self._compact_preview_text(self.current_raw_results[idx] or "未OCR")
         )
         self.review_processed_preview_var.set(
             self._compact_preview_text(self.current_results[idx] or "未OCR")
         )
-        self.review_line_split_var.set(self._line_split_display(field.ocr_line_split))
 
     def set_field_enabled(self, idx: int, enabled: bool) -> None:
         if not (0 <= idx < len(self.fields)) or self.fields[idx].enabled == enabled:

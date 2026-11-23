@@ -22,7 +22,6 @@ from megido_ocr_excel.ui.workflow_style import (
 )
 from tkinter import (
     BOTH,
-    BOTTOM,
     TOP,
 )
 
@@ -103,9 +102,36 @@ def render(app: ImageOcrExcelApp) -> None:
             continue
         app._review_result_row(scroller, idx)
 
-    app.review_detail_host = ctk.CTkFrame(
-        body, corner_radius=0, fg_color=COLOR_SURFACE
-    )
-    app.review_detail_host.pack(side=BOTTOM, fill="x")
-    app._render_postprocess_panel(app.review_detail_host)
 
+
+def render_comparison(parent, crop, text, multiline):
+    image = ctk.CTkImage(light_image=crop, size=(1, 1)) if crop is not None else None
+    preview = ctk.CTkLabel(parent, text="" if image else "範囲画像なし", image=image,
+                           width=1, height=28, fg_color=THEME.palette.canvas_bg,
+                           corner_radius=4, font=UI_FONT_SMALL)
+    value = ctk.CTkLabel(parent, text=text, width=1, height=28, anchor="w",
+                         justify="left", font=THEME.fonts.normal)
+    last_width = None
+
+    def layout(width):
+        nonlocal last_width
+        if width == last_width or width < 2:
+            return
+        last_width = width
+        stacked = width < 270 or (width < 440 and (multiline or (crop and crop.width > 560)))
+        image_width = width if stacked else width // 2
+        text_width = width if stacked else width - image_width - 8
+        parent.grid_columnconfigure(0, weight=1 if stacked else 0,
+                                    minsize=0 if stacked else round(parent._apply_widget_scaling(image_width)))
+        parent.grid_columnconfigure(1, weight=0 if stacked else 1)
+        preview.grid(row=0, column=0, sticky="ew")
+        value.grid(row=int(stacked), column=0 if stacked else 1, sticky="ew",
+                   padx=(0 if stacked else 8, 0), pady=(4 if stacked else 0, 0))
+        value.configure(wraplength=max(1, text_width - 4))
+        if image:
+            scale = min(image_width / crop.width, 112 / crop.height, 1)
+            image.configure(size=(max(1, int(crop.width * scale)), max(1, int(crop.height * scale))))
+
+    parent.bind("<Configure>", lambda event: layout(round(parent._reverse_widget_scaling(event.width))))
+    layout(300)
+    return value
