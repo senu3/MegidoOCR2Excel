@@ -42,10 +42,12 @@ class EditingTests(unittest.TestCase):
         app.fields = [TemplateField('a', 0, 0, 10, 10)]
         app.mode_var = Mock()
         app.mode_var.get.return_value = MODE_REVIEW
-        app._refresh_review_row = Mock()
+        app.review_value_labels = {0: Mock()}
         app._update_review_detail_values = Mock()
         app._render_side_body = Mock()
         app.redraw = Mock()
         app._refresh_recognition_results()
+        app.redraw.assert_not_called()
+        app.review_value_labels[0].configure.assert_called_once_with(text="未テスト")
         app._render_side_body.assert_not_called()
         app._update_review_detail_values.assert_called_once()

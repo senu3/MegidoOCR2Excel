@@ -1082,6 +1082,8 @@ class ImageOcrExcelApp:
         on_cancel=None,
         *,
         show_loading_overlay: bool = True,
+        applying_results_note: str | None = None,
+        result_already_saved: bool = False,
         loading_note: str | None = None,
         loading_progress: float | None = None,
     ) -> None:
@@ -1119,7 +1121,21 @@ class ImageOcrExcelApp:
 
         def finish_success(result) -> None:
             logger.info("Background operation completed | operation=%s", loading_message)
-            finish_result(on_success, result)
+            if applying_results_note is None:
+                finish_result(on_success, result)
+                return
+            if not result_already_saved and self._is_operation_cancelled():
+                finish_cancelled()
+                return
+            try:
+                self._update_loading(applying_results_note, note="画面を更新しています。")
+                self.loading_close_button.configure(state="disabled")
+                self.root.update_idletasks()
+                on_success(result)
+                self.root.update_idletasks()
+            finally:
+                if finish_common():
+                    self.request_close()
 
         def finish_error(error: Exception) -> None:
             def report_error() -> None:
@@ -3693,7 +3709,7 @@ class ImageOcrExcelApp:
             work,
             on_success,
             on_error,
-            lambda: self.root.after(50, finish),
+            lambda: self.root.after_idle(finish),
             lambda: self.status_var.set("OCRの準備をキャンセルしました。"),
             show_loading_overlay=not progress_visible,
         )
@@ -3823,9 +3839,11 @@ class ImageOcrExcelApp:
                     self.aspect_warnings = warnings
                     if warnings:
                         self.status_var.set(f"画像比率が自動検出の対象外：{len(warnings)} 枚")
-                        self._render_side_body()
+                        if self.mode_var.get() == MODE_EXPORT:
+                            self._render_side_body()
 
-            self._run_background("画像の比率を確認しています", inspect_geometry, show_geometry)
+            self._run_background("画像の比率を確認しています", inspect_geometry, show_geometry,
+                                 applying_results_note="画像の確認結果を反映しています")
         return True
 
     def previous_image(self, _event=None) -> None:
@@ -5066,7 +5084,7 @@ class ImageOcrExcelApp:
                 work,
                 on_success,
                 on_error,
-                lambda: self.root.after(50, restore_settings),
+                lambda: self.root.after_idle(restore_settings),
             )
 
         open_cache_button.configure(command=open_cache_folder)
@@ -5186,14 +5204,18 @@ class ImageOcrExcelApp:
         if redraw_canvas:
             self.redraw()
 
-    def _refresh_recognition_results(self) -> None:
+    def _refresh_recognition_results(self, index: int | None = None) -> None:
         if self.mode_var.get() != MODE_REVIEW:
             self._render_side_body()
             return
-        for idx in range(len(self.fields)):
-            self._refresh_review_row(idx)
+        indices = self.review_value_labels if index is None else (index,)
+        for idx in indices:
+            label = self.review_value_labels.get(idx)
+            if label is not None:
+                text = self._review_text(idx)
+                if label.cget("text") != text:
+                    label.configure(text=text)
         self._update_review_detail_values()
-        self.redraw()
 
     def _refresh_review_row(self, idx: int) -> None:
         label = self.review_value_labels.get(idx)
@@ -6968,12 +6990,13 @@ class ImageOcrExcelApp:
         def on_success(result: tuple[list[str], list[str]]) -> None:
             if self.original_image is not source_image:
                 return
+            entries = {entry.id: entry for entry in self.editor.entries}
             for entry_id, raw, text in zip(field_ids, result[0], result[1]):
-                result_index = self.editor.index_of(entry_id)
-                if result_index is not None:
-                    self.current_raw_results[result_index] = raw
-                    self.current_results[result_index] = text
-                    self.editor.entries[result_index].tested = self.fields[result_index].enabled
+                entry = entries.get(entry_id)
+                if entry is not None:
+                    entry.raw_text = raw
+                    entry.text = text
+                    entry.tested = entry.field.enabled
             self.status_var.set("全項目をテストしました。")
             self._refresh_recognition_results()
 
@@ -6986,6 +7009,7 @@ class ImageOcrExcelApp:
             work,
             on_success,
             on_error,
+            applying_results_note="認識結果を反映しています",
         )
 
     def ocr_field_at(self, idx: int) -> None:
@@ -7036,18 +7060,20 @@ class ImageOcrExcelApp:
             self.current_raw_results[result_idx] = raw_text
             self.current_results[result_idx] = text
             self.editor.entries[result_idx].tested = True
-            self.selected_index = result_idx
+            if self.selected_index != result_idx:
+                self.select_field(result_idx)
             self.status_var.set(
                 f"{self.fields[result_idx].name} を認識テストしました。"
             )
-            self._refresh_recognition_results()
+            self._refresh_recognition_results(result_idx)
 
         def on_error(error: Exception) -> None:
             self.status_var.set("OCRに失敗しました。")
             self.dialogs.showerror("OCRエラー", str(error))
 
         self._run_background(
-            f"{field.name} を認識テスト中です。", work, on_success, on_error
+            f"{field.name} を認識テスト中です。", work, on_success, on_error,
+            applying_results_note="認識結果を反映しています",
         )
 
     def _export_settings_dict(self) -> dict:
@@ -7264,12 +7290,15 @@ class ImageOcrExcelApp:
         self.image_queue.prepare(image_files)
 
         def progress(event: BatchProgress) -> None:
+            # The next image or saving phase carries the same completed count.
+            if event.phase not in {"started", "saving"}:
+                return
+
             def update() -> None:
                 if self._is_operation_cancelled():
                     return
                 if event.phase == "started" and event.image_path is not None:
                     self.image_queue.mark_processing(event.image_path)
-                if event.image_path is not None:
                     self._refresh_queue_item_status(event.image_path)
                 detail = "保存しています" if event.phase == "saving" else (
                     f"OCR中: {event.image_path.name}" if event.phase == "started" and event.image_path else "画像の認識が完了しました"
@@ -7285,7 +7314,8 @@ class ImageOcrExcelApp:
             self.last_export_signature = signature
             self.last_export_output_path = output_path
             self.last_export_format = export_format
-            self.image_queue.prepare(image_files)
+            if len(result.records) < result.total_images:
+                self.image_queue.prepare(image_files)
             self.image_queue.apply_result(result)
             self.mode_var.set(MODE_EXPORT)
             failed_paths = set(self.image_queue.failed_files())
@@ -7324,6 +7354,7 @@ class ImageOcrExcelApp:
         self._saving_excel = export_format == "excel"
         self._run_background(message, lambda: job.run(exporter, self.ocr_engine, progress, self._is_operation_cancelled),
                              success, error, finished, cancelled,
+                             applying_results_note=f"{label}の保存結果を表示しています", result_already_saved=True,
                              loading_note=f"0 / {len(image_files)} 画像\n出力の準備をしています。", loading_progress=0.0)
 
     def _validate_set_export(self, fields: list[TemplateField]) -> str | None:

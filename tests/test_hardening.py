@@ -1198,6 +1198,45 @@ class BackgroundOperationStateTests(unittest.TestCase):
             thread_type.return_value.start.assert_called_once_with()
             thread_type.call_args.kwargs["target"]()
 
+    def test_recognition_dialog_stays_visible_until_results_are_drawn(self) -> None:
+        app = self._logic_only_app()
+        app.loading_close_button = MagicMock()
+        app._update_loading = MagicMock()
+        events = []
+        app.root.update_idletasks.side_effect = lambda: events.append("paint")
+        app._hide_loading.side_effect = lambda: events.append("hide")
+
+        def apply(result):
+            self.assertTrue(app.busy)
+            app._hide_loading.assert_not_called()
+            app.loading_close_button.configure.assert_called_with(state="disabled")
+            events.append(result)
+
+        self._run_worker(app, "認識テスト中", lambda: "apply", apply,
+                         applying_results_note="認識結果を反映しています")
+        self.assertEqual(events, ["paint", "apply", "paint", "hide"])
+        self.assertFalse(app.busy)
+
+    def test_saved_export_is_presented_even_after_cancel_request(self) -> None:
+        app = self._logic_only_app()
+        app.loading_close_button = MagicMock()
+        app._update_loading = MagicMock()
+        cancelled = MagicMock()
+
+        def saved():
+            app._operation_cancel_event.set()
+            return "partial.xlsx"
+
+        def present(path):
+            self.assertEqual(path, "partial.xlsx")
+            self.assertTrue(app.busy)
+            app._hide_loading.assert_not_called()
+
+        self._run_worker(app, "Excel出力中", saved, present, on_cancel=cancelled,
+                         applying_results_note="保存結果を表示しています", result_already_saved=True)
+        cancelled.assert_not_called()
+        app._hide_loading.assert_called_once()
+
     def test_success_is_finalized_before_completion_ui_and_app_close(self) -> None:
         app = self._logic_only_app()
         observations: list[tuple[str, bool, object, bool]] = []
