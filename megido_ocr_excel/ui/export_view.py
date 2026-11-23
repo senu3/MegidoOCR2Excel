@@ -79,36 +79,6 @@ def render(app: ImageOcrExcelApp) -> None:
     panel.grid_columnconfigure(0, weight=1)
     ctk.CTkLabel(
         panel,
-        text="画像フォルダ",
-        anchor="w",
-        font=UI_FONT_SMALL,
-        text_color=COLOR_TEXT,
-    ).grid(row=0, column=0, sticky="ew", padx=(12, 8), pady=(12, 2))
-    ctk.CTkLabel(
-        panel,
-        textvariable=app.folder_var,
-        anchor="w",
-        font=UI_FONT_SMALL,
-        text_color=COLOR_MUTED,
-        wraplength=210,
-    ).grid(row=1, column=0, sticky="ew", padx=(12, 8), pady=(0, 8))
-    ctk.CTkButton(
-        panel,
-        text="変更",
-        image=ICONS.get("folder", 16, COLOR_TEXT),
-        compound="left",
-        command=app.open_image_folder,
-        width=104,
-        height=THEME.layout.entry_height,
-        corner_radius=THEME.layout.control_radius,
-        font=UI_FONT_SMALL,
-        fg_color=COLOR_SECONDARY,
-        hover_color=COLOR_SECONDARY_HOVER,
-        border_width=1,
-        border_color=COLOR_BORDER,
-    ).grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 12), pady=(12, 8))
-    ctk.CTkLabel(
-        panel,
         text="出力ファイル",
         anchor="w",
         font=UI_FONT_SMALL,
@@ -142,9 +112,7 @@ def render(app: ImageOcrExcelApp) -> None:
     app._render_image_queue(content)
     app._render_excel_output_settings(content)
 
-    enabled_count = len(app._enabled_fields())
-    image_count = len(app.image_queue.included_files())
-    app._render_export_structure_summary(content, image_count, enabled_count)
+    app._render_export_structure_summary(content)
 
     actions = ctk.CTkFrame(body, fg_color=COLOR_SURFACE)
     actions.pack(side=BOTTOM, fill="x", padx=16, pady=(8, 14))
@@ -224,6 +192,8 @@ def render_result(app, body) -> None:
     holder.pack(fill=BOTH, expand=True, padx=10)
     tree = ttk.Treeview(holder, columns=("file", "reason"), show="headings",
                         height=5, selectmode="browse", style="Export.Treeview")
+    if app.export_result_filter == "完了":
+        tree.configure(displaycolumns=("file",))
     scroll = ttk.Scrollbar(holder, command=tree.yview)
     scroll.pack(side="right", fill="y")
     tree.configure(yscrollcommand=scroll.set)
@@ -253,8 +223,20 @@ def render_result(app, body) -> None:
         errors = [error.error for error in record.errors]
         reason = "／".join(dict.fromkeys(errors))
         if reason:
-            ctk.CTkLabel(detail, text=reason, wraplength=310, anchor="w",
-                         justify="left", font=UI_FONT_SMALL).pack(fill="x", padx=8)
+            full_reason = ctk.CTkLabel(detail, text=reason, wraplength=310, anchor="w",
+                                       justify="left", font=UI_FONT_SMALL)
+            full_reason.pack(fill="x", padx=8)
+            def update_reason(_event=None):
+                width = tree.column("reason", "width")
+                pixels = tree.tk.call("font", "measure", native_font(body), reason)
+                if len(set(errors)) == 1 and "\n" not in reason and int(pixels) + 12 <= width:
+                    full_reason.pack_forget()
+                elif not full_reason.winfo_manager():
+                    children = [w for w in detail.pack_slaves() if w is not full_reason]
+                    full_reason.pack(fill="x", padx=8, before=children[0] if children else None)
+            update_reason()
+            tree.bind("<Configure>", update_reason)
+            tree.bind("<ButtonRelease-1>", update_reason)
         if app.export_result_filter == "要確認":
             manual = any(error.field in ("セット確認", "セット検出") for error in record.errors)
             def act():

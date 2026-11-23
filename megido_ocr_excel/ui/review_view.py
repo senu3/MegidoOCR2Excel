@@ -62,29 +62,9 @@ def render(app: ImageOcrExcelApp) -> None:
         )
         return
 
-    ctk.CTkLabel(
-        body,
-        text=THEME.copy.recognition_test_note,
-        anchor="w",
-        justify="left",
-        font=UI_FONT_SMALL,
-        text_color=COLOR_MUTED,
-        wraplength=350,
-    ).pack(fill="x", padx=18, pady=(0, 8), before=scroller._parent_frame)
-
-    toolbar = ctk.CTkFrame(body, corner_radius=0, fg_color="transparent")
-    toolbar.pack(fill="x", padx=16, pady=(0, 10), before=scroller._parent_frame)
-    toolbar.grid_columnconfigure(0, weight=1)
-    ctk.CTkLabel(
-        toolbar,
-        text=app._text_formatting_summary(),
-        anchor="w",
-        font=UI_FONT_SMALL,
-        text_color=COLOR_MUTED,
-    ).grid(row=0, column=0, sticky="ew", padx=(2, 8))
     ctk.CTkButton(
-        toolbar,
-        text="全項目をテスト",
+        body,
+        text="この画像をテスト",
         image=ICONS.get("scan", 16, THEME.palette.on_color),
         compound="left",
         command=app.ocr_current_image,
@@ -93,7 +73,7 @@ def render(app: ImageOcrExcelApp) -> None:
         font=UI_FONT_SMALL,
         fg_color=COLOR_PRIMARY,
         hover_color=COLOR_PRIMARY_HOVER,
-    ).grid(row=0, column=1, sticky="e")
+    ).pack(fill="x", padx=16, pady=(0, 8), before=scroller._parent_frame)
 
     app._ensure_review_selection()
     app.result_vars = []

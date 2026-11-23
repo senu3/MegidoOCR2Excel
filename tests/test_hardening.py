@@ -524,8 +524,8 @@ class WorkflowChoiceTests(unittest.TestCase):
                 if isinstance(widget, ctk.CTkLabel)
             ]
 
-            self.assertIn(THEME.copy.recognition_test_note, labels)
-            self.assertIn("テキスト整形：全角空白・全角化", labels)
+            self.assertFalse(any("Excel出力時は" in label for label in labels))
+            self.assertNotIn("テキスト整形：全角空白・全角化", labels)
             self.assertEqual(row_labels, ["#1", "話者"])
             self.assertEqual(app.review_value_labels[0].cget("text"), "未テスト")
             app.current_results[0] = "話者の結果"
@@ -535,12 +535,12 @@ class WorkflowChoiceTests(unittest.TestCase):
             app.editor.entries[0].tested = True
             app._refresh_recognition_results()
             self.assertEqual(app.review_value_labels[0].cget("text"), "文字なし")
-            self.assertIn("全項目をテスト", [button.cget("text") for button in buttons])
+            self.assertIn("この画像をテスト", [button.cget("text") for button in buttons])
             self.assertNotIn(
                 "この項目をテスト", [button.cget("text") for button in buttons]
             )
             batch_button = next(
-                button for button in buttons if button.cget("text") == "全項目をテスト"
+                button for button in buttons if button.cget("text") == "この画像をテスト"
             )
             self.assertEqual(batch_button.cget("height"), THEME.layout.entry_height)
         finally:
@@ -988,7 +988,7 @@ class DirtyStateTests(unittest.TestCase):
             self.assertEqual(app.text_formatting.line_join, LINE_JOIN_NEWLINE)
             self.assertTrue(app.text_formatting.fullwidth_ascii)
             self.assertTrue(app.image_text_correction_enabled)
-            self.assertIn("この設定は未保存です", app.status_var.get())
+            self.assertIn("まだ保存していません", app.status_var.get())
             self.assertIn("右パネルの［保存］", app.status_var.get())
             self.assertEqual(app.current_results, [""])
             self.assertEqual(app.current_raw_results, [""])
@@ -1155,7 +1155,7 @@ class DirtyStateTests(unittest.TestCase):
             app.template_path = Path("saved-template.json")
             app._mark_clean()
             app._apply_settings(MagicMock(), *settings_args, False)
-            self.assertIn("変更は未保存です", app.status_var.get())
+            self.assertIn("変更内容は未保存です", app.status_var.get())
             self.assertIn("上書き", app.status_var.get())
 
             app._mark_clean()
@@ -1169,7 +1169,7 @@ class DirtyStateTests(unittest.TestCase):
             app.template_path = None
             app._mark_clean()
             app._apply_settings(MagicMock(), *settings_args, False)
-            self.assertIn("設定は変更されていません（未保存）", app.status_var.get())
+            self.assertIn("設定に変更はありません。まだ保存していません", app.status_var.get())
             self.assertIn("右パネルの［保存］", app.status_var.get())
         finally:
             destroy_tk_root(root)
@@ -2031,7 +2031,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         host = ctk.CTkFrame(root)
         try:
             app._render_excel_output_settings(host)
-            app._render_export_structure_summary(host, 3, 2)
+            app._render_export_structure_summary(host)
             descendants = []
             pending = list(host.winfo_children())
             while pending:
@@ -2058,7 +2058,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             self.assertIn(
                 EXPORT_LAYOUT_DISPLAY[app.export_layout_var.get()], labels
             )
-            self.assertIn("Excelの行単位", labels)
+            self.assertNotIn("Excelの行単位", labels)
             self.assertNotIn("列構成", labels)
             self.assertNotIn("出力形式", labels)
             navigation = next(
@@ -2068,7 +2068,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             )
             self.assertEqual(navigation.cget("fg_color"), COLOR_SECONDARY)
             self.assertEqual(navigation.cget("border_width"), 1)
-            self.assertEqual(int(navigation.grid_info()["row"]), 2)
+            self.assertEqual(int(navigation.grid_info()["row"]), 0)
         finally:
             host.destroy()
             if app.workflow_choice_modal is not None:
@@ -2159,7 +2159,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         host = ctk.CTkFrame(root)
         try:
             app.export_layout_var.set(EXPORT_LAYOUT_SET)
-            app._render_export_structure_summary(host, 3, 2)
+            app._render_export_structure_summary(host)
             labels = [
                 widget.cget("text")
                 for widget in descendants_of(host)
@@ -2172,11 +2172,13 @@ class FieldNameInteractionTests(unittest.TestCase):
                 and widget.cget("text") == "範囲・列で編集"
             )
 
-            self.assertIn("Excelの行単位", labels)
+            self.assertNotIn("Excelの行単位", labels)
             self.assertIn(EXPORT_LAYOUT_DISPLAY[EXPORT_LAYOUT_SET], labels)
-            self.assertIn("項目の組み合わせ", labels)
-            self.assertIn("話者＋セリフ", labels)
-            self.assertEqual(int(navigation.grid_info()["row"]), 3)
+            self.assertNotIn("項目の組み合わせ", labels)
+            self.assertIn(app.set_definition.order_label, labels)
+            for column in app.set_definition.columns:
+                self.assertIn(column.label, labels)
+            self.assertEqual(int(navigation.grid_info()["row"]), 0)
         finally:
             host.destroy()
             if app.workflow_choice_modal is not None:
@@ -2217,7 +2219,7 @@ class FieldNameInteractionTests(unittest.TestCase):
             ]
 
             self.assertIn("Excelの行単位", image_labels)
-            self.assertIn(THEME.copy.image_layout_note, image_labels)
+            self.assertFalse(any("1行にまとめます" in label for label in image_labels))
             self.assertIn(
                 list(EXPORT_LAYOUT_DISPLAY.values()), image_menu_values
             )
@@ -2233,7 +2235,7 @@ class FieldNameInteractionTests(unittest.TestCase):
 
             self.assertIn("Excelの行単位", set_labels)
             self.assertIn("項目の組み合わせ", set_labels)
-            self.assertIn(THEME.copy.set_layout_note, set_labels)
+            self.assertFalse(any("1行として出力します" in label for label in set_labels))
             self.assertNotIn("セット種類", set_labels)
         finally:
             if app.workflow_choice_modal is not None:

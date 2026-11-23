@@ -35,8 +35,8 @@ LINE_JOIN_DISPLAY = {
     LINE_JOIN_NEWLINE: "改行",
 }
 EXPORT_LAYOUT_DISPLAY = {
-    EXPORT_LAYOUT_IMAGE_ROW: "画像単位（1画像につき1行）",
-    EXPORT_LAYOUT_SET: "セット単位（1セットにつき1行）",
+    EXPORT_LAYOUT_IMAGE_ROW: "1画像＝1行",
+    EXPORT_LAYOUT_SET: "1セット＝1行",
 }
 EXPORT_LAYOUT_BY_DISPLAY = {
     display: value for value, display in EXPORT_LAYOUT_DISPLAY.items()

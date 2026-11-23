@@ -14,8 +14,8 @@ CONFIG = ApplicationConfig(
     default_template_name="megido-novel-template.json",
     copy=ApplicationCopy(
         workflow_choice_note=(
-            "会話画面は自動検出できます。\n"
-            "その他の画面は、新規テンプレートで範囲を指定します。"
+            "会話画面では読み取り範囲を自動で検出できます。\n"
+            "その他の画面では新規テンプレートで読み取り範囲を指定します。"
         ),
         auto_detection_action="会話を自動検出",
         detection_statuses={

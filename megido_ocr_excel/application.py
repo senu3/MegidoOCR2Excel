@@ -448,6 +448,11 @@ class ImageOcrExcelApp:
         canvas_frame.pack(side=TOP, fill=BOTH, expand=True)
         self.canvas_frame = canvas_frame
         self.canvas = Canvas(canvas_frame, bg=COLOR_CANVAS_BG, highlightthickness=0)
+        self.empty_folder_button = ctk.CTkButton(
+            self.canvas, text="画像フォルダを選択", command=self.open_image_folder,
+            image=ICONS.get("folder", 18, COLOR_TEXT), compound="left", font=UI_FONT_BOLD,
+            fg_color=COLOR_PRIMARY, hover_color=COLOR_PRIMARY_HOVER,
+        )
         self.hbar = ctk.CTkScrollbar(
             canvas_frame,
             orientation=HORIZONTAL,
@@ -773,7 +778,7 @@ class ImageOcrExcelApp:
         self.loading_progress.grid(
             row=1, column=0, columnspan=2, sticky="ew", padx=22, pady=(0, 10)
         )
-        ctk.CTkLabel(
+        note_label = ctk.CTkLabel(
             overlay,
             textvariable=self.loading_note_var,
             anchor="center",
@@ -781,7 +786,8 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
             wraplength=310,
-        ).grid(
+        )
+        note_label.grid(
             row=2,
             column=0,
             columnspan=2,
@@ -789,6 +795,15 @@ class ImageOcrExcelApp:
             padx=22,
             pady=(0, 18),
         )
+        def sync_note(*_args):
+            visible = bool(self.loading_note_var.get())
+            if visible != bool(note_label.winfo_manager()):
+                if visible:
+                    note_label.grid()
+                else:
+                    note_label.grid_remove()
+                modal.refresh_geometry()
+        self.loading_note_var.trace_add("write", sync_note)
         modal.set_escape_handler(self.confirm_cancel_current_operation)
         modal.set_focus_order(
             [self.loading_close_button], default=self.loading_close_button
@@ -1036,7 +1051,7 @@ class ImageOcrExcelApp:
     ) -> None:
         self.loading_var.set(message)
         self.loading_note_var.set(
-            note or "処理中の項目が完了するまでお待ちください。"
+            note or ""
         )
         if self.loading_close_button is not None:
             self.loading_close_button.configure(state="normal")
@@ -1128,7 +1143,7 @@ class ImageOcrExcelApp:
                 finish_cancelled()
                 return
             try:
-                self._update_loading(applying_results_note, note="画面を更新しています。")
+                self._update_loading(applying_results_note, note="")
                 self.loading_close_button.configure(state="disabled")
                 self.root.update_idletasks()
                 on_success(result)
@@ -1205,7 +1220,7 @@ class ImageOcrExcelApp:
             )
         )
         if self._saving_excel:
-            detail = "処理済みの画像を指定先のExcelに保存します。1枚も完了していない場合は保存しません。"
+            detail = "処理が終わった画像の結果を、指定したExcelファイルに保存します。1枚も処理が終わっていない場合は保存しません。"
         if not self.dialogs.askyesno(
             "処理をキャンセル",
             f"現在の処理をキャンセルしますか？\n\n{detail}",
@@ -1229,7 +1244,7 @@ class ImageOcrExcelApp:
                     text="モデル準備用プロセスを終了しています。"
                 )
         elif self._saving_excel:
-            self.loading_note_var.set("処理を停止し、完了した画像があればExcelに保存します。")
+            self.loading_note_var.set("処理を停止します。処理が終わった画像があれば、その結果をExcelに保存します。")
         else:
             self.status_var.set("キャンセルを受け付けました。安全に停止しています。")
             self.loading_note_var.set("現在処理中の項目が終わるまでお待ちください。")
@@ -1478,7 +1493,7 @@ class ImageOcrExcelApp:
             self.status_var.set(
                 "セット1を用意し、既存項目を割り当てました。"
                 if self.fields
-                else "セット1を用意しました。最初の範囲をドラッグしてください。"
+                else "セット1を用意しました。ドラッグして最初の読み取り範囲を指定してください。"
             )
         else:
             fixed_auto_detection_ranges = self.auto_detection_enabled
@@ -1753,7 +1768,7 @@ class ImageOcrExcelApp:
             if not indexes:
                 ctk.CTkLabel(
                     section,
-                    text="プレビュー上で最初の範囲をドラッグしてください。",
+                    text="プレビュー上をドラッグして最初の読み取り範囲を指定してください。",
                     anchor="w",
                     font=UI_FONT_SMALL,
                     text_color=COLOR_MUTED,
@@ -2311,17 +2326,6 @@ class ImageOcrExcelApp:
         tail = limit - head - 1
         return f"{value[:head]}…{value[-tail:]}"
 
-    def _text_formatting_summary(self) -> str:
-        line_join = {
-            LINE_JOIN_NONE: "空白なし",
-            LINE_JOIN_FULLWIDTH_SPACE: "全角空白",
-            LINE_JOIN_NEWLINE: "改行",
-        }[self.text_formatting.line_join]
-        formatting = [line_join]
-        if self.text_formatting.fullwidth_ascii:
-            formatting.append("全角化")
-        return f"テキスト整形：{'・'.join(formatting)}"
-
     def _is_review_candidate(self, field: TemplateField) -> bool:
         return field.slot_key in {
             column.key for column in self.set_definition.extra_slots
@@ -2432,6 +2436,14 @@ class ImageOcrExcelApp:
         header = ctk.CTkFrame(panel, fg_color="transparent")
         header.pack(fill="x", padx=10, pady=(8, 6))
         header.grid_columnconfigure(0, weight=1)
+        folder_button = ctk.CTkButton(
+            header, text=self._compact_path(self.source_folder.name, 26) if self.source_folder else "画像フォルダを選択",
+            image=ICONS.get("folder", 16, COLOR_TEXT), compound="left", anchor="w",
+            command=self.open_image_folder, font=UI_FONT_BOLD, fg_color=COLOR_SECONDARY,
+            hover_color=COLOR_SECONDARY_HOVER,
+        )
+        folder_button.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 4))
+        add_tooltip(folder_button, f"{self.source_folder}（変更）" if self.source_folder else "画像フォルダを選択")
         self._update_queue_summary()
         ctk.CTkLabel(
             header,
@@ -2439,7 +2451,7 @@ class ImageOcrExcelApp:
             anchor="w",
             font=UI_FONT_BOLD,
             text_color=COLOR_TEXT,
-        ).grid(row=0, column=0, sticky="ew")
+        ).grid(row=1, column=0, sticky="ew")
         ctk.CTkButton(
             header,
             text="全選択",
@@ -2451,7 +2463,7 @@ class ImageOcrExcelApp:
             hover_color=COLOR_UTILITY_HOVER,
             border_width=0,
             text_color=COLOR_MUTED,
-        ).grid(row=0, column=1, padx=(4, 2))
+        ).grid(row=1, column=1, padx=(4, 2))
         ctk.CTkButton(
             header,
             text="全解除",
@@ -2463,7 +2475,7 @@ class ImageOcrExcelApp:
             hover_color=COLOR_UTILITY_HOVER,
             border_width=0,
             text_color=COLOR_MUTED,
-        ).grid(row=0, column=2, padx=(2, 0))
+        ).grid(row=1, column=2, padx=(2, 0))
 
         queue_frame = ctk.CTkScrollableFrame(
             panel,
@@ -2728,44 +2740,12 @@ class ImageOcrExcelApp:
             hover_color=COLOR_PRIMARY_HOVER,
         ).grid(row=4, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 12))
 
-    def _render_export_structure_summary(
-        self, parent, image_count: int, enabled_count: int
-    ) -> None:
+    def _render_export_structure_summary(self, parent) -> None:
         summary = ctk.CTkFrame(parent, fg_color="transparent")
-        summary.pack(fill="x", padx=18, pady=(0, 12))
-        summary.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(
-            summary,
-            text=(
-                f"{image_count}画像（自然順） / "
-                f"{self._export_unit_summary(enabled_count)} / "
-                f"{self._export_column_summary()}"
-            ),
-            anchor="w",
-            justify="left",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=330,
-        ).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 6))
-        ctk.CTkLabel(
-            summary,
-            text="Excelの行単位",
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-        ).grid(row=1, column=0, sticky="w", padx=(0, 8))
-        ctk.CTkLabel(
-            summary,
-            text=EXPORT_LAYOUT_DISPLAY[self.export_layout_var.get()],
-            anchor="w",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_TEXT,
-        ).grid(row=1, column=1, columnspan=2, sticky="ew")
-        edit_button_row = (
-            3
-            if self.export_layout_var.get() == EXPORT_LAYOUT_SET
-            else 2
-        )
+        summary.pack(fill="x", padx=16, pady=(0, 12))
+        summary.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(summary, text=EXPORT_LAYOUT_DISPLAY[self.export_layout_var.get()],
+                     font=UI_FONT_BOLD, anchor="w").grid(row=0, column=0, sticky="ew")
         ctk.CTkButton(
             summary,
             text="範囲・列で編集",
@@ -2781,64 +2761,22 @@ class ImageOcrExcelApp:
             border_width=1,
             border_color=COLOR_BORDER,
             text_color=COLOR_TEXT,
-        ).grid(
-            row=edit_button_row,
-            column=0,
-            columnspan=3,
-            sticky="e",
-            pady=(8, 0),
-        )
-        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
-            ctk.CTkLabel(
-                summary,
-                text="項目の組み合わせ",
-                anchor="w",
-                font=UI_FONT_SMALL,
-                text_color=COLOR_MUTED,
-            ).grid(row=2, column=0, sticky="w", padx=(0, 8), pady=(6, 0))
-            ctk.CTkLabel(
-                summary,
-                text=self.set_definition.name,
-                anchor="w",
-                font=UI_FONT_SMALL,
-                text_color=COLOR_TEXT,
-            ).grid(
-                row=2,
-                column=1,
-                columnspan=2,
-                sticky="ew",
-                pady=(6, 0),
-            )
+        ).grid(row=0, column=1, sticky="e")
+        headers = self.excel_exporter.headers(self._enabled_fields(), self._build_csv_export_settings(),
+                                              self.set_definition)
+        if not headers:
+            return
+        columns = ctk.CTkScrollableFrame(summary, orientation="horizontal", height=32,
+                                         fg_color=COLOR_SURFACE_ALT)
+        columns.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        for index, name in enumerate(headers):
+            ctk.CTkLabel(columns, text=name, font=UI_FONT_SMALL, fg_color=COLOR_SECONDARY,
+                         padx=8).grid(row=0, column=index, padx=(0, 1))
 
     def open_template_mode_from_export(self) -> None:
         self.mode_var.set(MODE_TEMPLATE)
         self.status_var.set("Excelの行単位を変更できます。")
         self._on_mode_change()
-
-    def _export_column_summary(self) -> str:
-        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
-            names = [
-                self.set_definition.order_label,
-                *(column.label for column in self.set_definition.columns),
-            ]
-            if self.export_include_filename_var.get():
-                names.insert(0, "画像名")
-            columns = "+".join(names)
-        else:
-            columns = (
-                "ファイル名列あり"
-                if self.export_include_filename_var.get()
-                else "項目のみ"
-            )
-        header = (
-            "ヘッダーあり" if self.export_include_header_var.get() else "ヘッダーなし"
-        )
-        return f"{columns} / {header}"
-
-    def _export_unit_summary(self, enabled_count: int) -> str:
-        if self.export_layout_var.get() == EXPORT_LAYOUT_SET:
-            return f"{len(self._set_field_indexes())}セット"
-        return f"{enabled_count}項目"
 
     def _empty_state(
         self,
@@ -3454,7 +3392,7 @@ class ImageOcrExcelApp:
             title = "OCRモデルの保存先を確認"
             subtitle = "変更した保存先を使用するには、アプリの再起動が必要です。"
             label = "再起動が必要"
-            note = "変更したモデル保存先は、アプリの再起動後に使用できます。"
+            note = "アプリを再起動すると、モデルの新しい保存先を使えます。"
             primary_text = "アプリを再起動"
             primary_command = self.restart_for_ocr_cache_change
         elif status.state == OCR_ENV_SETUP:
@@ -3463,7 +3401,7 @@ class ImageOcrExcelApp:
             title = "OCR認識モデルを確認"
             subtitle = (
                 "保存済みの認識モデルを現在の実行環境で確認します。\n"
-                "不足している場合だけ追加で取得します。"
+                "不足しているモデルだけをダウンロードします。"
             )
             primary_text = "確認して更新"
         elif status.state == OCR_ENV_LOCATION_ERROR:
@@ -5101,17 +5039,17 @@ class ImageOcrExcelApp:
         if changed:
             if self.template_path is None:
                 return (
-                    "設定を適用しました。この設定は未保存です。"
-                    "次回も使う場合は、右パネルの［保存］を使用してください。"
+                    "設定を適用しました。まだ保存していません。"
+                    "次回も使う場合は右パネルの［保存］を押してください。"
                 )
             return (
-                "設定を適用しました。変更は未保存です。"
-                "右パネルの［保存］で上書きしてください。"
+                "設定を適用しました。変更内容は未保存です。"
+                "右パネルの［保存］でテンプレートを上書きしてください。"
             )
         if self.template_path is None:
             return (
-                "設定は変更されていません（未保存）。"
-                "次回も使う場合は、右パネルの［保存］を使用してください。"
+                "設定に変更はありません。まだ保存していません。"
+                "次回も使う場合は右パネルの［保存］を押してください。"
             )
         if self.dirty:
             return (
@@ -5942,6 +5880,7 @@ class ImageOcrExcelApp:
         if not self.original_image:
             self._draw_canvas_empty()
             return
+        self.empty_folder_button.place_forget()
         w, h = self.original_image.size
         scaled_width = max(1, int(w * self.zoom))
         scaled_height = max(1, int(h * self.zoom))
@@ -6041,20 +5980,7 @@ class ImageOcrExcelApp:
         self._set_canvas_scrollbars(False, False)
         self.canvas.xview_moveto(0)
         self.canvas.yview_moveto(0)
-        self.canvas.create_text(
-            canvas_w / 2,
-            canvas_h / 2 - 20,
-            text=THEME.copy.empty_canvas_title,
-            fill=THEME.palette.empty_title,
-            font=UI_FONT_TITLE,
-        )
-        self.canvas.create_text(
-            canvas_w / 2,
-            canvas_h / 2 + 12,
-            text=THEME.copy.empty_canvas_note,
-            fill=THEME.palette.empty_note,
-            font=UI_FONT_SMALL,
-        )
+        self.empty_folder_button.place(relx=0.5, rely=0.5, anchor="center")
 
     def _set_canvas_scrollbars(self, horizontal: bool, vertical: bool) -> None:
         if self.hbar is not None:
@@ -7140,7 +7066,7 @@ class ImageOcrExcelApp:
         image_files = self.image_queue.included_files()
         if not image_files:
             self.dialogs.showerror(
-                "処理対象なし", "画像キューで処理する画像を1枚以上選択してください。"
+                "処理対象なし", "一覧から処理したい画像を1枚以上選択してください。"
             )
             return
         if not self._require_ocr_ready(self.export_to_csv):
@@ -7184,7 +7110,7 @@ class ImageOcrExcelApp:
         image_files = self.image_queue.included_files()
         if not image_files:
             self.dialogs.showerror(
-                "処理対象なし", "画像キューで処理する画像を1枚以上選択してください。"
+                "処理対象なし", "一覧から処理したい画像を1枚以上選択してください。"
             )
             return
         if not self._require_ocr_ready(self.export_to_excel):
@@ -7218,7 +7144,7 @@ class ImageOcrExcelApp:
         if self.last_export_result is None or self.last_export_output_path is None:
             self.dialogs.showinfo(
                 "再実行対象なし",
-                "先にExcelまたはCSV出力を実行してください。",
+                "先にExcelまたはCSVに出力してください。",
             )
             return
         retry_files = self.image_queue.failed_files()

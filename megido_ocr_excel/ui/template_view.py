@@ -103,15 +103,6 @@ def render(app: ImageOcrExcelApp) -> None:
         )
         preset_menu.set(app.set_preset_var.get())
         preset_menu.grid(row=0, column=1, sticky="ew")
-        ctk.CTkLabel(
-            body,
-            text=THEME.copy.set_layout_note,
-            anchor="w",
-            justify="left",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=350,
-        ).pack(fill="x", padx=16, pady=(0, 6))
         set_error = (
             set_validation_error(app._enabled_fields(), app.set_definition)
             if app.fields
@@ -162,17 +153,6 @@ def render(app: ImageOcrExcelApp) -> None:
                 border_width=1,
                 border_color=COLOR_BORDER,
             ).grid(row=0, column=1, padx=(6, 0))
-    else:
-        ctk.CTkLabel(
-            body,
-            text=THEME.copy.image_layout_note,
-            anchor="w",
-            justify="left",
-            font=UI_FONT_SMALL,
-            text_color=COLOR_MUTED,
-            wraplength=350,
-        ).pack(fill="x", padx=16, pady=(0, 6))
-
     scroller = AutoHideScrollableFrame(
         body,
         corner_radius=THEME.layout.panel_radius,

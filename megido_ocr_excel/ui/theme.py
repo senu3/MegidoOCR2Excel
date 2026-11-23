@@ -113,21 +113,9 @@ class Layout:
 @dataclass(frozen=True)
 class Copy:
     initial_status: str = "開始方法を選び、画像フォルダを選択してください。"
-    set_layout_note: str = (
-        "関連する項目を「セット」にまとめ、セットごとにExcelの1行として出力します。"
-        "1画像に複数のセットを設定できます。"
-    )
-    image_layout_note: str = (
-        "1枚の画像から読み取った項目を、Excelの1行にまとめます。"
-    )
-    recognition_test_note: str = (
-        "現在の画像でOCR結果を確認します。Excel出力時は全画像を改めて認識します。"
-    )
     saved_template_hint: str = (
         "保存済みテンプレートは右上のメニューから読み込めます。"
     )
-    empty_canvas_title: str = "画像フォルダが選択されていません"
-    empty_canvas_note: str = "上部のボタンから、スクリーンショットのフォルダを選択します。"
     new_template_label: str = "新規テンプレート（未保存）"
 
 
