@@ -177,6 +177,8 @@ def render_result(app, body) -> None:
         groups["除外"] = omitted
 
     def change_group(group):
+        if group == app.export_result_filter:
+            return
         app.export_result_filter = group
         if groups.get(group):
             app.show_queue_image(groups[group][0].image_path)
@@ -235,7 +237,13 @@ def render_result(app, body) -> None:
     sync_native_fonts()
     body.bind("<Configure>", sync_native_fonts, add="+")
 
+    displayed_record = None
+
     def show(record):
+        nonlocal displayed_record
+        if displayed_record is record:
+            return
+        displayed_record = record
         tree.unbind("<Tab>")
         for child in detail.winfo_children():
             child.destroy()
@@ -265,9 +273,10 @@ def render_result(app, body) -> None:
 
             def exclude():
                 app.set_queue_item_included(path, False)
-                remaining = [r for r in groups["要確認"] if r.image_path != path]
-                if remaining:
-                    app.show_queue_image(remaining[0].image_path)
+                index = int(tree.selection()[0])
+                if len(records) > 1:
+                    neighbor = index + 1 if index + 1 < len(records) else index - 1
+                    app.show_queue_image(records[neighbor].image_path)
                 else:
                     app.export_result_filter = "除外"
                 app._render_side_body()
@@ -275,6 +284,16 @@ def render_result(app, body) -> None:
             ctk.CTkButton(detail, text="対象から除外", width=90, fg_color=COLOR_SECONDARY,
                           font=UI_FONT_SMALL, command=exclude).pack(side="right", padx=6)
 
+    def step_record(step):
+        if len(records) <= 1:
+            return
+        current = int(tree.focus() or 0)
+        target = str((current + step) % len(records))
+        tree.focus(target)
+        tree.selection_set(target)
+        tree.see(target)
+
+    app._step_result_image = step_record
     for idx, record in enumerate(records):
         reason = record.errors[0].error if record.errors else "完了"
         tree.insert("", "end", iid=str(idx), values=(record.image_path.name, reason))

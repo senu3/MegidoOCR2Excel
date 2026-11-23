@@ -40,7 +40,7 @@ class ImageQueue:
         return [item.path for item in self.items if item.included and item.status == STATUS_FAILED]
 
     def set_included(self, path: Path, included: bool) -> None:
-        item = self._find(path)
+        item = self.get(path)
         if item is None:
             return
         if included and not item.included:
@@ -52,9 +52,11 @@ class ImageQueue:
             item.resume_status = item.status
             item.status = STATUS_EXCLUDED
 
-    def set_all(self, included: bool) -> None:
-        for item in self.items:
-            self.set_included(item.path, included)
+    def set_all(self, included: bool) -> list[Path]:
+        changed = [item.path for item in self.items if item.included != included]
+        for path in changed:
+            self.set_included(path, included)
+        return changed
 
     def prepare(self, paths: list[Path]) -> None:
         targets = set(paths)
@@ -65,7 +67,7 @@ class ImageQueue:
                 item.detail = ""
 
     def mark_processing(self, path: Path) -> None:
-        item = self._find(path)
+        item = self.get(path)
         if item is not None:
             item.status = STATUS_PROCESSING
             item.resume_status = STATUS_PROCESSING
@@ -73,7 +75,7 @@ class ImageQueue:
 
     def apply_result(self, result: "ExportResult") -> None:
         for record in result.records:
-            item = self._find(record.image_path)
+            item = self.get(record.image_path)
             if item is None:
                 continue
             result_status = STATUS_FAILED if record.errors else STATUS_SUCCESS
@@ -82,5 +84,5 @@ class ImageQueue:
                 item.status = result_status
             item.detail = record.errors[0].error if record.errors else ""
 
-    def _find(self, path: Path) -> ImageQueueItem | None:
+    def get(self, path: Path) -> ImageQueueItem | None:
         return self._by_path.get(path)

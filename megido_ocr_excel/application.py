@@ -1402,6 +1402,7 @@ class ImageOcrExcelApp:
         self.set_drag_target_id = None
         self.review_value_labels = {}
         self.review_order_label_by_index = {}
+        self._step_result_image = None
         self.review_detail_host = None
         self.review_result_scroller = None
         self.correction_rules_host = None
@@ -2632,14 +2633,7 @@ class ImageOcrExcelApp:
         self.queue_summary_var.set(f"処理対象 {included} / {total}")
 
     def _refresh_queue_item_status(self, path: Path) -> None:
-        item = next(
-            (
-                candidate
-                for candidate in self.image_queue.items
-                if candidate.path == path
-            ),
-            None,
-        )
+        item = self.image_queue.get(path)
         label = self.queue_status_labels.get(path)
         if item is None or label is None or not label.winfo_exists():
             return
@@ -2654,26 +2648,21 @@ class ImageOcrExcelApp:
         self._update_queue_summary()
 
     def set_all_queue_items(self, included: bool) -> None:
-        self.image_queue.set_all(included)
-        for path, variable in self.queue_include_vars.items():
-            variable.set(included)
+        for path in self.image_queue.set_all(included):
+            variable = self.queue_include_vars.get(path)
+            if variable is not None:
+                variable.set(included)
             self._refresh_queue_item_status(path)
         self._update_queue_summary()
 
     def show_queue_image(self, path: Path) -> None:
-        try:
-            self.current_image_index = self.image_files.index(path)
-        except ValueError:
-            return
-        self._load_current_image()
-        item = next(
-            (
-                candidate
-                for candidate in self.image_queue.items
-                if candidate.path == path
-            ),
-            None,
-        )
+        if path != self.image_path or self.original_image is None:
+            try:
+                self.current_image_index = self.image_files.index(path)
+            except ValueError:
+                return
+            self._load_current_image()
+        item = self.image_queue.get(path)
         if item is not None and item.detail:
             self.status_var.set(f"{path.name}: {item.detail}")
 
@@ -3920,20 +3909,18 @@ class ImageOcrExcelApp:
         return True
 
     def previous_image(self, _event=None) -> None:
-        if len(self.image_files) <= 1:
-            return
-        self.current_image_index = (self.current_image_index - 1) % len(
-            self.image_files
-        )
-        self._load_current_image()
-        self._render_side_body()
+        self._step_image(-1)
 
     def next_image(self, _event=None) -> None:
+        self._step_image(1)
+
+    def _step_image(self, step: int) -> None:
+        if self.mode_var.get() == MODE_EXPORT and self._step_result_image is not None:
+            self._step_result_image(step)
+            return
         if len(self.image_files) <= 1:
             return
-        self.current_image_index = (self.current_image_index + 1) % len(
-            self.image_files
-        )
+        self.current_image_index = (self.current_image_index + step) % len(self.image_files)
         self._load_current_image()
         self._render_side_body()
 
@@ -5268,21 +5255,16 @@ class ImageOcrExcelApp:
                 return
         if self.selected_index == idx:
             return
+        previous = self.selected_index
         self.selected_index = idx
-        self._refresh_selection_rows()
+        if self._side_render_job is None:
+            if previous is not None:
+                self._refresh_review_row(previous)
+            self._refresh_review_row(idx)
         if update_review_detail and self.mode_var.get() == MODE_REVIEW:
             self._refresh_review_detail_panel()
         if redraw_canvas:
             self.redraw()
-
-    def _refresh_selection_rows(self) -> None:
-        for idx, row in list(self.field_row_by_index.items()):
-            try:
-                if not row.winfo_exists():
-                    continue
-                self._refresh_review_row(idx)
-            except Exception:
-                continue
 
     def _refresh_recognition_results(self) -> None:
         if self.mode_var.get() != MODE_REVIEW:

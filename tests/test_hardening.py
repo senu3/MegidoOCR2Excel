@@ -2043,6 +2043,52 @@ class FieldNameInteractionTests(unittest.TestCase):
                 app.workflow_choice_modal.destroy()
             destroy_tk_root(root)
 
+    def test_result_navigation_skips_completed_images_and_keeps_position(self):
+        from tkinter import ttk
+        from megido_ocr_excel.export.rows import ExportError, ExportResult, ImageExportRecord
+
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
+        try:
+            with tempfile.TemporaryDirectory() as folder:
+                paths = [Path(folder) / f"{index}.png" for index in range(5)]
+                for path in paths:
+                    Image.new("RGB", (80, 60)).save(path)
+                app.image_files = paths
+                app.image_queue.reset(paths)
+                records = []
+                for index, path in enumerate(paths):
+                    errors = [ExportError(path.name, "本文", "要確認")] if index % 2 == 0 else []
+                    records.append(ImageExportRecord(path, index + 1, 1, errors))
+                app.last_export_result = ExportResult(5, [], records)
+                app.image_queue.apply_result(app.last_export_result)
+                app.last_export_output_path = Path(folder) / "book.xlsx"
+                app.mode_var.set(MODE_EXPORT)
+                app.export_result_filter = "要確認"
+                app._render_side_body()
+                root.update()
+                app.next_image()
+                root.update()
+                self.assertEqual(app.image_path, paths[2])
+                app.zoom = 2
+                with patch.object(app, "_load_current_image") as load:
+                    app.show_queue_image(paths[2])
+                    load.assert_not_called()
+                tree = next(w for w in descendants_of(app.side_body) if isinstance(w, ttk.Treeview))
+                next(w for w in descendants_of(app.side_body)
+                     if isinstance(w, ctk.CTkButton) and w.cget("text") == "要確認  3").invoke()
+                self.assertTrue(tree.winfo_exists())
+                self.assertEqual(app.zoom, 2)
+                next(w for w in descendants_of(app.side_body)
+                     if isinstance(w, ctk.CTkButton) and w.cget("text") == "対象から除外").invoke()
+                self.assertEqual(app.image_path, paths[4])
+                app.previous_image()
+                root.update()
+                self.assertEqual(app.image_path, paths[0])
+        finally:
+            destroy_tk_root(root)
+
     def test_csv_export_is_presented_as_a_secondary_action(self) -> None:
         root = ctk.CTk()
         root.withdraw()
