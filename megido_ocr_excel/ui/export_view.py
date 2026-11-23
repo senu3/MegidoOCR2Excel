@@ -251,7 +251,12 @@ def render_result(app, body) -> None:
                             highlightthickness=2, highlightcolor=THEME.palette.on_color, takefocus=True)
             action.pack(side="left", padx=6, pady=6)
             action.bind("<Return>", lambda _event: action.invoke())
-            tree.bind("<Tab>", lambda _event: (action.focus_set(), "break")[1])
+
+            def focus_action(_event):
+                action.focus_set()
+                return "break"
+
+            tree.bind("<Tab>", focus_action)
 
             def exclude():
                 app.set_queue_item_included(path, False)

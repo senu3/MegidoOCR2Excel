@@ -1144,7 +1144,8 @@ class ImageOcrExcelApp:
                 return
             try:
                 self._update_loading(applying_results_note, note="")
-                self.loading_close_button.configure(state="disabled")
+                if self.loading_close_button is not None:
+                    self.loading_close_button.configure(state="disabled")
                 self.root.update_idletasks()
                 on_success(result)
                 self.root.update_idletasks()
@@ -1909,8 +1910,9 @@ class ImageOcrExcelApp:
         comparison.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 8))
         region = self._scaled_field(field).normalized()
         crop = None
-        if region.x2 > region.x1 and region.y2 > region.y1:
-            crop = self.original_image.crop((region.x1, region.y1, region.x2, region.y2))
+        image = self.original_image
+        if image is not None and region.x2 > region.x1 and region.y2 > region.y1:
+            crop = image.crop((region.x1, region.y1, region.x2, region.y2))
         value_label = review_view.render_comparison(comparison, crop, self._review_text(idx),
                                                     field.ocr_line_split == "detected")
         self.review_value_labels[idx] = value_label
@@ -1918,7 +1920,7 @@ class ImageOcrExcelApp:
         for widget in [row, *row.winfo_children(), *comparison.winfo_children()]:
             widget.bind("<Button-1>", lambda _event: self.select_review_field(idx))
 
-        settings = None
+        settings: ctk.CTkFrame | None = None
 
         def toggle_settings():
             nonlocal settings
@@ -3979,10 +3981,11 @@ class ImageOcrExcelApp:
             return "未選択"
         return f"{self.source_folder.name} / {len(self.image_files)}画像"
 
-    def _set_default_output(self) -> None:
+    def _set_default_output(self) -> Path:
         self.output_path = suggested_output(self.source_folder, ".xlsx")
         self._automatic_output = True
         self.output_var.set(str(self.output_path))
+        return self.output_path
 
     def select_output_file(self) -> None:
         initial = self.output_path or suggested_output(self.source_folder, ".xlsx")
@@ -6534,7 +6537,7 @@ class ImageOcrExcelApp:
         if set_hit is not None:
             handle_state = self.canvas_set_handles.get(set_hit) or {}
             raw_indexes = handle_state.get("fields")
-            indexes = (
+            indexes: tuple[int, ...] = (
                 tuple(raw_indexes)
                 if isinstance(raw_indexes, (list, tuple))
                 else ()
@@ -7121,16 +7124,17 @@ class ImageOcrExcelApp:
                 "出力設定エラー", error or "Excel出力設定を確認してください。"
             )
             return
-        if self.output_path is None or (
-            self._automatic_output and settings.write_mode == "上書き" and self.output_path.exists()
+        output_path = self.output_path
+        if output_path is None or (
+            self._automatic_output and settings.write_mode == "上書き" and output_path.exists()
         ):
-            self._set_default_output()
+            output_path = self._set_default_output()
         if (
             settings.write_mode == "上書き"
-            and self.output_path.exists()
+            and output_path.exists()
             and not self.dialogs.askyesno(
                 "上書き確認",
-                f"既存ファイルを上書きします。\n{self.output_path}",
+                f"既存ファイルを上書きします。\n{output_path}",
                 yes_text="上書きする",
                 no_text="戻る",
                 destructive=True,
@@ -7138,7 +7142,7 @@ class ImageOcrExcelApp:
         ):
             return
 
-        self._start_export("excel", self.output_path, image_files, fields, settings)
+        self._start_export("excel", output_path, image_files, fields, settings)
 
     def retry_failed_images(self, path: Path | None = None) -> None:
         if self.last_export_result is None or self.last_export_output_path is None:
