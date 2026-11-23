@@ -5,6 +5,8 @@ from collections.abc import Callable
 import customtkinter as ctk
 from PIL import Image, ImageDraw
 
+from megido_ocr_excel.ui.theme import THEME
+
 
 IconDrawer = Callable[[ImageDraw.ImageDraw, int, int], None]
 
@@ -15,7 +17,7 @@ class IconSet:
     def __init__(self) -> None:
         self._cache: dict[tuple[str, int, str], Image.Image] = {}
 
-    def get(self, name: str, size: int = 18, color: str = "#F3EFF8") -> ctk.CTkImage:
+    def get(self, name: str, size: int = 18, color: str = THEME.palette.text) -> ctk.CTkImage:
         key = (name, size, color)
         if key not in self._cache:
             scale = 4

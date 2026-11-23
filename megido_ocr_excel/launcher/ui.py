@@ -29,7 +29,7 @@ from megido_ocr_excel.ui.theme import THEME
 
 logger = logging.getLogger("megido_ocr_excel.launcher")
 PALETTE = THEME.palette
-FONT_FAMILY = THEME.fonts.family
+FONTS = THEME.fonts
 
 
 def launcher_operation_name(
@@ -131,7 +131,7 @@ class LauncherWindow:
             background=PALETTE.app_bg,
             foreground=PALETTE.text,
             anchor="w",
-            font=(FONT_FAMILY, 16, "bold"),
+            font=FONTS.title,
         ).pack(fill="x")
         tk.Label(
             heading,
@@ -139,7 +139,7 @@ class LauncherWindow:
             background=PALETTE.app_bg,
             foreground=PALETTE.muted,
             anchor="w",
-            font=(FONT_FAMILY, 10),
+            font=FONTS.native_body,
         ).pack(fill="x", pady=(2, 0))
 
         self.panel = tk.Frame(
@@ -162,7 +162,7 @@ class LauncherWindow:
             background=PALETTE.surface,
             foreground=PALETTE.text,
             anchor="w",
-            font=(FONT_FAMILY, 14, "bold"),
+            font=FONTS.bold,
         )
         self.status_title.grid(row=0, column=0, sticky="ew")
         self.status_note = tk.Label(
@@ -173,7 +173,7 @@ class LauncherWindow:
             anchor="w",
             justify="left",
             wraplength=500,
-            font=(FONT_FAMILY, 10),
+            font=FONTS.native_body,
         )
         self.status_note.grid(row=1, column=0, sticky="ew", pady=(8, 16))
 
@@ -197,7 +197,7 @@ class LauncherWindow:
             borderwidth=0,
             highlightthickness=1,
             highlightbackground=PALETTE.border_subtle,
-            font=("Consolas", 9),
+            font=FONTS.launcher_log,
             padx=10,
             pady=8,
         )
@@ -261,7 +261,7 @@ class LauncherWindow:
             highlightbackground=PALETTE.border,
             highlightcolor=PALETTE.info,
             cursor="hand2",
-            font=(FONT_FAMILY, 10, "bold" if primary else "normal"),
+            font=FONTS.launcher_primary if primary else FONTS.native_body,
             padx=16,
             pady=8,
         )

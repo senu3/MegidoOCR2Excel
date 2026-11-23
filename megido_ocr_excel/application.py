@@ -124,7 +124,7 @@ logger = logging.getLogger(__name__)
 from megido_ocr_excel.ui import template_view, review_view, export_view
 from megido_ocr_excel.ui.scrollable import AutoHideScrollableFrame
 from megido_ocr_excel.ui.workflow_style import (
-    UI_FONT_FAMILY, UI_FONT, UI_FONT_SMALL, UI_FONT_BOLD, UI_FONT_TITLE, UI_FONT_CANVAS, COLOR_BG, COLOR_SURFACE, COLOR_SURFACE_ALT, COLOR_INPUT, COLOR_BORDER, COLOR_TEXT, COLOR_MUTED, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, COLOR_UTILITY_HOVER, COLOR_DANGER, COLOR_DANGER_HOVER, COLOR_CTA, COLOR_CTA_HOVER, COLOR_CANVAS_BG, COLOR_CANVAS_PANEL, COLOR_CANVAS_TOOLBAR, OCR_MODE_OPTIONS, LINE_JOIN_DISPLAY, EXPORT_LAYOUT_DISPLAY, EXPORT_LAYOUT_BY_DISPLAY, MODE_TEMPLATE, MODE_REVIEW, MODE_EXPORT
+    native_font, UI_FONT, UI_FONT_SMALL, UI_FONT_BOLD, UI_FONT_TITLE, UI_FONT_CANVAS, COLOR_BG, COLOR_SURFACE, COLOR_SURFACE_ALT, COLOR_INPUT, COLOR_BORDER, COLOR_TEXT, COLOR_MUTED, COLOR_PRIMARY, COLOR_PRIMARY_HOVER, COLOR_SECONDARY, COLOR_SECONDARY_HOVER, COLOR_UTILITY_HOVER, COLOR_DANGER, COLOR_DANGER_HOVER, COLOR_CTA, COLOR_CTA_HOVER, COLOR_CANVAS_BG, COLOR_CANVAS_PANEL, COLOR_CANVAS_TOOLBAR, OCR_MODE_OPTIONS, LINE_JOIN_DISPLAY, EXPORT_LAYOUT_DISPLAY, EXPORT_LAYOUT_BY_DISPLAY, MODE_TEMPLATE, MODE_REVIEW, MODE_EXPORT
 )
 
 
@@ -179,7 +179,7 @@ class ImageOcrExcelApp:
         self.root.title(self.app_config.app_title)
         self.root.geometry(THEME.layout.window_size)
         self.root.minsize(*THEME.layout.min_window_size)
-        self.root.option_add("*Font", f"{{{UI_FONT_FAMILY}}} 10")
+        self.root.option_add("*Font", THEME.fonts.native_body)
         self.dialogs = AppDialogs(root)
         self.root.report_callback_exception = self._report_callback_exception
         self.dirty = False
@@ -295,8 +295,7 @@ class ImageOcrExcelApp:
         self.queue_include_vars: dict[Path, BooleanVar] = {}
         self.queue_status_labels: dict[Path, ctk.CTkLabel] = {}
         self.queue_summary_var = StringVar(value="処理対象 0 / 0")
-        self.retry_button: ctk.CTkButton | None = None
-        self.export_more_button: ctk.CTkButton | None = None
+        self.export_result_filter = ""
         self.last_export_result: ExportResult | None = None
         self.last_export_signature: tuple | None = None
         self.last_export_output_path: Path | None = None
@@ -575,10 +574,9 @@ class ImageOcrExcelApp:
         self.template_save_button.grid(row=0, column=1, padx=(0, 4))
         self.template_more_button = ctk.CTkButton(
             template_toolbar,
-            text="",
-            image=ICONS.get("more", 17, COLOR_MUTED),
+            text="ファイル",
             command=lambda: None,
-            width=32,
+            width=68,
             height=THEME.layout.entry_height,
             corner_radius=THEME.layout.control_radius,
             fg_color="transparent",
@@ -591,7 +589,7 @@ class ImageOcrExcelApp:
             )
         )
         self.template_more_button.grid(row=0, column=2)
-        add_tooltip(self.template_more_button, "テンプレート操作")
+        add_tooltip(self.template_more_button, "ファイル操作")
         self.template_toolbar = template_toolbar
 
         ctk.CTkSegmentedButton(
@@ -688,9 +686,10 @@ class ImageOcrExcelApp:
             add_tooltip(button, tooltip)
         return button
 
-    def show_template_actions_menu(self, button: ctk.CTkButton) -> None:
-        menu = Menu(
+    def _new_actions_menu(self) -> Menu:
+        return Menu(
             self.root,
+            font=native_font(self.side_body),
             tearoff=0,
             background=COLOR_SURFACE_ALT,
             foreground=COLOR_TEXT,
@@ -700,6 +699,9 @@ class ImageOcrExcelApp:
             borderwidth=1,
             relief="flat",
         )
+
+    def show_template_actions_menu(self, button: ctk.CTkButton) -> None:
+        menu = self._new_actions_menu()
         menu.add_command(
             label="テンプレートを読み込む    Ctrl+O",
             command=self.load_template,
@@ -709,36 +711,14 @@ class ImageOcrExcelApp:
             command=self.save_template_as,
             state="normal" if self.fields else "disabled",
         )
+        menu.add_separator()
+        menu.add_command(label="CSV形式で保存…", command=self.export_to_csv)
         menu.update_idletasks()
         x = (
             button.winfo_rootx()
             + button.winfo_width()
             - menu.winfo_reqwidth()
         )
-        y = button.winfo_rooty() + button.winfo_height()
-        try:
-            menu.tk_popup(x, y)
-        finally:
-            menu.grab_release()
-
-    def show_export_actions_menu(self, button: ctk.CTkButton) -> None:
-        menu = Menu(
-            self.root,
-            tearoff=0,
-            background=COLOR_SURFACE_ALT,
-            foreground=COLOR_TEXT,
-            activebackground=COLOR_PRIMARY,
-            activeforeground=THEME.palette.on_color,
-            disabledforeground=THEME.palette.disabled_fill,
-            borderwidth=1,
-            relief="flat",
-        )
-        menu.add_command(
-            label="CSV形式で保存…",
-            command=self.export_to_csv,
-        )
-        menu.update_idletasks()
-        x = button.winfo_rootx() + button.winfo_width() - menu.winfo_reqwidth()
         y = button.winfo_rooty() + button.winfo_height()
         try:
             menu.tk_popup(x, y)
@@ -1415,6 +1395,7 @@ class ImageOcrExcelApp:
         self.field_drag_handle_by_index = {}
         self.set_drop_section_by_id = {}
         self.set_drag_target_id = None
+        self.review_value_labels = {}
         self.review_order_label_by_index = {}
         self.review_detail_host = None
         self.review_result_scroller = None
@@ -1891,6 +1872,13 @@ class ImageOcrExcelApp:
             row, text=field.name, anchor="w", font=UI_FONT_BOLD, text_color=COLOR_TEXT
         ).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=8)
 
+        value_label = ctk.CTkLabel(
+            row, text=self._compact_preview_text(self._review_text(idx)),
+            anchor="w", justify="left", wraplength=230, font=UI_FONT_SMALL,
+        )
+        value_label.grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 5))
+        self.review_value_labels[idx] = value_label
+
         for widget in [row, *row.winfo_children()]:
             widget.bind("<Button-1>", lambda _event, i=idx: self.select_review_field(i))
 
@@ -2015,13 +2003,11 @@ class ImageOcrExcelApp:
             font=UI_FONT_SMALL,
             text_color=COLOR_MUTED,
         ).grid(row=1, column=0, sticky="ew", padx=8, pady=(2, 2))
-        result_text = (
-            self.current_results[self.selected_index]
-            if self.selected_index is not None
-            and self.selected_index < len(self.current_results)
-            else ""
-        )
-        self._readonly_textbox(preview, result_text or "未テスト", row=2, height=72)
+        self.review_textbox = self._readonly_textbox(preview, self._review_text(self.selected_index), row=2, height=72)
+
+    def _review_text(self, idx: int) -> str:
+        entry = self.editor.entries[idx]
+        return entry.text or ("文字なし" if entry.tested else "未テスト")
 
     def _selected_field_crop_preview(self) -> ctk.CTkImage | None:
         if (
@@ -2047,7 +2033,7 @@ class ImageOcrExcelApp:
         )
         return self.review_crop_preview
 
-    def _readonly_textbox(self, parent, value: str, row: int, height: int) -> None:
+    def _readonly_textbox(self, parent, value: str, row: int, height: int) -> ctk.CTkTextbox:
         textbox = ctk.CTkTextbox(
             parent,
             height=height,
@@ -2061,6 +2047,7 @@ class ImageOcrExcelApp:
         textbox.grid(row=row, column=0, sticky="ew", padx=8, pady=(0, 8))
         textbox.insert("1.0", value)
         textbox.configure(state="disabled")
+        return textbox
 
     # Future correction-rule editor scaffold.
     # Intentionally not rendered from _render_review_mode while the UX is being redesigned.
@@ -2464,6 +2451,34 @@ class ImageOcrExcelApp:
     def _render_export_mode(self) -> None:
         export_view.render(self)
 
+    def edit_failed_image(self, path: Path) -> None:
+        if not self._confirm_unsaved_changes("この画像のテンプレートを作成する"):
+            return
+        self.show_queue_image(path)
+        if self.original_image is None:
+            return
+        self.auto_detection_enabled = False
+        self.auto_detection_base_fields = []
+        self.template_path = None
+        self.fields = []
+        self.empty_set_ids.clear()
+        self._adopt_current_image_as_coordinate_source()
+        self.image_queue.set_all(False)
+        self.image_queue.set_included(path, True)
+        self.output_path = None
+        self.output_var.set("未選択")
+        self.export_result_filter = ""
+        self._set_export_layout(EXPORT_LAYOUT_SET)
+        self.mode_var.set(MODE_TEMPLATE)
+        self._mark_dirty()
+        self._on_mode_change()
+
+    def open_saved_output(self) -> None:
+        try:
+            os.startfile(str(self.last_export_output_path))
+        except OSError as exc:
+            self.dialogs.showerror("ファイルを開けません", str(exc))
+
     def _render_image_queue(self, parent) -> None:
         panel = ctk.CTkFrame(
             parent,
@@ -2594,7 +2609,7 @@ class ImageOcrExcelApp:
             STATUS_PENDING: ("待機", COLOR_MUTED, "circle"),
             STATUS_PROCESSING: ("処理中", THEME.palette.info, "refresh"),
             STATUS_SUCCESS: ("完了", THEME.palette.success, "check_circle"),
-            STATUS_FAILED: ("要再実行", COLOR_DANGER, "alert_circle"),
+            STATUS_FAILED: ("要確認", COLOR_DANGER, "alert_circle"),
             STATUS_EXCLUDED: ("除外", THEME.palette.disabled_fill, "minus_circle"),
         }
         return presentations.get(item.status, ("待機", COLOR_MUTED, "circle"))
@@ -2611,14 +2626,6 @@ class ImageOcrExcelApp:
         included = len(self.image_queue.included_files())
         total = len(self.image_queue.items)
         self.queue_summary_var.set(f"処理対象 {included} / {total}")
-        if self.retry_button is not None and self.retry_button.winfo_exists():
-            retry_count = (
-                len(self.image_queue.failed_files()) if self.last_export_result else 0
-            )
-            self.retry_button.configure(
-                text=f"失敗分を再実行（{retry_count}）",
-                state="normal" if retry_count else "disabled",
-            )
 
     def _refresh_queue_item_status(self, path: Path) -> None:
         item = next(
@@ -2668,6 +2675,7 @@ class ImageOcrExcelApp:
 
     def _clear_retry_context(self, reset_queue: bool = False) -> None:
         self.last_export_result = None
+        self.export_result_filter = ""
         self.last_export_signature = None
         self.last_export_output_path = None
         self.last_export_format = ""
@@ -3865,6 +3873,7 @@ class ImageOcrExcelApp:
                 "画像なし", "選択したフォルダ内に対応画像がありません。"
             )
             return False
+        self.aspect_warnings = {}
         self.source_folder = folder
         self.image_files = files
         self.image_queue.reset(files)
@@ -3877,6 +3886,32 @@ class ImageOcrExcelApp:
             self.mode_var.set(MODE_REVIEW)
         self._hide_workflow_choice()
         self._render_side_body()
+        strategy = self.profile.auto_detection
+        if self.auto_detection_enabled and strategy and strategy.check_geometry:
+            check = strategy.check_geometry
+            fields = [replace(field) for field in self.auto_detection_base_fields]
+            settings = replace(self.coordinate_settings)
+            def inspect_geometry():
+                warnings = {}
+                for path in files:
+                    self._raise_if_operation_cancelled()
+                    try:
+                        with Image.open(path) as source:
+                            reason = check(source.convert("RGB"), fields, settings)
+                    except OSError:
+                        continue
+                    if reason:
+                        warnings[path] = reason
+                return warnings
+
+            def show_geometry(warnings):
+                if self.image_files is files:
+                    self.aspect_warnings = warnings
+                    if warnings:
+                        self.status_var.set(f"画像比率が自動検出の対象外：{len(warnings)} 枚")
+                        self._render_side_body()
+
+            self._run_background("画像の比率を確認しています", inspect_geometry, show_geometry)
         return True
 
     def previous_image(self, _event=None) -> None:
@@ -3904,6 +3939,8 @@ class ImageOcrExcelApp:
         try:
             self.original_image = Image.open(self.image_path).convert("RGB")
         except Exception as exc:
+            self.original_image = None
+            self.redraw()
             logger.exception("Failed to open image")
             self.dialogs.showerror("画像エラー", f"画像を開けませんでした。\n{exc}")
             return
@@ -5240,6 +5277,9 @@ class ImageOcrExcelApp:
         self.redraw()
 
     def _refresh_review_row(self, idx: int) -> None:
+        label = self.review_value_labels.get(idx)
+        if label is not None and label.winfo_exists():
+            label.configure(text=self._compact_preview_text(self._review_text(idx)))
         row = self.field_row_by_index.get(idx)
         if row is not None and row.winfo_exists():
             selected = idx == self.selected_index
@@ -5299,6 +5339,12 @@ class ImageOcrExcelApp:
             self.review_line_split_var.set(OCR_MODE_OPTIONS[0])
             return
         field = self.fields[idx]
+        textbox = getattr(self, "review_textbox", None)
+        if textbox is not None and textbox.winfo_exists():
+            textbox.configure(state="normal")
+            textbox.delete("1.0", "end")
+            textbox.insert("1.0", self._review_text(idx))
+            textbox.configure(state="disabled")
         self.review_raw_preview_var.set(
             self._compact_preview_text(self.current_raw_results[idx] or "未OCR")
         )
@@ -5690,17 +5736,7 @@ class ImageOcrExcelApp:
             menu.grab_release()
 
     def _field_actions_menu(self, idx: int, include_undo: bool = False) -> Menu:
-        menu = Menu(
-            self.root,
-            tearoff=0,
-            background=COLOR_SURFACE_ALT,
-            foreground=COLOR_TEXT,
-            activebackground=COLOR_PRIMARY,
-            activeforeground=THEME.palette.on_color,
-            disabledforeground=THEME.palette.disabled_fill,
-            borderwidth=1,
-            relief="flat",
-        )
+        menu = self._new_actions_menu()
         menu.add_command(
             label="項目名を編集    F2", command=lambda i=idx: self.rename_field_at(i)
         )
@@ -5741,17 +5777,7 @@ class ImageOcrExcelApp:
             self._select_field_index(hit_idx, update_review_detail=True)
             menu = self._field_actions_menu(hit_idx, include_undo=True)
         else:
-            menu = Menu(
-                self.root,
-                tearoff=0,
-                background=COLOR_SURFACE_ALT,
-                foreground=COLOR_TEXT,
-                activebackground=COLOR_PRIMARY,
-                activeforeground=THEME.palette.on_color,
-                disabledforeground=THEME.palette.disabled_fill,
-                borderwidth=1,
-                relief="flat",
-            )
+            menu = self._new_actions_menu()
             menu.add_command(
                 label="直前の操作を取り消す",
                 command=self.undo_last_action,
@@ -7051,6 +7077,7 @@ class ImageOcrExcelApp:
                 if result_index is not None:
                     self.current_raw_results[result_index] = raw
                     self.current_results[result_index] = text
+                    self.editor.entries[result_index].tested = self.fields[result_index].enabled
             self.status_var.set("全項目をテストしました。")
             self._refresh_recognition_results()
 
@@ -7112,6 +7139,7 @@ class ImageOcrExcelApp:
                 return
             self.current_raw_results[result_idx] = raw_text
             self.current_results[result_idx] = text
+            self.editor.entries[result_idx].tested = True
             self.selected_index = result_idx
             self.status_var.set(
                 f"{self.fields[result_idx].name} を認識テストしました。"
@@ -7261,7 +7289,7 @@ class ImageOcrExcelApp:
 
         self._start_export("excel", self.output_path, image_files, fields, settings)
 
-    def retry_failed_images(self) -> None:
+    def retry_failed_images(self, path: Path | None = None) -> None:
         if self.last_export_result is None or self.last_export_output_path is None:
             self.dialogs.showinfo(
                 "再実行対象なし",
@@ -7269,6 +7297,8 @@ class ImageOcrExcelApp:
             )
             return
         retry_files = self.image_queue.failed_files()
+        if path is not None:
+            retry_files = [path] if path in retry_files else []
         if not retry_files:
             self.dialogs.showinfo("再実行対象なし", "再実行が必要な画像はありません。")
             return
@@ -7308,7 +7338,7 @@ class ImageOcrExcelApp:
                 "出力し直してください。",
             )
             return
-        if not self._require_ocr_ready(self.retry_failed_images):
+        if not self._require_ocr_ready(lambda: self.retry_failed_images(path)):
             return
 
         self._start_export(export_format, self.last_export_output_path, retry_files,
@@ -7355,15 +7385,15 @@ class ImageOcrExcelApp:
             self.last_export_output_path = output_path
             self.last_export_format = export_format
             self.image_queue.apply_result(result)
+            self.mode_var.set(MODE_EXPORT)
+            failed_paths = set(self.image_queue.failed_files())
+            pending = [r for r in result.failed_records if r.image_path in failed_paths]
+            self.export_result_filter = "要確認" if pending else "完了"
+            records = pending or [r for r in result.records if not r.errors]
+            if records:
+                self.show_queue_image(records[0].image_path)
             self._render_side_body()
-            self.status_var.set(f"{label}へ出力しました（エラー {len(result.errors)} 件）: {output_path}")
-            detail = f"{len(image_files)} 画像の処理が完了しました。\nエラー: {len(result.errors)} 件 / 通知: {len(result.notices)} 件"
-            if result.report_sheets:
-                detail += "\n確認用シート: " + "、".join(result.report_sheets)
-            elif result.errors:
-                detail += "\n該当画像は画像キューで確認できます。"
-            dialog = self.dialogs.showwarning if result.errors else self.dialogs.showinfo
-            dialog("完了（エラーあり）" if result.errors else "完了", detail + f"\n{output_path}")
+            self.status_var.set(f"{label}へ保存しました: {output_path}")
 
         def restore_queue() -> None:
             if previous is not None:

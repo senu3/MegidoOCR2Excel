@@ -533,7 +533,15 @@ class WorkflowChoiceTests(unittest.TestCase):
 
             self.assertIn(THEME.copy.recognition_test_note, labels)
             self.assertIn("テキスト整形：全角空白・全角化", labels)
-            self.assertEqual(row_labels, ["#1", "話者"])
+            self.assertEqual(row_labels, ["#1", "話者", "未テスト"])
+            app.current_results[0] = "話者の結果"
+            app._refresh_recognition_results()
+            self.assertEqual(app.review_textbox.get("1.0", "end-1c"), "話者の結果")
+            self.assertEqual(app.review_value_labels[0].cget("text"), "話者の結果")
+            app.current_results[0] = ""
+            app.editor.entries[0].tested = True
+            app._refresh_recognition_results()
+            self.assertEqual(app.review_textbox.get("1.0", "end-1c"), "文字なし")
             self.assertIn("全項目をテスト", [button.cget("text") for button in buttons])
             self.assertIn(
                 "選択項目をテスト", [button.cget("text") for button in buttons]
@@ -1958,23 +1966,9 @@ class FieldNameInteractionTests(unittest.TestCase):
             ]
 
             self.assertNotEqual(excel_button.cget("fg_color"), "transparent")
-            self.assertIsNotNone(app.export_more_button)
-            self.assertEqual(
-                app.export_more_button.cget("fg_color"),
-                "transparent",
-            )
-            self.assertLess(
-                int(app.export_more_button.cget("width")),
-                int(excel_button.cget("width")),
-            )
-            self.assertNotIn(
-                "CSV形式で保存…",
-                [button.cget("text") for button in buttons],
-            )
-            self.assertIn(
-                "Excelがない場合は、右のメニューからCSVで保存できます。",
-                labels,
-            )
+            self.assertEqual(app.template_more_button.cget("text"), "ファイル")
+            self.assertNotIn("CSV形式で保存…", [button.cget("text") for button in buttons])
+            self.assertFalse(any("CSV" in label for label in labels))
         finally:
             if app.workflow_choice_modal is not None:
                 app.workflow_choice_modal.destroy()

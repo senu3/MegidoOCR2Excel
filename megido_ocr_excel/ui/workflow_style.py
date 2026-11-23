@@ -46,3 +46,6 @@ MODE_REVIEW = "2. 認識テスト"
 MODE_EXPORT = "3. Excel出力"
 
 
+def native_font(widget, font=UI_FONT_SMALL):
+    """Resolve a theme font to scaled Tk pixels for native controls in a CTk frame."""
+    return widget._apply_font_scaling(font)

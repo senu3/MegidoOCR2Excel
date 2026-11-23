@@ -64,6 +64,8 @@ class AutoDetectionStrategy:
         SetDetectionResult,
     ]
 
+    check_geometry: Callable[[Image.Image, list[TemplateField], CoordinateSettings], str] | None = None
+
 
 @dataclass(frozen=True)
 class OcrProfile:

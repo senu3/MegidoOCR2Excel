@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import partial
 from typing import cast
 
 from PIL import Image
@@ -25,6 +26,7 @@ from megido_ocr_excel.ocr.glyph_correction import (
 )
 from megido_ocr_excel.ocr.dialogue_detector import (
     DialogueLogDetectionConfig,
+    check_dialogue_geometry,
     dialogue_detection_to_set_result,
     detect_dialogue_sets,
     include_supplement_candidates,
@@ -139,6 +141,7 @@ PROFILE = OcrProfile(
         AutoDetectionField("セリフ本文", SET_SLOT_TEXT, "detected"),
     ),
     auto_detection=AutoDetectionStrategy(
+        check_geometry=partial(check_dialogue_geometry, config=DIALOGUE_DETECTION),
         detect=_detect_dialogue_sets,
         resolve_sets=_resolve_dialogue_sets,
     ),

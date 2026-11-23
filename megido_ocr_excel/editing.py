@@ -12,6 +12,7 @@ from megido_ocr_excel.models import TemplateField
 class FieldEntry:
     field: TemplateField
     id: str = dataclass_field(default_factory=lambda: uuid4().hex)
+    tested: bool = False
     raw_text: str = ''
     text: str = ''
 
@@ -36,6 +37,8 @@ class ResultValues:
 
     def __setitem__(self, index: int, value: str) -> None:
         setattr(self.state.entries[index], self.attribute, value)
+        if self.attribute == "text":
+            self.state.entries[index].tested = bool(value)
 
     def __iter__(self) -> Iterator[str]:
         return (getattr(entry, self.attribute) for entry in self.state.entries)
@@ -45,7 +48,7 @@ class ResultValues:
 
     def assign(self, values: Sequence[str]) -> None:
         for index, entry in enumerate(self.state.entries):
-            setattr(entry, self.attribute, values[index] if index < len(values) else '')
+            self[index] = values[index] if index < len(values) else ''
 
 
 class EditorState:

@@ -6,11 +6,36 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Fonts:
     family: str = "Yu Gothic UI"
-    normal: tuple[str, int] = ("Yu Gothic UI", 13)
-    small: tuple[str, int] = ("Yu Gothic UI", 12)
-    bold: tuple[str, int, str] = ("Yu Gothic UI", 14, "bold")
-    title: tuple[str, int, str] = ("Yu Gothic UI", 16, "bold")
-    canvas: tuple[str, int, str] = ("Yu Gothic UI", 11, "bold")
+    launcher_log: tuple[str, int] = ("Consolas", 9)
+
+    @property
+    def normal(self) -> tuple[str, int]:
+        return self.family, 13
+
+    @property
+    def small(self) -> tuple[str, int]:
+        return self.family, 12
+
+    @property
+    def bold(self) -> tuple[str, int, str]:
+        return self.family, 14, "bold"
+
+    @property
+    def title(self) -> tuple[str, int, str]:
+        return self.family, 16, "bold"
+
+    @property
+    def canvas(self) -> tuple[str, int, str]:
+        return self.family, 11, "bold"
+
+    @property
+    def native_body(self) -> tuple[str, int]:
+        return self.family, 10
+
+    @property
+    def launcher_primary(self) -> tuple[str, int, str]:
+        return self.family, 10, "bold"
+
 
 
 @dataclass(frozen=True)

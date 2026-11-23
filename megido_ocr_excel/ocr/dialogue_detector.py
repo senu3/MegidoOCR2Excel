@@ -181,15 +181,9 @@ def detect_dialogue_sets(
     left, top, right, bottom = content_rect
     content_width = right - left
     content_height = bottom - top
-    if content_height <= 0 or content_width / content_height > config.max_auto_detection_aspect_ratio:
-        return DialogueSetDetectionResult(
-            [],
-            layout="unknown",
-            review_reason=(
-                "この画像比率は会話自動検出の対象外です。"
-                "新規テンプレートのセット設定を使用してください。"
-            ),
-        )
+    reason = _aspect_warning(content_rect, config)
+    if reason:
+        return DialogueSetDetectionResult([], layout="unknown", review_reason=reason)
     scan_x1 = round(left + content_width * config.anchor_x1_ratio)
     scan_x2 = round(left + content_width * config.anchor_x2_ratio)
     log_top = round(top + content_height * config.log_top_ratio)
@@ -449,6 +443,18 @@ def _detect_single_screen(
             allow_empty_speaker=True,
         )
     return DialogueSetDetectionResult([])
+
+
+def _aspect_warning(rect, config):
+    left, top, right, bottom = rect
+    height = bottom - top
+    if height <= 0 or (right - left) / height > config.max_auto_detection_aspect_ratio:
+        return "この画像比率は会話自動検出の対象外です。新規テンプレートのセット設定を使用してください。"
+    return ""
+
+
+def check_dialogue_geometry(image, fields, settings, config):
+    return _aspect_warning(_target_content_rect(image, fields, settings), config)
 
 
 def _target_content_rect(
