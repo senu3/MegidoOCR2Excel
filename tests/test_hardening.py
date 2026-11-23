@@ -1826,12 +1826,109 @@ class FieldNameInteractionTests(unittest.TestCase):
         app._select_field_index = MagicMock()
         app._commit_active_name_edit = MagicMock()
 
+        app._preview_resize_hit = MagicMock(return_value=(None, None))
         app.on_mouse_down(MagicMock())
 
         app._select_field_index.assert_called_once_with(
             1, update_review_detail=True
         )
         app._commit_active_name_edit.assert_not_called()
+
+    def test_selection_preserves_results_and_undo_until_geometry_changes(self):
+        from types import SimpleNamespace
+
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
+        try:
+            app.original_image = Image.new("RGB", (200, 160))
+            app.coordinate_settings = replace(app.coordinate_settings, coordinate_space="image")
+            app.zoom = 1
+            app.fields = [TemplateField("本文", 10, 10, 50, 50,
+                                        source_width=100, source_height=80)]
+            app.current_results[0] = "テスト結果"
+            previous = {"type": "previous"}
+            app.undo_action = previous
+            app.mode_var.set(MODE_TEMPLATE)
+            app.redraw()
+            press = SimpleNamespace(x=100, y=60)
+            app.on_mouse_down(press)
+            app.on_mouse_up(press)
+            self.assertFalse(app.dirty)
+            self.assertEqual(app.fields[0].source_width, 100)
+            self.assertEqual(app.current_results[0], "テスト結果")
+            self.assertIs(app.undo_action, previous)
+            app.on_mouse_down(press)
+            end = SimpleNamespace(x=5, y=60)
+            app.on_mouse_drag(end)
+            self.assertEqual(app.canvas.coords(app.canvas_rects[0]), [20, 20, 28, 100])
+            app.on_mouse_up(end)
+            self.assertEqual((app.fields[0].x1, app.fields[0].x2), (20, 28))
+            app.undo_last_action()
+            self.assertEqual(app.current_results[0], "テスト結果")
+        finally:
+            destroy_tk_root(root)
+
+    def test_set_handle_drag_moves_three_fields_together(self):
+        from types import SimpleNamespace
+
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
+        try:
+            app.original_image = Image.new("RGB", (200, 160))
+            app.coordinate_settings = replace(app.coordinate_settings, coordinate_space="image")
+            app.zoom = 1
+            app.export_layout_var.set(EXPORT_LAYOUT_SET)
+            app.fields = [TemplateField(key, 20, y, 100, y + 16, set_id=1, slot_key=key,
+                                        source_width=200, source_height=160)
+                          for y, key in zip((20, 50, 80),
+                                            (SET_SLOT_SPEAKER, SET_SLOT_TEXT, SET_SLOT_SUPPLEMENT))]
+            app.selected_index = 0
+            app.mode_var.set(MODE_TEMPLATE)
+            app.redraw()
+            x1, y1, x2, y2 = app.canvas.coords(app.canvas_set_handles[1]["handle"])
+            press = SimpleNamespace(x=int((x1+x2)/2), y=int((y1+y2)/2))
+            end = SimpleNamespace(x=press.x+12, y=press.y+6)
+            app.on_mouse_down(press)
+            app.on_mouse_drag(end)
+            app.on_mouse_up(end)
+            self.assertEqual([(f.x1, f.y1) for f in app.fields], [(32, 26), (32, 56), (32, 86)])
+            app.undo_last_action()
+            self.assertEqual([f.y1 for f in app.fields], [20, 50, 80])
+        finally:
+            destroy_tk_root(root)
+
+    def test_preview_edge_drag_switches_mode_and_commits_same_gesture(self):
+        from types import SimpleNamespace
+
+        root = ctk.CTk()
+        root.withdraw()
+        app = ImageOcrExcelApp(root, APP_PROFILE, APP_CONFIG)
+        try:
+            app.original_image = Image.new("RGB", (200, 160))
+            app.coordinate_settings = replace(app.coordinate_settings, coordinate_space="image")
+            app.zoom = 1
+            for mode, y, dy in [(MODE_REVIEW, 60, 0), (MODE_EXPORT, 100, 12)]:
+                with self.subTest(mode=mode):
+                    app.fields = [TemplateField("本文", 20, 20, 100, 100,
+                                                source_width=200, source_height=160)]
+                    app.mode_var.set(mode)
+                    app.redraw()
+                    press = SimpleNamespace(x=100, y=y)
+                    end = SimpleNamespace(x=115, y=y + dy)
+                    app.on_mouse_down(press)
+                    app.on_mouse_up(press)
+                    self.assertEqual(app.mode_var.get(), mode)
+                    app.on_mouse_down(press)
+                    app.on_mouse_drag(end)
+                    self.assertEqual(app.mode_var.get(), MODE_TEMPLATE)
+                    app.on_mouse_up(end)
+                    self.assertEqual((app.fields[0].x2, app.fields[0].y2), (115, 100 + dy))
+                    app.undo_last_action()
+                    self.assertEqual((app.fields[0].x2, app.fields[0].y2), (100, 100))
+        finally:
+            destroy_tk_root(root)
 
     def test_export_canvas_ignores_selection_and_editing(self) -> None:
         app = ImageOcrExcelApp.__new__(ImageOcrExcelApp)
@@ -1842,6 +1939,7 @@ class FieldNameInteractionTests(unittest.TestCase):
         app._select_field_index = MagicMock()
         app._commit_active_name_edit = MagicMock()
 
+        app._preview_resize_hit = MagicMock(return_value=(None, None))
         app.on_mouse_down(MagicMock())
 
         app._canvas_selection_hit.assert_not_called()

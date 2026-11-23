@@ -237,6 +237,7 @@ class ImageOcrExcelApp:
         self.editing_name_entry: ctk.CTkEntry | None = None
         self.editing_name_error_label: ctk.CTkLabel | None = None
         self.dragging_field_index: int | None = None
+        self._preview_resize: tuple[int, str, int, int, int, int] | None = None
         self.canvas_edit_state: dict | None = None
         self.undo_action: dict | None = None
 
@@ -1378,7 +1379,9 @@ class ImageOcrExcelApp:
         self._schedule_side_body_render()
 
     def _render_side_body(self) -> None:
-        self._side_render_job = None
+        if self._side_render_job is not None:
+            self.root.after_cancel(self._side_render_job)
+            self._side_render_job = None
         if self.side_body is None:
             return
         scroll_positions = {}
@@ -3935,6 +3938,7 @@ class ImageOcrExcelApp:
         self._render_side_body()
 
     def _load_current_image(self) -> None:
+        self._preview_resize = None
         if not (0 <= self.current_image_index < len(self.image_files)):
             return
         self.image_path = self.image_files[self.current_image_index]
@@ -6476,9 +6480,11 @@ class ImageOcrExcelApp:
                 return idx
         return None
 
-    def _hit_test_field(self, x: int, y: int) -> tuple[int | None, str | None]:
+    def _hit_test_field(self, x: int, y: int, *, visible_only: bool = False) -> tuple[int | None, str | None]:
         tolerance = max(6.0, 10.0 / max(self.zoom, 0.1))
         for idx in reversed(self._canvas_draw_order()):
+            if visible_only and idx not in self.canvas_rects:
+                continue
             field = self._scaled_field(self.fields[idx]).normalized()
             x1, y1, x2, y2 = field.x1, field.y1, field.x2, field.y2
             width = max(1, x2 - x1)
@@ -6535,17 +6541,15 @@ class ImageOcrExcelApp:
             self.canvas.configure(cursor="arrow")
             return
         mode = self.mode_var.get()
-        if mode == MODE_EXPORT:
-            self.canvas.configure(cursor="arrow")
-            return
-        if mode == MODE_REVIEW:
-            self.canvas.configure(
-                cursor=(
-                    "hand2"
-                    if self._canvas_selection_hit(event) is not None
-                    else "arrow"
-                )
-            )
+        if mode in (MODE_REVIEW, MODE_EXPORT):
+            idx, edge = self._preview_resize_hit(event)
+            if idx is not None:
+                cursor = self._cursor_for_edit_mode(edge)
+            elif mode == MODE_REVIEW and self._canvas_selection_hit(event) is not None:
+                cursor = "hand2"
+            else:
+                cursor = "arrow"
+            self.canvas.configure(cursor=cursor)
             return
         if self.canvas_edit_state is not None:
             self.canvas.configure(
@@ -6586,13 +6590,13 @@ class ImageOcrExcelApp:
         if mode == "move":
             return int(x1 + dx), int(y1 + dy), int(x2 + dx), int(y2 + dy)
         if "w" in mode:
-            x1 += dx
+            x1 = min(x1 + dx, x2 - min(8, x2 - x1))
         if "e" in mode:
-            x2 += dx
+            x2 = max(x2 + dx, x1 + min(8, x2 - x1))
         if "n" in mode:
-            y1 += dy
+            y1 = min(y1 + dy, y2 - min(8, y2 - y1))
         if "s" in mode:
-            y2 += dy
+            y2 = max(y2 + dy, y1 + min(8, y2 - y1))
         return int(x1), int(y1), int(x2), int(y2)
 
     def _clamp_rect_to_image(
@@ -6644,6 +6648,9 @@ class ImageOcrExcelApp:
         self.canvas.coords(
             item, x1 * self.zoom, y1 * self.zoom, x2 * self.zoom, y2 * self.zoom
         )
+        # East/south resizing leaves the label anchored at the same corner.
+        if self.canvas_edit_state and self.canvas_edit_state.get("mode") in {"e", "s", "se"}:
+            return
         label = self.canvas_labels.get(idx)
         if label is None:
             return
@@ -6679,16 +6686,35 @@ class ImageOcrExcelApp:
         self.begin_inline_name_edit(idx)
         return "break"
 
+    def _preview_resize_hit(self, event) -> tuple[int | None, str | None]:
+        idx, mode = self._hit_test_field(*self._event_image_point(event), visible_only=True)
+        return (idx, mode) if mode and mode != "move" else (None, None)
+
+    def _start_field_drag(self, idx: int, mode: str, x: int, y: int) -> None:
+        field = self._scaled_field(self.fields[idx]).normalized()
+        self._select_field_index(idx, update_review_detail=True, redraw_canvas=False)
+        self.canvas_edit_state = {
+            "idx": idx, "mode": mode, "start_x": x, "start_y": y,
+            "orig": (field.x1, field.y1, field.x2, field.y2),
+        }
+        action_text = "移動中" if mode == "move" else "サイズ調整中"
+        self.status_var.set(f"{self.fields[idx].name} の範囲を{action_text}です。")
+        self.redraw()
+
     def on_mouse_down(self, event) -> None:
         if not self.original_image:
             return
         mode = self.mode_var.get()
-        if mode == MODE_EXPORT:
-            return
-        if mode == MODE_REVIEW:
-            hit_idx = self._canvas_selection_hit(event)
-            if hit_idx is not None:
-                self._select_field_index(hit_idx, update_review_detail=True)
+        if mode in (MODE_REVIEW, MODE_EXPORT):
+            self._preview_resize = None
+            idx, edge = self._preview_resize_hit(event)
+            if idx is not None and edge is not None:
+                x, y = self._event_image_point(event)
+                self._preview_resize = (idx, edge, x, y, event.x, event.y)
+            if mode == MODE_REVIEW:
+                hit_idx = self._canvas_selection_hit(event)
+                if hit_idx is not None:
+                    self._select_field_index(hit_idx, update_review_detail=True)
             return
         if not self._commit_active_name_edit():
             return
@@ -6698,7 +6724,6 @@ class ImageOcrExcelApp:
         label_hit_idx = self._hit_test_label(canvas_x, canvas_y)
         set_hit = self._hit_test_set_handle(canvas_x, canvas_y)
         if set_hit is not None:
-            self._adopt_current_image_as_coordinate_source()
             handle_state = self.canvas_set_handles.get(set_hit) or {}
             raw_indexes = handle_state.get("fields")
             indexes = (
@@ -6706,7 +6731,7 @@ class ImageOcrExcelApp:
                 if isinstance(raw_indexes, (list, tuple))
                 else ()
             )
-            if len(indexes) == 2:
+            if indexes:
                 if not handle_state.get("selected"):
                     self._select_field_index(indexes[0], update_review_detail=True)
                     return
@@ -6733,23 +6758,7 @@ class ImageOcrExcelApp:
         else:
             hit_idx, mode = field_hit_idx, field_mode
         if hit_idx is not None and mode is not None:
-            self._adopt_current_image_as_coordinate_source()
-            field = self._scaled_field(self.fields[hit_idx]).normalized()
-            self._select_field_index(
-                hit_idx, update_review_detail=True, redraw_canvas=False
-            )
-            self.canvas_edit_state = {
-                "idx": hit_idx,
-                "mode": mode,
-                "start_x": x,
-                "start_y": y,
-                "orig": (field.x1, field.y1, field.x2, field.y2),
-            }
-            action_text = "移動中" if mode == "move" else "サイズ調整中"
-            self.status_var.set(
-                f"{self.fields[hit_idx].name} の範囲を{action_text}です。"
-            )
-            self.redraw()
+            self._start_field_drag(hit_idx, mode, x, y)
             return
 
         if self.selected_index is not None:
@@ -6757,7 +6766,6 @@ class ImageOcrExcelApp:
             self._schedule_side_body_render()
             self.redraw()
 
-        self._adopt_current_image_as_coordinate_source()
         self.drag_start = (x, y)
         x = self.drag_start[0] * self.zoom
         y = self.drag_start[1] * self.zoom
@@ -6767,7 +6775,15 @@ class ImageOcrExcelApp:
 
     def on_mouse_drag(self, event) -> None:
         if self.mode_var.get() != MODE_TEMPLATE:
-            return
+            if self._preview_resize is None:
+                return
+            idx, edge, x, y, press_x, press_y = self._preview_resize
+            if max(abs(event.x - press_x), abs(event.y - press_y)) < 3:
+                return
+            self._preview_resize = None
+            self.mode_var.set(MODE_TEMPLATE)
+            self._on_mode_change()
+            self._start_field_drag(idx, edge, x, y)
         if self.canvas_edit_state is not None:
             if self.canvas_edit_state.get("mode") == "set_move":
                 x, y = self._event_image_point(event)
@@ -6815,8 +6831,10 @@ class ImageOcrExcelApp:
                 previous_selected = self.canvas_edit_state.get("selected")
                 self.canvas_edit_state = None
                 if not any(rects.get(idx) != origs.get(idx) for idx in indexes):
+                    self.status_var.set(f"セット {set_position} を選択しました。")
                     self.redraw()
                     return
+                self._adopt_current_image_as_coordinate_source()
                 before_fields = {
                     idx: replace(self.fields[idx])
                     for idx in indexes
@@ -6868,10 +6886,13 @@ class ImageOcrExcelApp:
             x1, y1, x2, y2 = self._clamp_rect_to_image(
                 self._edited_rect_from_state(x, y)
             )
+            original_rect = self.canvas_edit_state["orig"]
             self.canvas_edit_state = None
-            if (x2 - x1) < 8 or (y2 - y1) < 8:
+            if (x1, y1, x2, y2) == original_rect or (x2 - x1) < 8 or (y2 - y1) < 8:
+                self.status_var.set(f"{self.fields[idx].name} を選択しました。")
                 self.redraw()
                 return
+            self._adopt_current_image_as_coordinate_source()
             field = self.fields[idx]
             before_field = replace(field)
             before_result = (
@@ -6919,6 +6940,7 @@ class ImageOcrExcelApp:
         if (x2 - x1) < 8 or (y2 - y1) < 8:
             return
 
+        self._adopt_current_image_as_coordinate_source()
         set_id = (
             self.pending_set_id
             if self.export_layout_var.get() == EXPORT_LAYOUT_SET
@@ -7007,6 +7029,7 @@ class ImageOcrExcelApp:
         return field_hit_idx
 
     def _clear_canvas_pointer_interaction(self) -> None:
+        self._preview_resize = None
         self.canvas_edit_state = None
         self.drag_start = None
         if self.drag_rect:
